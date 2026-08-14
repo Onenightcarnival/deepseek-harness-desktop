@@ -87,7 +87,9 @@ dsh 一切皆插件，桌面版留了两个定制入口，改完重新打标签�
   macOS 为 Terminal），其中 `dsh` 和 `pnpm` 已在 PATH 上、跑在应用内置的
   Node 上，机器无需安装 Node/pnpm，例如 `dsh plugin --profile web add
   <插件包>`。想在自己的终端里长期使用，可把用户数据目录下的 `bin/`
-  加进 PATH。
+  加进 PATH。需要执行构建脚本的插件（GitHub 源码分发、触发
+  pnpm allowBuilds 门禁）不在图形界面代为放行——按 dsh 报错提示在
+  命令行窗口里自行处理，这是有意的安全边界。
 
 ## 注意
 

@@ -33,7 +33,7 @@
     <input id="spec" placeholder="npm 包名或来源，如 some-dsh-plugin@1.2.0、github:owner/repo" spellcheck="false">
     <button id="add" class="primary">安装</button>
   </div>
-  <div class="hint">插件安装到你的用户配置（~/.dsh/profiles/web），声明了 dsh.bundle 的插件包重启后自动生效；普通插件包还需在配置层挂载。从 GitHub 安装时如果输出提示需要 allowBuilds 批准，按提示操作后再点一次安装。</div>
+  <div class="hint">插件安装到你的用户配置（~/.dsh/profiles/web），声明了 dsh.bundle 的插件包重启后自动生效；普通插件包还需在配置层挂载。需要执行构建脚本的插件（多为 GitHub 源码分发）请通过命令行窗口按提示安装。</div>
   <h2>已安装（用户配置层）</h2>
   <div id="installed">加载中…</div>
   <h2>输出</h2>
@@ -75,13 +75,20 @@
     busy = true
     $('add').disabled = true
     log(`> dsh plugin --profile web ${action} ${spec}`)
-    const { code, output } = await window.pluginApi.run(action, spec)
+    const { code, output, needsAllowBuilds } = await window.pluginApi.run(action, spec)
     log(output.trim())
     log(code === 0 ? '✓ 完成' : `✗ 失败 (exit ${code})`)
     if (code === 0) $('restartBar').style.display = 'block'
     busy = false
     $('add').disabled = false
     refresh()
+    if (code !== 0 && needsAllowBuilds && needsAllowBuilds.length > 0) {
+      log('')
+      log('ℹ 该插件需要在安装时执行构建脚本（等同于运行第三方代码），桌面版不代为放行。')
+      log('  如果你信任该插件来源，请通过菜单「插件 → 打开命令行窗口」，')
+      log('  按上方输出中 dsh 给出的提示编辑 allowBuilds 配置后，在终端里重新安装。')
+      log('  （推荐优先使用插件市场 dshmarket 安装精选来源的插件。）')
+    }
   }
 
   $('add').onclick = () => run('add', $('spec').value.trim())

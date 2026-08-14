@@ -506,6 +506,26 @@ ipcMain.handle('plugins:list', async () => {
     return { deps: {}, bundles: [] }
   }
 })
+/**
+ * Extract the build-script approvals a failed install asks for:
+ * - ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED prints an exact
+ *   "allowBuilds:\n  <pkg@git+url#sha>: true" suggestion;
+ * - ERR_PNPM_IGNORED_BUILDS lists bare package names.
+ */
+function parseAllowBuildsRequests(output) {
+  const keys = []
+  const gitHint = /allowBuilds:\s*\n\s+(\S+): true/g
+  for (let m; (m = gitHint.exec(output)); ) keys.push(m[1])
+  const ignored = /Ignored build scripts: ([^\n]+)/g
+  for (let m; (m = ignored.exec(output)); ) {
+    for (const entry of m[1].split(',')) {
+      const name = entry.trim().replace(/@[\d][^@]*$/, '') // drop trailing @version
+      if (name) keys.push(name)
+    }
+  }
+  return [...new Set(keys)]
+}
+
 ipcMain.handle('plugins:run', async (_event, action, spec) => {
   const cleaned = String(spec || '').trim()
   // Accept every npm install spec shape: plain names, @scope/name@range,
@@ -516,7 +536,11 @@ ipcMain.handle('plugins:run', async (_event, action, spec) => {
     return { code: -1, output: '无效的包名' }
   }
   if (action !== 'add' && action !== 'remove') return { code: -1, output: '无效操作' }
-  return runDshCli(['plugin', '--profile', 'web', action, cleaned])
+  const result = await runDshCli(['plugin', '--profile', 'web', action, cleaned])
+  if (action === 'add' && result.code !== 0) {
+    result.needsAllowBuilds = parseAllowBuildsRequests(result.output)
+  }
+  return result
 })
 ipcMain.handle('plugins:restart', async () => {
   app.relaunch()

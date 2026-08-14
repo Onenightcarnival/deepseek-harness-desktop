@@ -263,16 +263,22 @@ function writeCliLaunchers() {
   if (process.platform === 'win32') {
     fs.writeFileSync(path.join(binDir, 'dsh.cmd'),
       `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n"${exe}" --expose-internals "${entry}" %*\r\n`)
+    // `node` shim: dependency install scripts (`node xxx.js`) need a node on
+    // PATH; machines without Node.js get Electron's embedded one.
+    fs.writeFileSync(path.join(binDir, 'node.cmd'),
+      `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${exe}" %*\r\n`)
     if (fs.existsSync(pnpmCjs)) {
       fs.writeFileSync(path.join(binDir, 'pnpm.cmd'),
-        `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${exe}" "${pnpmCjs}" %*\r\n`)
+        `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n"${exe}" "${pnpmCjs}" %*\r\n`)
     }
   } else {
     fs.writeFileSync(path.join(binDir, 'dsh'),
       `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\nexec "${exe}" --expose-internals "${entry}" "$@"\n`, { mode: 0o755 })
+    fs.writeFileSync(path.join(binDir, 'node'),
+      `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec "${exe}" "$@"\n`, { mode: 0o755 })
     if (fs.existsSync(pnpmCjs)) {
       fs.writeFileSync(path.join(binDir, 'pnpm'),
-        `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec "${exe}" "${pnpmCjs}" "$@"\n`, { mode: 0o755 })
+        `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\nexec "${exe}" "${pnpmCjs}" "$@"\n`, { mode: 0o755 })
     }
   }
   return binDir

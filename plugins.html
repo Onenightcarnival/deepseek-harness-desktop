@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>插件管理</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+         margin: 0; padding: 16px; background: #16161a; color: #e8e8ec; font-size: 13px; }
+  h2 { font-size: 14px; margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; margin-bottom: 12px; }
+  input { flex: 1; background: #232329; color: #e8e8ec; border: 1px solid #34343c;
+          border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; }
+  input:focus { border-color: #4d6bfe; }
+  button { background: #2c2c34; color: #e8e8ec; border: 1px solid #3a3a44; border-radius: 6px;
+           padding: 7px 14px; cursor: pointer; font-size: 13px; }
+  button.primary { background: #4d6bfe; border-color: #4d6bfe; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  #installed { background: #1c1c22; border: 1px solid #2c2c34; border-radius: 6px;
+               padding: 10px; margin-bottom: 12px; min-height: 48px; }
+  #installed .item { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; }
+  #installed .bundle-tag { color: #7ea0ff; font-size: 11px; margin-left: 8px; }
+  #installed .rm { background: none; border: none; color: #ff7a7a; cursor: pointer; font-size: 12px; padding: 2px 6px; }
+  #log { background: #101014; border: 1px solid #2c2c34; border-radius: 6px; padding: 10px;
+         height: 180px; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace;
+         font-size: 11.5px; color: #9a9aa4; }
+  .hint { color: #9a9aa4; font-size: 12px; margin: 8px 0 12px; }
+  #restartBar { display: none; margin-top: 12px; text-align: right; }
+</style>
+</head>
+<body>
+  <h2>安装插件</h2>
+  <div class="row">
+    <input id="spec" placeholder="npm 包名，如 some-dsh-plugin 或 some-dsh-plugin@1.2.0" spellcheck="false">
+    <button id="add" class="primary">安装</button>
+  </div>
+  <div class="hint">插件安装到你的用户配置（~/.dsh/profiles/web），声明了 dsh.bundle 的插件包重启后自动生效；普通插件包还需在配置层挂载。</div>
+  <h2>已安装（用户配置层）</h2>
+  <div id="installed">加载中…</div>
+  <h2>输出</h2>
+  <div id="log"></div>
+  <div id="restartBar"><button id="restart" class="primary">重启应用生效</button></div>
+<script>
+  const $ = (id) => document.getElementById(id)
+  const log = (text) => { $('log').textContent += text + '\n'; $('log').scrollTop = 1e9 }
+  let busy = false
+
+  async function refresh() {
+    const { deps, bundles } = await window.pluginApi.list()
+    const names = Object.keys(deps)
+    if (names.length === 0) { $('installed').textContent = '（无：还没有通过用户配置安装的插件）'; return }
+    $('installed').innerHTML = ''
+    for (const name of names) {
+      const div = document.createElement('div')
+      div.className = 'item'
+      const label = document.createElement('span')
+      label.textContent = `${name}  ${deps[name]}`
+      if (bundles.includes(name)) {
+        const tag = document.createElement('span')
+        tag.className = 'bundle-tag'
+        tag.textContent = 'bundle·自动挂载'
+        label.appendChild(tag)
+      }
+      const rm = document.createElement('button')
+      rm.className = 'rm'
+      rm.textContent = '移除'
+      rm.onclick = () => run('remove', name)
+      div.appendChild(label)
+      div.appendChild(rm)
+      $('installed').appendChild(div)
+    }
+  }
+
+  async function run(action, spec) {
+    if (busy || !spec) return
+    busy = true
+    $('add').disabled = true
+    log(`> dsh plugin --profile web ${action} ${spec}`)
+    const { code, output } = await window.pluginApi.run(action, spec)
+    log(output.trim())
+    log(code === 0 ? '✓ 完成' : `✗ 失败 (exit ${code})`)
+    if (code === 0) $('restartBar').style.display = 'block'
+    busy = false
+    $('add').disabled = false
+    refresh()
+  }
+
+  $('add').onclick = () => run('add', $('spec').value.trim())
+  $('spec').addEventListener('keydown', (e) => { if (e.key === 'Enter') run('add', $('spec').value.trim()) })
+  $('restart').onclick = () => window.pluginApi.restart()
+  refresh()
+</script>
+</body>
+</html>

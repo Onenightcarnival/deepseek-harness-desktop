@@ -1,7 +1,7 @@
 {
   "name": "deepseek-harness-desktop",
   "productName": "DeepSeek Harness",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Desktop shell for DeepSeek Harness (dsh) — unofficial packaging of the dsh web UI",
   "main": "main.js",
   "license": "MIT",
@@ -24,7 +24,10 @@
     ],
     "files": [
       "main.js",
+      "runtime.js",
       "splash.html",
+      "plugins.html",
+      "preload-plugins.js",
       "build/icon.png"
     ],
     "directories": {
@@ -65,11 +68,18 @@
       "category": "public.app-category.developer-tools",
       "identity": null,
       "artifactName": "DeepSeek-Harness-${version}-mac-${arch}.${ext}"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "desktop-patch.yml",
+        "to": "desktop-patch.yml"
+      }
+    ]
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/deepseek-ai/deepseek-harness.git"
   },
-  "packageManager": "npm@10.9.3"
+  "packageManager": "npm@10.9.3",
+  "updateRepo": "Onenightcarnival/deepseek-harness-desktop"
 }

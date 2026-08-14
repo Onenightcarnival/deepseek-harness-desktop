@@ -1,0 +1,23 @@
+# 桌面版的插件组合覆盖层（cordis patch overlay）。
+# 应用启动时通过 `dsh web --patch` 应用到 web 配置树上，
+# 语法与 ~/.dsh/profiles/web/cordis.patch.yml 相同：
+#
+# 禁用一个内置插件（id 用 `npx @deepseek-ai/dsh web --dump-config` 查看）：
+#   - id: session-title-llm
+#     disabled: true
+#
+# 覆盖某个插件的配置（按 id 定位，config 逐键合并）：
+#   - id: tool-web
+#     config:
+#       someKey: someValue
+#
+# 挂载额外插件（包需先写进 plugins.json 的 packages 里一起打包；
+# 双面插件要把 host 和 client-ui 两半都挂上，参考目录选择器的例子）：
+#   - insert:
+#       - id: web-search-exa
+#         name: '@deepseek-ai/dsh-web-search-exa'
+#         config:
+#           apiKeyEnv: EXA_API_KEY
+#
+# 默认为空列表 = 不改动官方默认组合。
+[]

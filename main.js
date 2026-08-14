@@ -474,7 +474,11 @@ ipcMain.handle('plugins:list', async () => {
 })
 ipcMain.handle('plugins:run', async (_event, action, spec) => {
   const cleaned = String(spec || '').trim()
-  if (!/^[@a-zA-Z0-9._/^~*<>=+-]+$/.test(cleaned) || cleaned.length > 200) {
+  // Accept every npm install spec shape: plain names, @scope/name@range,
+  // github:owner/repo#ref, git+https://…, https://….tgz, file:/link: paths.
+  // Args go through spawn(argv[]) — no shell — so this is hygiene, not a
+  // security boundary; just reject whitespace/control characters.
+  if (cleaned.length === 0 || cleaned.length > 300 || /[\s'"`\\]/.test(cleaned)) {
     return { code: -1, output: '无效的包名' }
   }
   if (action !== 'add' && action !== 'remove') return { code: -1, output: '无效操作' }

@@ -30,10 +30,10 @@
 <body>
   <h2>安装插件</h2>
   <div class="row">
-    <input id="spec" placeholder="npm 包名，如 some-dsh-plugin 或 some-dsh-plugin@1.2.0" spellcheck="false">
+    <input id="spec" placeholder="npm 包名或来源，如 some-dsh-plugin@1.2.0、github:owner/repo" spellcheck="false">
     <button id="add" class="primary">安装</button>
   </div>
-  <div class="hint">插件安装到你的用户配置（~/.dsh/profiles/web），声明了 dsh.bundle 的插件包重启后自动生效；普通插件包还需在配置层挂载。</div>
+  <div class="hint">插件安装到你的用户配置（~/.dsh/profiles/web），声明了 dsh.bundle 的插件包重启后自动生效；普通插件包还需在配置层挂载。从 GitHub 安装时如果输出提示需要 allowBuilds 批准，按提示操作后再点一次安装。</div>
   <h2>已安装（用户配置层）</h2>
   <div id="installed">加载中…</div>
   <h2>输出</h2>

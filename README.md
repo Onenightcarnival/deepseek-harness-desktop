@@ -83,11 +83,11 @@ dsh 一切皆插件，桌面版留了两个定制入口，改完重新打标签�
 - 应用启动 15 秒后会静默检查一次 GitHub Release（`package.json` 的
   `updateRepo` 指定仓库），有新版会弹窗引导下载；菜单「帮助 → 检查更新…」
   可手动检查。发新版记得同时更新 `version` 和打对应的 `v*` 标签。
-- 应用会在用户数据目录的 `bin/` 下生成 `dsh` 和 `pnpm` 命令
-  （菜单「帮助 → 打开命令行工具目录」可直达），两者都跑在应用内置的
-  Node 上，机器上无需安装 Node/pnpm。把该目录加进 PATH 后即可使用完整
-  CLI，例如 `dsh plugin --profile web add <插件包>`——声明了 `dsh.bundle`
-  的插件包装完自动进组合，重启应用即生效。
+- 菜单「插件 → 打开命令行窗口」直接弹出一个终端（Windows 为 cmd，
+  macOS 为 Terminal），其中 `dsh` 和 `pnpm` 已在 PATH 上、跑在应用内置的
+  Node 上，机器无需安装 Node/pnpm，例如 `dsh plugin --profile web add
+  <插件包>`。想在自己的终端里长期使用，可把用户数据目录下的 `bin/`
+  加进 PATH。
 
 ## 注意
 

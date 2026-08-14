@@ -278,6 +278,40 @@ function writeCliLaunchers() {
   return binDir
 }
 
+/**
+ * Open an OS terminal window with the bundled dsh/pnpm CLI on PATH, so
+ * users can run `dsh …` immediately without any manual setup.
+ */
+function openCliTerminal() {
+  const binDir = writeCliLaunchers()
+  if (process.platform === 'win32') {
+    // A fresh console window running cmd with PATH prepended.
+    const child = spawn('cmd.exe', ['/K', `set "PATH=${binDir};%PATH%" && title DeepSeek Harness CLI && echo dsh 命令行已就绪：可直接使用 dsh / pnpm 命令`], {
+      detached: true, stdio: 'ignore', windowsHide: false,
+    })
+    child.unref()
+    return
+  }
+  if (process.platform === 'darwin') {
+    // A .command file opens in Terminal; it drops into an interactive shell
+    // with the launchers on PATH.
+    const cmdFile = path.join(binDir, 'DeepSeek Harness CLI.command')
+    fs.writeFileSync(cmdFile, [
+      '#!/bin/sh',
+      `export PATH="${binDir}:$PATH"`,
+      'clear',
+      'echo "dsh 命令行已就绪：可直接使用 dsh / pnpm 命令"',
+      'echo "例如：dsh plugin --profile web add <插件包>"',
+      'exec "${SHELL:-/bin/zsh}" -i',
+      '',
+    ].join('\n'), { mode: 0o755 })
+    shell.openPath(cmdFile)
+    return
+  }
+  // Other platforms: at least reveal the launcher directory.
+  shell.openPath(binDir)
+}
+
 function startServer() {
   return new Promise((resolve, reject) => {
     const entry = dshEntry()
@@ -409,7 +443,7 @@ function buildMenu() {
       label: '插件',
       submenu: [
         { label: '插件管理…', click: () => { openPluginManager() } },
-        { label: '打开命令行工具目录', click: () => { shell.openPath(path.join(app.getPath('userData'), 'bin')) } },
+        { label: '打开命令行窗口', click: () => { openCliTerminal() } },
       ],
     },
     {

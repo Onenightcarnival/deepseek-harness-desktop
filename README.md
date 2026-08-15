@@ -41,7 +41,9 @@ git push origin v0.1.0
 ```
 
 Windows/macOS runner 各自原生构建，产物连同 SHA256SUMS.txt 发布到
-GitHub Release。版本号取 `package.json` 的 `version`，发版前记得更新。
+GitHub Release。**版本号以标签为准**：CI 会把 `vX.Y.Z` 写进
+`package.json` 再构建，发版只需打标签，无需手动改文件（仓库里的
+`version` 字段仅作为手动触发构建时的默认值）。
 升级内置的 dsh 只需等 npm 出新版后重新打标签（或用 `DSH_VERSION` 锁定）。
 
 ## 预置 / 增删插件

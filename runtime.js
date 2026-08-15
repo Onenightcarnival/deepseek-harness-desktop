@@ -159,3 +159,39 @@ function buildMcpBlock(servers) {
 
 module.exports.upsertManagedBlock = upsertManagedBlock
 module.exports.buildMcpBlock = buildMcpBlock
+
+/**
+ * Locate skills inside an extracted archive directory. Recognized shapes:
+ * the root itself is a skill (SKILL.md at top level, named by fallbackName);
+ * top-level `<dir>/SKILL.md` bundles; top-level flat `<name>.md` files.
+ * Returns [{ name, src, kind: 'bundle'|'flat' }] with names sanitized to
+ * kebab-case (invalid names are skipped, reported via `rejected`).
+ */
+function collectSkills(fsLike, rootDir, fallbackName, pathLike) {
+  const kebab = (s) => String(s).toLowerCase().replace(/\.md$/, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const valid = (n) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(n) && n.length <= 64
+  const found = []
+  const rejected = []
+  const push = (rawName, src, kind) => {
+    const name = kebab(rawName)
+    if (valid(name)) found.push({ name, src, kind })
+    else rejected.push(rawName)
+  }
+  if (fsLike.existsSync(pathLike.join(rootDir, 'SKILL.md'))) {
+    push(fallbackName, rootDir, 'bundle')
+    return { found, rejected }
+  }
+  let entries = []
+  try { entries = fsLike.readdirSync(rootDir, { withFileTypes: true }) } catch { return { found, rejected } }
+  for (const e of entries) {
+    if (e.name.startsWith('.') || e.name === '__MACOSX') continue
+    if (e.isDirectory() && fsLike.existsSync(pathLike.join(rootDir, e.name, 'SKILL.md'))) {
+      push(e.name, pathLike.join(rootDir, e.name), 'bundle')
+    } else if (e.isFile() && e.name.endsWith('.md') && e.name !== 'README.md') {
+      push(e.name, pathLike.join(rootDir, e.name), 'flat')
+    }
+  }
+  return { found, rejected }
+}
+
+module.exports.collectSkills = collectSkills

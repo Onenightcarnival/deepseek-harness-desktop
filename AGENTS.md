@@ -13,8 +13,8 @@ main.js             主进程全部逻辑：服务拉起/守护、菜单、更�
                     内核=npm registry + 应用内升级到 userData/runtimes/）、CLI 启动器生成
                     （dsh/pnpm/node 三个 shim）、配置中心 IPC（插件/MCP/技能）
 runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目录选择（升级版优先+损坏回退）、
-                    engines 粗校验、cordis patch 托管区块编辑（upsertManagedBlock/buildMcpBlock，
-                    MCP 配置写入用户 profile patch 的标记区块）—— 刻意抽出来以便普通 node 直接单测
+                    engines 粗校验、cordis patch 托管区块编辑（upsertManagedBlock/buildMcpBlock）、
+                    zip 技能包内容识别（collectSkills）—— 刻意抽出来以便普通 node 直接单测
 plugins.html        配置中心窗口（三标签：插件 / MCP 服务器 / 技能）
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动等待页

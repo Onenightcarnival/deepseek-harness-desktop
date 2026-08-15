@@ -630,6 +630,75 @@ ipcMain.handle('plugins:restart', async () => {
   app.quit()
 })
 
+/**
+ * Probe an MCP server config before saving: HTTP servers get a real
+ * initialize POST; stdio commands are spawned and must survive ~2.5s.
+ * Returns { ok, detail } — never throws.
+ */
+async function testMcpServer(server, extraPath) {
+  if (server.transport === 'streamable-http') {
+    try {
+      const res = await fetch(server.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          ...(server.headers || {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'initialize',
+          params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'dsh-desktop-test', version: '1.0' } },
+        }),
+        signal: AbortSignal.timeout(6000),
+      })
+      return { ok: res.ok, detail: `HTTP ${res.status}${res.ok ? '，服务可达' : '（服务在但返回异常，检查路径/认证头）'}` }
+    } catch (err) {
+      const msg = String(err && (err.cause?.message || err.message) || err)
+      let hint = ''
+      if (/certificate|SSL|TLS|wrong version number|packet length/i.test(msg)) {
+        hint = '（疑似对 http 服务用了 https——本机/内网服务通常应写 http://）'
+      } else if (/ECONNREFUSED/.test(msg)) {
+        hint = '（端口没有服务在监听——确认 MCP 服务器已启动）'
+      } else if (/timeout|aborted/i.test(msg)) {
+        hint = '（连接超时——地址不可达或服务无响应）'
+      }
+      return { ok: false, detail: `连接失败：${msg} ${hint}` }
+    }
+  }
+  // stdio: the command must start and stay alive briefly
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawn(server.command, server.args || [], {
+        env: { ...process.env, ...(server.env || {}), ...(extraPath ? { PATH: `${extraPath}${path.delimiter}${process.env.PATH || ''}` } : {}) },
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      })
+    } catch (err) {
+      resolve({ ok: false, detail: `无法启动命令：${String(err && err.message || err)}` })
+      return
+    }
+    let errTail = ''
+    child.stderr.on('data', (c) => { errTail = (errTail + c.toString()).slice(-400) })
+    child.on('error', (err) => resolve({ ok: false, detail: `无法启动命令：${String(err.message)}（命令不存在或不可执行）` }))
+    const timer = setTimeout(() => {
+      try { child.kill() } catch { /* gone */ }
+      resolve({ ok: true, detail: '命令可启动并保持运行（能否完成 MCP 握手以保存后实际连接为准）' })
+    }, 2500)
+    child.on('exit', (code) => {
+      clearTimeout(timer)
+      resolve({ ok: false, detail: `命令启动后立即退出 (exit ${code})${errTail ? `：${errTail.trim()}` : ''}` })
+    })
+  })
+}
+
+ipcMain.handle('mcp:test', async (_event, server) => {
+  const err = validateMcpServer(server, new Set())
+  if (err) return { ok: false, detail: err }
+  let extraPath
+  try { extraPath = writeCliLaunchers() } catch { extraPath = undefined }
+  return testMcpServer(server, extraPath)
+})
 ipcMain.handle('mcp:list', async () => readMcpServers())
 ipcMain.handle('mcp:save', async (_event, servers) => {
   if (!Array.isArray(servers) || servers.length > 50) return { ok: false, error: '数据格式无效' }
@@ -657,55 +726,55 @@ ipcMain.handle('skills:open', async () => {
   fs.mkdirSync(skillsDir(), { recursive: true })
   shell.openPath(skillsDir())
 })
-ipcMain.handle('skills:create', async (_event, name) => {
-  const n = String(name || '').trim()
-  if (!SKILL_NAME_RE.test(n) || n.length > 64) return { ok: false, error: '技能名需为 kebab-case（小写字母/数字/连字符）' }
-  const dir = path.join(skillsDir(), n)
-  if (fs.existsSync(dir)) return { ok: false, error: '同名技能已存在' }
-  fs.mkdirSync(dir, { recursive: true })
-  const md = path.join(dir, 'SKILL.md')
-  fs.writeFileSync(md, [
-    '---',
-    `name: ${n}`,
-    'description: 一句话描述这个技能什么时候该被使用（模型据此决定是否调用）',
-    '---',
-    '',
-    `# ${n}`,
-    '',
-    '在这里写给模型的详细指令：步骤、注意事项、示例。',
-    '',
-  ].join('\n'))
-  shell.openPath(md)
-  return { ok: true }
-})
-ipcMain.handle('skills:import', async (_event, kind) => {
-  const isDir = kind === 'dir'
+/** Extract a zip with OS-native tooling (no runtime deps). Throws on failure. */
+function extractZip(zipPath, destDir) {
+  const { spawnSync } = require('child_process')
+  fs.mkdirSync(destDir, { recursive: true })
+  let r
+  if (process.platform === 'win32') {
+    const esc = (s) => s.replace(/'/g, "''")
+    r = spawnSync('powershell.exe', ['-NoProfile', '-Command',
+      `Expand-Archive -LiteralPath '${esc(zipPath)}' -DestinationPath '${esc(destDir)}' -Force`],
+      { windowsHide: true, timeout: 60_000 })
+  } else {
+    r = spawnSync('unzip', ['-o', '-q', zipPath, '-d', destDir], { timeout: 60_000 })
+  }
+  if (r.error) throw r.error
+  if (r.status !== 0) throw new Error(`解压失败 (exit ${r.status})：${String(r.stderr || '').slice(0, 300)}`)
+}
+
+ipcMain.handle('skills:installZip', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(pluginWindow || mainWindow, {
-    title: isDir ? '选择技能目录（须包含 SKILL.md）' : '选择技能 Markdown 文件',
-    properties: [isDir ? 'openDirectory' : 'openFile'],
-    filters: isDir ? undefined : [{ name: 'Markdown', extensions: ['md'] }],
+    title: '选择技能包（.zip，可含单个或多个技能）',
+    properties: ['openFile'],
+    filters: [{ name: 'Zip 压缩包', extensions: ['zip'] }],
   })
   if (canceled || filePaths.length === 0) return { ok: false, error: '' }
-  const src = filePaths[0]
-  const base = path.basename(src, isDir ? '' : '.md')
-  const name = base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-  if (!SKILL_NAME_RE.test(name)) return { ok: false, error: `无法从 "${base}" 得到合法技能名（kebab-case）` }
+  const zipPath = filePaths[0]
+  const tmp = path.join(app.getPath('userData'), `tmp-skill-${process.pid}-${Math.floor(performance.now())}`)
   try {
-    if (isDir) {
-      if (!fs.existsSync(path.join(src, 'SKILL.md'))) return { ok: false, error: '所选目录里没有 SKILL.md' }
-      const dest = path.join(skillsDir(), name)
-      if (fs.existsSync(dest)) return { ok: false, error: `同名技能 "${name}" 已存在` }
-      fs.mkdirSync(skillsDir(), { recursive: true })
-      fs.cpSync(src, dest, { recursive: true })
-    } else {
-      const dest = path.join(skillsDir(), `${name}.md`)
-      if (fs.existsSync(dest) || fs.existsSync(path.join(skillsDir(), name))) return { ok: false, error: `同名技能 "${name}" 已存在` }
-      fs.mkdirSync(skillsDir(), { recursive: true })
-      fs.copyFileSync(src, dest)
+    extractZip(zipPath, tmp)
+    const { collectSkills } = require('./runtime.js')
+    const { found, rejected } = collectSkills(fs, tmp, path.basename(zipPath, '.zip'), path)
+    if (found.length === 0) {
+      return { ok: false, error: `压缩包里没有可识别的技能（需要 SKILL.md 目录包或 .md 文件）${rejected.length ? `；名称无法转为 kebab-case 的已跳过：${rejected.join(', ')}` : ''}` }
     }
-    return { ok: true, name }
+    fs.mkdirSync(skillsDir(), { recursive: true })
+    const installed = []
+    const skipped = []
+    for (const s of found) {
+      const dest = path.join(skillsDir(), s.kind === 'bundle' ? s.name : `${s.name}.md`)
+      if (fs.existsSync(dest) || fs.existsSync(path.join(skillsDir(), s.name))) { skipped.push(s.name); continue }
+      if (s.kind === 'bundle') fs.cpSync(s.src, dest, { recursive: true })
+      else fs.copyFileSync(s.src, dest)
+      installed.push(s.name)
+    }
+    return { ok: installed.length > 0, installed, skipped, rejected,
+      error: installed.length === 0 ? `全部同名跳过：${skipped.join(', ')}` : '' }
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
   }
 })
 ipcMain.handle('skills:delete', async (_event, name) => {

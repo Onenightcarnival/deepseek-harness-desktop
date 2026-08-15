@@ -77,7 +77,7 @@
         <label id="l-url" style="display:none">URL</label><input id="m-url" placeholder="https://example.com/mcp" spellcheck="false" style="display:none">
         <label>环境变量/头</label><textarea id="m-kv" placeholder="每行一条 KEY=VALUE（stdio 为环境变量，http 为请求头）" spellcheck="false"></textarea>
       </div>
-      <div style="text-align:right"><button class="primary" id="m-save">添加并保存</button></div>
+      <div style="text-align:right"><button id="m-test">测试连接</button> <button class="primary" id="m-save">添加并保存</button></div>
     </form>
     <div id="mcp-msg" class="hint"></div>
     <div style="text-align:right"><button onclick="pluginApi.openLog()">查看服务日志</button></div>
@@ -86,12 +86,9 @@
   <!-- ============ 技能 ============ -->
   <div class="pane" id="pane-skills">
     <h2>技能（~/.dsh/skills）</h2>
-    <div class="hint">技能是给模型的可选指令包，模型按名称和描述自行决定调用。增删改即时生效，无需重启。项目级技能放在项目根目录的 .dsh/skills/ 下（优先级更高）。</div>
+    <div class="hint">技能是给模型的可选指令包，模型按名称和描述自行决定调用。安装/删除即时生效，无需重启。zip 可以是单个技能（根目录含 SKILL.md）或多技能合集（每个子目录一个技能）；也可直接打开目录手动增删，项目级技能放项目根目录的 .dsh/skills/ 下（优先级更高）。</div>
     <div class="row">
-      <input id="s-name" placeholder="新技能名（kebab-case，如 code-review）" spellcheck="false">
-      <button id="s-create" class="primary">新建</button>
-      <button id="s-import-dir">导入目录</button>
-      <button id="s-import-md">导入 .md</button>
+      <button id="s-install" class="primary">安装技能（.zip）</button>
       <button id="s-open">打开技能目录</button>
     </div>
     <div id="skills-list" class="list">加载中…</div>
@@ -183,6 +180,34 @@
     for (const id of ['l-cmd', 'm-command', 'l-args', 'm-args']) $(id).style.display = stdio ? '' : 'none'
     for (const id of ['l-url', 'm-url']) $(id).style.display = stdio ? 'none' : ''
   }
+  function readMcpForm() {
+    const kv = {}
+    for (const line of $('m-kv').value.split('\n')) {
+      const t = line.trim(); if (!t) continue
+      const i = t.indexOf('='); if (i < 1) return { error: `无效的 KEY=VALUE 行：${t}` }
+      kv[t.slice(0, i).trim()] = t.slice(i + 1).trim()
+    }
+    const transport = $('m-transport').value
+    const server = { serverName: $('m-name').value.trim(), transport }
+    if (transport === 'stdio') {
+      server.command = $('m-command').value.trim()
+      server.args = $('m-args').value.trim() ? $('m-args').value.trim().split(/\s+/) : []
+      if (Object.keys(kv).length) server.env = kv
+    } else {
+      server.url = $('m-url').value.trim()
+      if (Object.keys(kv).length) server.headers = kv
+    }
+    return { server }
+  }
+  $('m-test').onclick = async () => {
+    const { server, error } = readMcpForm()
+    if (error) { $('mcp-msg').textContent = error; return }
+    $('m-test').disabled = true
+    $('mcp-msg').textContent = '测试中…'
+    const res = await pluginApi.mcpTest(server)
+    $('mcp-msg').textContent = (res.ok ? '✓ ' : '✗ ') + res.detail
+    $('m-test').disabled = false
+  }
   $('m-save').onclick = async () => {
     const kv = {}
     for (const line of $('m-kv').value.split('\n')) {
@@ -224,19 +249,18 @@
       div.appendChild(label); div.appendChild(rm); box.appendChild(div)
     }
   }
-  $('s-create').onclick = async () => {
-    const res = await pluginApi.skillsCreate($('s-name').value.trim())
-    $('skills-msg').textContent = res.ok ? '已创建并打开 SKILL.md，编辑保存即生效。' : res.error
-    if (res.ok) $('s-name').value = ''
+  $('s-install').onclick = async () => {
+    $('s-install').disabled = true
+    const res = await pluginApi.skillsInstallZip()
+    $('s-install').disabled = false
+    let msg = ''
+    if (res.installed && res.installed.length) msg += `已安装：${res.installed.join('、')}，即时生效。`
+    if (res.skipped && res.skipped.length) msg += ` 同名跳过：${res.skipped.join('、')}。`
+    if (res.rejected && res.rejected.length) msg += ` 名称非法跳过：${res.rejected.join('、')}。`
+    if (!msg) msg = res.error || ''
+    $('skills-msg').textContent = msg
     refreshSkills()
   }
-  const importSkill = async (kind) => {
-    const res = await pluginApi.skillsImport(kind)
-    $('skills-msg').textContent = res.ok ? `已导入技能 "${res.name}"，即时生效。` : res.error
-    refreshSkills()
-  }
-  $('s-import-dir').onclick = () => importSkill('dir')
-  $('s-import-md').onclick = () => importSkill('md')
   $('s-open').onclick = () => pluginApi.skillsOpen()
 
   refreshPlugins()

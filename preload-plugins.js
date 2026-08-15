@@ -7,10 +7,10 @@ contextBridge.exposeInMainWorld('pluginApi', {
   restart: () => ipcRenderer.invoke('plugins:restart'),
   mcpList: () => ipcRenderer.invoke('mcp:list'),
   mcpSave: (servers) => ipcRenderer.invoke('mcp:save', servers),
+  mcpTest: (server) => ipcRenderer.invoke('mcp:test', server),
   skillsList: () => ipcRenderer.invoke('skills:list'),
   skillsOpen: () => ipcRenderer.invoke('skills:open'),
-  skillsCreate: (name) => ipcRenderer.invoke('skills:create', name),
   skillsDelete: (name) => ipcRenderer.invoke('skills:delete', name),
-  skillsImport: (kind) => ipcRenderer.invoke('skills:import', kind),
+  skillsInstallZip: () => ipcRenderer.invoke('skills:installZip'),
   openLog: () => ipcRenderer.invoke('app:openLog'),
 })

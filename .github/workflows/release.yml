@@ -33,10 +33,12 @@ jobs:
 
       # 标签发版时以标签为唯一版本源：把 vX.Y.Z 写进 package.json，
       # 产物文件名与应用内版本号自动一致，无需手动改文件。
+      # --allow-same-version：package.json 已是该版本时 npm version 会以
+      # "Version not changed" 报错退出，加此参数视为成功。
       - name: Sync version from tag
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
-        run: npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+        run: npm version --allow-same-version --no-git-tag-version "${GITHUB_REF_NAME#v}"
 
       - name: Stage dsh runtime
         run: node stage-dsh.mjs

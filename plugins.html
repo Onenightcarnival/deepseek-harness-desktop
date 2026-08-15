@@ -104,9 +104,14 @@
   <div class="pane single active" id="pane-plugins">
     <h2>插件</h2>
     <p class="sub">按 npm 包名或来源安装到你的用户配置层；带 bundle 标记的重启后自动生效。需要执行构建脚本的插件（多为 GitHub 源码分发）请通过菜单「插件 → 打开命令行窗口」按提示安装。</p>
-    <div class="row" style="margin-bottom:12px">
+    <div class="row" style="margin-bottom:8px">
       <input id="spec" placeholder="some-dsh-plugin@1.2.0 或 github:owner/repo" spellcheck="false">
       <button id="add" class="primary" style="flex:none">安装</button>
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <span class="meta">本地插件：</span>
+      <button id="add-dir" class="ghost">从目录安装（开发）</button>
+      <button id="add-tgz" class="ghost">从 .tgz 安装</button>
     </div>
     <div class="card" id="installed" style="margin-bottom:12px">加载中…</div>
     <div class="log" id="log"></div>
@@ -199,16 +204,14 @@
       box.appendChild(div)
     }
   }
-  async function runPlugin(action, spec) {
-    if (busy || !spec) return
-    busy = true; $('add').disabled = true
-    log(`> dsh plugin --profile web ${action} ${spec}`)
-    const { code, output, needsAllowBuilds } = await pluginApi.run(action, spec)
-    log(output.trim()); log(code === 0 ? '✓ 完成' : `✗ 失败 (exit ${code})`)
-    if (code === 0) $('restart-plugins').style.display = 'flex'
-    busy = false; $('add').disabled = false
-    refreshPlugins()
-    if (code !== 0 && needsAllowBuilds && needsAllowBuilds.length > 0) {
+  function setPluginBusy(v) {
+    busy = v
+    for (const id of ['add', 'add-dir', 'add-tgz']) $(id).disabled = v
+  }
+  function logResult(res) {
+    log((res.output || '').trim()); log(res.code === 0 ? '✓ 完成' : `✗ 失败 (exit ${res.code})`)
+    if (res.code === 0) $('restart-plugins').style.display = 'flex'
+    if (res.code !== 0 && res.needsAllowBuilds && res.needsAllowBuilds.length > 0) {
       log('')
       log('ℹ 该插件需要在安装时执行构建脚本（等同于运行第三方代码），桌面版不代为放行。')
       log('  如果你信任该插件来源，请通过菜单「插件 → 打开命令行窗口」，')
@@ -216,7 +219,32 @@
       log('  （推荐优先使用插件市场 dshmarket 安装精选来源的插件。）')
     }
   }
+  async function runPlugin(action, spec) {
+    if (busy || !spec) return
+    setPluginBusy(true)
+    log(`> dsh plugin --profile web ${action} ${spec}`)
+    logResult(await pluginApi.run(action, spec))
+    setPluginBusy(false)
+    refreshPlugins()
+  }
+  async function installLocal(kind) {
+    if (busy) return
+    setPluginBusy(true)
+    const res = await pluginApi.installLocal(kind)
+    if (!res.canceled) {
+      log(`> dsh plugin --profile web add ${res.spec || '（本地插件）'}`)
+      logResult(res)
+      if (res.code === 0 && kind === 'dir') {
+        log('ℹ 目录以软链安装：改动插件代码后重启应用生效。若插件有自身依赖，')
+        log('  需先在该目录里执行过 pnpm install（可用菜单「插件 → 打开命令行窗口」）。')
+      }
+      refreshPlugins()
+    }
+    setPluginBusy(false)
+  }
   $('add').onclick = () => runPlugin('add', $('spec').value.trim())
+  $('add-dir').onclick = () => installLocal('dir')
+  $('add-tgz').onclick = () => installLocal('tgz')
   $('spec').addEventListener('keydown', (e) => { if (e.key === 'Enter') runPlugin('add', $('spec').value.trim()) })
 
   // ================= MCP（主-从） =================

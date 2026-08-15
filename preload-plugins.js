@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('pluginApi', {
   list: () => ipcRenderer.invoke('plugins:list'),
   run: (action, spec) => ipcRenderer.invoke('plugins:run', action, spec),
+  installLocal: (kind) => ipcRenderer.invoke('plugins:installLocal', kind),
   restart: () => ipcRenderer.invoke('plugins:restart'),
   mcpList: () => ipcRenderer.invoke('mcp:list'),
   mcpSave: (servers) => ipcRenderer.invoke('mcp:save', servers),

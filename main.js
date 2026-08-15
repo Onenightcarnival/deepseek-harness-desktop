@@ -626,6 +626,40 @@ ipcMain.handle('plugins:run', async (_event, action, spec) => {
   }
   return result
 })
+/**
+ * Turn an absolute local path into a portable pnpm spec. Forward slashes
+ * everywhere: npm-package-arg parses file:/link: specs as URLs and chokes
+ * on raw Windows backslashes.
+ */
+function localSpec(protocol, absPath) {
+  let p = path.resolve(absPath)
+  if (process.platform === 'win32') p = p.replace(/\\/g, '/')
+  return `${protocol}:${p}`
+}
+/**
+ * Install a plugin from local disk, IDE-style. Directory → link: (symlink,
+ * dev loop: edits picked up on app restart, the plugin manages its own
+ * node_modules); .tgz (npm pack output) → file: (copied, deps installed).
+ * The picker path bypasses the text-spec hygiene check on purpose — paths
+ * with spaces/backslashes are fine because args go through spawn(argv[]).
+ */
+ipcMain.handle('plugins:installLocal', async (_event, kind) => {
+  if (kind !== 'dir' && kind !== 'tgz') return { code: -1, output: '无效操作' }
+  const opts = kind === 'dir'
+    ? { title: '选择插件目录（需含 package.json）', properties: ['openDirectory'] }
+    : { title: '选择插件包（npm pack 打出的 .tgz）', properties: ['openFile'], filters: [{ name: 'npm 包', extensions: ['tgz'] }] }
+  const { canceled, filePaths } = await dialog.showOpenDialog(pluginWindow || mainWindow, opts)
+  if (canceled || filePaths.length === 0) return { canceled: true, code: 0, output: '' }
+  const target = filePaths[0]
+  if (kind === 'dir' && !fs.existsSync(path.join(target, 'package.json'))) {
+    return { code: -1, output: `所选目录没有 package.json，不是一个 npm 包：\n${target}` }
+  }
+  const spec = localSpec(kind === 'dir' ? 'link' : 'file', target)
+  const result = await runDshCli(['plugin', '--profile', 'web', 'add', spec])
+  if (result.code !== 0) result.needsAllowBuilds = parseAllowBuildsRequests(result.output)
+  result.spec = spec
+  return result
+})
 ipcMain.handle('plugins:restart', async () => {
   app.relaunch()
   app.quit()

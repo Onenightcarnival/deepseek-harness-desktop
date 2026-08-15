@@ -66,7 +66,7 @@
   <!-- ============ MCP ============ -->
   <div class="pane" id="pane-mcp">
     <h2>MCP 服务器</h2>
-    <div class="hint">连接的 MCP 服务器工具会以 mcp__服务器名__工具名 的形式提供给模型。本机没有 npm/npx：stdio 命令请用 pnpm dlx 包名 的形式，或填可执行文件绝对路径。保存后重启应用生效。</div>
+    <div class="hint">连接的 MCP 服务器工具会以 mcp__服务器名__工具名 的形式提供给模型。本机没有 npm/npx：stdio 命令请用 pnpm dlx 包名 的形式，或填可执行文件绝对路径。保存即生效（配置写入你的用户配置层，dsh 几秒内热加载，无需重启）。连不上时点「查看服务日志」排查。</div>
     <div id="mcp-list" class="list">加载中…</div>
     <form class="mcp" id="mcp-form" onsubmit="return false">
       <div class="grid">
@@ -80,7 +80,7 @@
       <div style="text-align:right"><button class="primary" id="m-save">添加并保存</button></div>
     </form>
     <div id="mcp-msg" class="hint"></div>
-    <div class="restart" id="restart-mcp"><button class="primary" onclick="pluginApi.restart()">重启应用生效</button></div>
+    <div style="text-align:right"><button onclick="pluginApi.openLog()">查看服务日志</button></div>
   </div>
 
   <!-- ============ 技能 ============ -->
@@ -90,6 +90,8 @@
     <div class="row">
       <input id="s-name" placeholder="新技能名（kebab-case，如 code-review）" spellcheck="false">
       <button id="s-create" class="primary">新建</button>
+      <button id="s-import-dir">导入目录</button>
+      <button id="s-import-md">导入 .md</button>
       <button id="s-open">打开技能目录</button>
     </div>
     <div id="skills-list" class="list">加载中…</div>
@@ -172,7 +174,7 @@
   async function saveMcp() {
     const res = await pluginApi.mcpSave(mcpServers)
     $('mcp-msg').textContent = res.ok ? '' : ('保存失败：' + res.error)
-    if (res.ok) { $('restart-mcp').style.display = 'block'; renderMcp() }
+    if (res.ok) { $('mcp-msg').textContent = '已保存并热加载生效（如服务器连接失败不会报错，请查日志确认）。'; renderMcp() }
     else { mcpServers = await pluginApi.mcpList(); renderMcp() }
     return res.ok
   }
@@ -228,6 +230,13 @@
     if (res.ok) $('s-name').value = ''
     refreshSkills()
   }
+  const importSkill = async (kind) => {
+    const res = await pluginApi.skillsImport(kind)
+    $('skills-msg').textContent = res.ok ? `已导入技能 "${res.name}"，即时生效。` : res.error
+    refreshSkills()
+  }
+  $('s-import-dir').onclick = () => importSkill('dir')
+  $('s-import-md').onclick = () => importSkill('md')
   $('s-open').onclick = () => pluginApi.skillsOpen()
 
   refreshPlugins()

@@ -13,7 +13,8 @@ main.js             主进程全部逻辑：服务拉起/守护、菜单、更�
                     内核=npm registry + 应用内升级到 userData/runtimes/）、CLI 启动器生成
                     （dsh/pnpm/node 三个 shim）、配置中心 IPC（插件/MCP/技能）
 runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目录选择（升级版优先+损坏回退）、
-                    engines 粗校验 —— 刻意抽出来以便普通 node 直接单测
+                    engines 粗校验、cordis patch 托管区块编辑（upsertManagedBlock/buildMcpBlock，
+                    MCP 配置写入用户 profile patch 的标记区块）—— 刻意抽出来以便普通 node 直接单测
 plugins.html        配置中心窗口（三标签：插件 / MCP 服务器 / 技能）
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动等待页
@@ -55,6 +56,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - **本仓库若被放进 pnpm workspace（如上游 fork 的子目录）**，electron-builder 会向上探测 workspace 根并错误改用 pnpm 收集依赖——必须把本目录拷到仓库外构建（独立仓库布局无此问题）。
 - **CLI 启动器是 dsh / pnpm / node 三件套**，缺一不可：pnpm 生命周期脚本会裸调 `node`，用户机器上没有 Node.js。pnpm 本体只随**内置**运行时分发（`dsh/tools/`），应用内升级的运行时没有 tools 目录，取 pnpm 路径必须锚定 `bundledDshDir()`。
 - **pnpm 两道门禁**：allowBuilds（构建脚本审批——配置中心**有意不代为放行**，这是安全边界，只提示走命令行）；minimumReleaseAge（新发布版本冷却期——裸装包名可能**静默降级**到远古版本，表现为"装上了但没效果"，显式带版本号可豁免）。
+- **MCP 的 GUI 配置写入 `~/.dsh/profiles/web/cordis.patch.yml` 的标记托管区块**（`# >>> dsh-desktop mcp >>>`），因为该文件被 dsh 热加载、dsh-mcp-client 支持配置热替换——保存即生效不用重启。只改标记区块、保留用户手写条目；文件默认内容是 flow 空列表 `[]`，与块列表条目不能共存，upsertManagedBlock 已处理（含单测）。已知余波：移除条目时经 `pnpm dlx` 包装启动的旧 MCP 服务器进程可能残留到应用退出。
 - **Windows 覆盖安装靠 build/installer.nsh 的 customCheckAppRunning**。默认 NSIS 关闭逻辑在 PowerShell 不可用时只按进程名杀主程序，漏掉安装目录里 dsh 拉起的 conpty 代理（OpenConsole.exe / winpty-agent.exe），文件被锁导致 "app cannot be closed"。自定义宏用 `taskkill /F /T` 树杀 + 路径扫尾。注意：定义了 customCheckAppRunning 后模板会跳过自带的 `Var pid` 与 getProcessInfo include，必须自备（编译期 warning 即失败，本地 `electron-builder --win` 能在 Linux 上验证 NSIS 编译）。
 - **升级 Electron 版本前**确认其内置 Node 满足 dsh 的 engines（当前 `^22.19 || >=24`）；`runtime.js` 的 `satisfiesNode` 在应用内内核升级前也做同样检查，升级失败有自动隔离回退（`.broken-` 目录后缀）。
 

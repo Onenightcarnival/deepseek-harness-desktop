@@ -91,3 +91,71 @@ function satisfiesNode(nodeVersion, enginesExpr) {
 }
 
 module.exports = { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode }
+
+/**
+ * Upsert a marker-fenced managed block inside a cordis patch YAML document
+ * (a top-level list). `content` is the block body (top-level list entries,
+ * already YAML-formatted); empty content removes the block. The rest of the
+ * user's file is preserved byte-for-byte, except a standalone empty flow
+ * list `[]` which must give way when block entries are present (mixing `[]`
+ * with block-list entries is invalid YAML) and is restored when the
+ * document would otherwise contain no entries at all.
+ */
+function upsertManagedBlock(text, name, content) {
+  const begin = `# >>> dsh-desktop ${name} >>>`
+  const end = `# <<< dsh-desktop ${name} <<<`
+  let lines = String(text ?? '').split('\n')
+  // drop an existing block (idempotent re-save)
+  const from = lines.findIndex((l) => l.trim() === begin)
+  if (from !== -1) {
+    const to = lines.findIndex((l, i) => i > from && l.trim() === end)
+    lines.splice(from, to === -1 ? lines.length - from : to - from + 1)
+  }
+  const hasEntries = (ls) => ls.some((l) => /^\s*-\s/.test(l))
+  const blockLines = content.trim() === '' ? [] : [begin, ...content.replace(/\n+$/, '').split('\n'), end]
+  if (blockLines.length > 0) {
+    // block entries make the document a block list: an empty flow list `[]`
+    // line cannot coexist with them
+    lines = lines.filter((l) => l.trim() !== '[]')
+  } else if (!hasEntries(lines) && !lines.some((l) => l.trim() === '[]')) {
+    lines.push('[]')
+  }
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop()
+  const out = [...lines, ...blockLines].join('\n')
+  return out.endsWith('\n') ? out : out + '\n'
+}
+
+/** Render GUI-managed MCP servers as cordis patch list entries. */
+function buildMcpBlock(servers) {
+  if (!servers || servers.length === 0) return ''
+  const q = (s) => JSON.stringify(String(s))
+  const lines = ['- insert:']
+  for (const s of servers) {
+    lines.push(`    - id: mcp-${s.serverName}`)
+    lines.push(`      name: '@deepseek-ai/dsh-mcp-client'`)
+    lines.push('      config:')
+    lines.push(`        serverName: ${q(s.serverName)}`)
+    lines.push(`        transport: ${q(s.transport)}`)
+    if (s.transport === 'stdio') {
+      lines.push(`        command: ${q(s.command)}`)
+      if (Array.isArray(s.args) && s.args.length) {
+        lines.push('        args:')
+        for (const a of s.args) lines.push(`          - ${q(a)}`)
+      }
+      if (s.env && Object.keys(s.env).length) {
+        lines.push('        env:')
+        for (const [k, v] of Object.entries(s.env)) lines.push(`          ${q(k)}: ${q(v)}`)
+      }
+    } else {
+      lines.push(`        url: ${q(s.url)}`)
+      if (s.headers && Object.keys(s.headers).length) {
+        lines.push('        headers:')
+        for (const [k, v] of Object.entries(s.headers)) lines.push(`          ${q(k)}: ${q(v)}`)
+      }
+    }
+  }
+  return lines.join('\n')
+}
+
+module.exports.upsertManagedBlock = upsertManagedBlock
+module.exports.buildMcpBlock = buildMcpBlock

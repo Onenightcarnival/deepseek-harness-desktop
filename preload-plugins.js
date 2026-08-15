@@ -11,4 +11,6 @@ contextBridge.exposeInMainWorld('pluginApi', {
   skillsOpen: () => ipcRenderer.invoke('skills:open'),
   skillsCreate: (name) => ipcRenderer.invoke('skills:create', name),
   skillsDelete: (name) => ipcRenderer.invoke('skills:delete', name),
+  skillsImport: (kind) => ipcRenderer.invoke('skills:import', kind),
+  openLog: () => ipcRenderer.invoke('app:openLog'),
 })

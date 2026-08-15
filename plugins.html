@@ -2,86 +2,143 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>插件管理</title>
+<title>配置中心</title>
 <style>
   body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-         margin: 0; padding: 16px; background: #16161a; color: #e8e8ec; font-size: 13px; }
+         margin: 0; padding: 0; background: #16161a; color: #e8e8ec; font-size: 13px; }
+  #tabs { display: flex; border-bottom: 1px solid #2c2c34; background: #1c1c22; }
+  #tabs button { background: none; border: none; color: #9a9aa4; padding: 12px 20px; cursor: pointer;
+                 font-size: 13px; border-bottom: 2px solid transparent; }
+  #tabs button.active { color: #e8e8ec; border-bottom-color: #4d6bfe; }
+  .pane { display: none; padding: 16px; }
+  .pane.active { display: block; }
   h2 { font-size: 14px; margin: 0 0 10px; }
   .row { display: flex; gap: 8px; margin-bottom: 12px; }
-  input { flex: 1; background: #232329; color: #e8e8ec; border: 1px solid #34343c;
+  input, select { background: #232329; color: #e8e8ec; border: 1px solid #34343c;
           border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; }
-  input:focus { border-color: #4d6bfe; }
+  input { flex: 1; }
+  input:focus, select:focus { border-color: #4d6bfe; }
   button { background: #2c2c34; color: #e8e8ec; border: 1px solid #3a3a44; border-radius: 6px;
            padding: 7px 14px; cursor: pointer; font-size: 13px; }
   button.primary { background: #4d6bfe; border-color: #4d6bfe; color: #fff; }
   button:disabled { opacity: .5; cursor: default; }
-  #installed { background: #1c1c22; border: 1px solid #2c2c34; border-radius: 6px;
-               padding: 10px; margin-bottom: 12px; min-height: 48px; }
-  #installed .item { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; }
-  #installed .bundle-tag { color: #7ea0ff; font-size: 11px; margin-left: 8px; }
-  #installed .rm { background: none; border: none; color: #ff7a7a; cursor: pointer; font-size: 12px; padding: 2px 6px; }
-  #log { background: #101014; border: 1px solid #2c2c34; border-radius: 6px; padding: 10px;
-         height: 180px; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace;
+  .list { background: #1c1c22; border: 1px solid #2c2c34; border-radius: 6px;
+          padding: 10px; margin-bottom: 12px; min-height: 48px; }
+  .item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; gap: 8px; }
+  .item .meta { color: #9a9aa4; font-size: 11.5px; }
+  .tag { color: #7ea0ff; font-size: 11px; margin-left: 8px; }
+  .rm { background: none; border: none; color: #ff7a7a; cursor: pointer; font-size: 12px; padding: 2px 6px; }
+  .log { background: #101014; border: 1px solid #2c2c34; border-radius: 6px; padding: 10px;
+         height: 150px; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace;
          font-size: 11.5px; color: #9a9aa4; }
-  .hint { color: #9a9aa4; font-size: 12px; margin: 8px 0 12px; }
-  #restartBar { display: none; margin-top: 12px; text-align: right; }
+  .hint { color: #9a9aa4; font-size: 12px; margin: 8px 0 12px; line-height: 1.6; }
+  .restart { display: none; margin-top: 12px; text-align: right; }
+  form.mcp { background: #1c1c22; border: 1px solid #2c2c34; border-radius: 6px; padding: 12px; margin-bottom: 12px; }
+  form.mcp .grid { display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+  form.mcp label { color: #9a9aa4; font-size: 12px; text-align: right; }
+  form.mcp textarea { background: #232329; color: #e8e8ec; border: 1px solid #34343c; border-radius: 6px;
+                      padding: 6px 10px; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace;
+                      resize: vertical; min-height: 40px; }
 </style>
 </head>
 <body>
-  <h2>安装插件</h2>
-  <div class="row">
-    <input id="spec" placeholder="npm 包名或来源，如 some-dsh-plugin@1.2.0、github:owner/repo" spellcheck="false">
-    <button id="add" class="primary">安装</button>
+  <div id="tabs">
+    <button data-pane="plugins" class="active">插件</button>
+    <button data-pane="mcp">MCP 服务器</button>
+    <button data-pane="skills">技能</button>
   </div>
-  <div class="hint">插件安装到你的用户配置（~/.dsh/profiles/web），声明了 dsh.bundle 的插件包重启后自动生效；普通插件包还需在配置层挂载。需要执行构建脚本的插件（多为 GitHub 源码分发）请通过命令行窗口按提示安装。</div>
-  <h2>已安装（用户配置层）</h2>
-  <div id="installed">加载中…</div>
-  <h2>输出</h2>
-  <div id="log"></div>
-  <div id="restartBar"><button id="restart" class="primary">重启应用生效</button></div>
+
+  <!-- ============ 插件 ============ -->
+  <div class="pane active" id="pane-plugins">
+    <h2>安装插件</h2>
+    <div class="row">
+      <input id="spec" placeholder="npm 包名或来源，如 some-dsh-plugin@1.2.0、github:owner/repo" spellcheck="false">
+      <button id="add" class="primary">安装</button>
+    </div>
+    <div class="hint">插件安装到你的用户配置（~/.dsh/profiles/web），声明了 dsh.bundle 的插件包重启后自动生效；普通插件包还需在配置层挂载。需要执行构建脚本的插件（多为 GitHub 源码分发）请通过命令行窗口按提示安装。</div>
+    <h2>已安装（用户配置层）</h2>
+    <div id="installed" class="list">加载中…</div>
+    <h2>输出</h2>
+    <div id="log" class="log"></div>
+    <div class="restart" id="restart-plugins"><button class="primary" onclick="pluginApi.restart()">重启应用生效</button></div>
+  </div>
+
+  <!-- ============ MCP ============ -->
+  <div class="pane" id="pane-mcp">
+    <h2>MCP 服务器</h2>
+    <div class="hint">连接的 MCP 服务器工具会以 mcp__服务器名__工具名 的形式提供给模型。本机没有 npm/npx：stdio 命令请用 pnpm dlx 包名 的形式，或填可执行文件绝对路径。保存后重启应用生效。</div>
+    <div id="mcp-list" class="list">加载中…</div>
+    <form class="mcp" id="mcp-form" onsubmit="return false">
+      <div class="grid">
+        <label>服务器名</label><input id="m-name" placeholder="github（字母数字_-，作为工具名前缀）" spellcheck="false">
+        <label>传输方式</label><select id="m-transport"><option value="stdio">stdio（本地进程）</option><option value="streamable-http">streamable-http（远程 URL）</option></select>
+        <label id="l-cmd">命令</label><input id="m-command" placeholder="pnpm" spellcheck="false">
+        <label id="l-args">参数</label><input id="m-args" placeholder="dlx @modelcontextprotocol/server-github（空格分隔）" spellcheck="false">
+        <label id="l-url" style="display:none">URL</label><input id="m-url" placeholder="https://example.com/mcp" spellcheck="false" style="display:none">
+        <label>环境变量/头</label><textarea id="m-kv" placeholder="每行一条 KEY=VALUE（stdio 为环境变量，http 为请求头）" spellcheck="false"></textarea>
+      </div>
+      <div style="text-align:right"><button class="primary" id="m-save">添加并保存</button></div>
+    </form>
+    <div id="mcp-msg" class="hint"></div>
+    <div class="restart" id="restart-mcp"><button class="primary" onclick="pluginApi.restart()">重启应用生效</button></div>
+  </div>
+
+  <!-- ============ 技能 ============ -->
+  <div class="pane" id="pane-skills">
+    <h2>技能（~/.dsh/skills）</h2>
+    <div class="hint">技能是给模型的可选指令包，模型按名称和描述自行决定调用。增删改即时生效，无需重启。项目级技能放在项目根目录的 .dsh/skills/ 下（优先级更高）。</div>
+    <div class="row">
+      <input id="s-name" placeholder="新技能名（kebab-case，如 code-review）" spellcheck="false">
+      <button id="s-create" class="primary">新建</button>
+      <button id="s-open">打开技能目录</button>
+    </div>
+    <div id="skills-list" class="list">加载中…</div>
+    <div id="skills-msg" class="hint"></div>
+  </div>
+
 <script>
   const $ = (id) => document.getElementById(id)
-  const log = (text) => { $('log').textContent += text + '\n'; $('log').scrollTop = 1e9 }
+  const log = (t) => { $('log').textContent += t + '\n'; $('log').scrollTop = 1e9 }
   let busy = false
 
-  async function refresh() {
-    const { deps, bundles } = await window.pluginApi.list()
-    const names = Object.keys(deps)
-    if (names.length === 0) { $('installed').textContent = '（无：还没有通过用户配置安装的插件）'; return }
-    $('installed').innerHTML = ''
-    for (const name of names) {
-      const div = document.createElement('div')
-      div.className = 'item'
-      const label = document.createElement('span')
-      label.textContent = `${name}  ${deps[name]}`
-      if (bundles.includes(name)) {
-        const tag = document.createElement('span')
-        tag.className = 'bundle-tag'
-        tag.textContent = 'bundle·自动挂载'
-        label.appendChild(tag)
-      }
-      const rm = document.createElement('button')
-      rm.className = 'rm'
-      rm.textContent = '移除'
-      rm.onclick = () => run('remove', name)
-      div.appendChild(label)
-      div.appendChild(rm)
-      $('installed').appendChild(div)
+  // ---- tabs ----
+  for (const b of document.querySelectorAll('#tabs button')) {
+    b.onclick = () => {
+      document.querySelectorAll('#tabs button').forEach((x) => x.classList.remove('active'))
+      document.querySelectorAll('.pane').forEach((x) => x.classList.remove('active'))
+      b.classList.add('active')
+      $('pane-' + b.dataset.pane).classList.add('active')
     }
   }
 
-  async function run(action, spec) {
+  // ---- plugins ----
+  async function refreshPlugins() {
+    const { deps, bundles } = await pluginApi.list()
+    const names = Object.keys(deps)
+    const box = $('installed')
+    if (names.length === 0) { box.textContent = '（无：还没有通过用户配置安装的插件）'; return }
+    box.innerHTML = ''
+    for (const name of names) {
+      const div = document.createElement('div'); div.className = 'item'
+      const label = document.createElement('span'); label.textContent = `${name}  ${deps[name]}`
+      if (bundles.includes(name)) {
+        const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = 'bundle·自动挂载'
+        label.appendChild(tag)
+      }
+      const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '移除'
+      rm.onclick = () => runPlugin('remove', name)
+      div.appendChild(label); div.appendChild(rm); box.appendChild(div)
+    }
+  }
+  async function runPlugin(action, spec) {
     if (busy || !spec) return
-    busy = true
-    $('add').disabled = true
+    busy = true; $('add').disabled = true
     log(`> dsh plugin --profile web ${action} ${spec}`)
-    const { code, output, needsAllowBuilds } = await window.pluginApi.run(action, spec)
-    log(output.trim())
-    log(code === 0 ? '✓ 完成' : `✗ 失败 (exit ${code})`)
-    if (code === 0) $('restartBar').style.display = 'block'
-    busy = false
-    $('add').disabled = false
-    refresh()
+    const { code, output, needsAllowBuilds } = await pluginApi.run(action, spec)
+    log(output.trim()); log(code === 0 ? '✓ 完成' : `✗ 失败 (exit ${code})`)
+    if (code === 0) $('restart-plugins').style.display = 'block'
+    busy = false; $('add').disabled = false
+    refreshPlugins()
     if (code !== 0 && needsAllowBuilds && needsAllowBuilds.length > 0) {
       log('')
       log('ℹ 该插件需要在安装时执行构建脚本（等同于运行第三方代码），桌面版不代为放行。')
@@ -90,11 +147,92 @@
       log('  （推荐优先使用插件市场 dshmarket 安装精选来源的插件。）')
     }
   }
+  $('add').onclick = () => runPlugin('add', $('spec').value.trim())
+  $('spec').addEventListener('keydown', (e) => { if (e.key === 'Enter') runPlugin('add', $('spec').value.trim()) })
 
-  $('add').onclick = () => run('add', $('spec').value.trim())
-  $('spec').addEventListener('keydown', (e) => { if (e.key === 'Enter') run('add', $('spec').value.trim()) })
-  $('restart').onclick = () => window.pluginApi.restart()
-  refresh()
+  // ---- MCP ----
+  let mcpServers = []
+  function renderMcp() {
+    const box = $('mcp-list')
+    if (mcpServers.length === 0) { box.textContent = '（尚未配置 MCP 服务器）'; return }
+    box.innerHTML = ''
+    for (const s of mcpServers) {
+      const div = document.createElement('div'); div.className = 'item'
+      const label = document.createElement('span')
+      label.innerHTML = `<b>${s.serverName}</b> <span class="meta">${s.transport === 'stdio'
+        ? `${s.command} ${(s.args || []).join(' ')}` : s.url}</span>`
+      const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '删除'
+      rm.onclick = async () => {
+        mcpServers = mcpServers.filter((x) => x.serverName !== s.serverName)
+        await saveMcp()
+      }
+      div.appendChild(label); div.appendChild(rm); box.appendChild(div)
+    }
+  }
+  async function saveMcp() {
+    const res = await pluginApi.mcpSave(mcpServers)
+    $('mcp-msg').textContent = res.ok ? '' : ('保存失败：' + res.error)
+    if (res.ok) { $('restart-mcp').style.display = 'block'; renderMcp() }
+    else { mcpServers = await pluginApi.mcpList(); renderMcp() }
+    return res.ok
+  }
+  $('m-transport').onchange = () => {
+    const stdio = $('m-transport').value === 'stdio'
+    for (const id of ['l-cmd', 'm-command', 'l-args', 'm-args']) $(id).style.display = stdio ? '' : 'none'
+    for (const id of ['l-url', 'm-url']) $(id).style.display = stdio ? 'none' : ''
+  }
+  $('m-save').onclick = async () => {
+    const kv = {}
+    for (const line of $('m-kv').value.split('\n')) {
+      const t = line.trim(); if (!t) continue
+      const i = t.indexOf('='); if (i < 1) { $('mcp-msg').textContent = `无效的 KEY=VALUE 行：${t}`; return }
+      kv[t.slice(0, i).trim()] = t.slice(i + 1).trim()
+    }
+    const transport = $('m-transport').value
+    const server = { serverName: $('m-name').value.trim(), transport }
+    if (transport === 'stdio') {
+      server.command = $('m-command').value.trim()
+      server.args = $('m-args').value.trim() ? $('m-args').value.trim().split(/\s+/) : []
+      if (Object.keys(kv).length) server.env = kv
+    } else {
+      server.url = $('m-url').value.trim()
+      if (Object.keys(kv).length) server.headers = kv
+    }
+    mcpServers = mcpServers.filter((x) => x.serverName !== server.serverName).concat([server])
+    if (await saveMcp()) { for (const id of ['m-name', 'm-command', 'm-args', 'm-url', 'm-kv']) $(id).value = '' }
+  }
+
+  // ---- skills ----
+  async function refreshSkills() {
+    const skills = await pluginApi.skillsList()
+    const box = $('skills-list')
+    if (skills.length === 0) { box.textContent = '（还没有用户技能，点"新建"创建一个）'; return }
+    box.innerHTML = ''
+    for (const s of skills) {
+      const div = document.createElement('div'); div.className = 'item'
+      const label = document.createElement('span')
+      label.innerHTML = `<b>${s.name}</b> <span class="meta">${s.description || ''}</span>`
+      const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '删除'
+      rm.onclick = async () => {
+        if (!confirm(`删除技能 "${s.name}"？`)) return
+        const res = await pluginApi.skillsDelete(s.name)
+        $('skills-msg').textContent = res.ok ? '' : res.error
+        refreshSkills()
+      }
+      div.appendChild(label); div.appendChild(rm); box.appendChild(div)
+    }
+  }
+  $('s-create').onclick = async () => {
+    const res = await pluginApi.skillsCreate($('s-name').value.trim())
+    $('skills-msg').textContent = res.ok ? '已创建并打开 SKILL.md，编辑保存即生效。' : res.error
+    if (res.ok) $('s-name').value = ''
+    refreshSkills()
+  }
+  $('s-open').onclick = () => pluginApi.skillsOpen()
+
+  refreshPlugins()
+  pluginApi.mcpList().then((s) => { mcpServers = s; renderMcp() })
+  refreshSkills()
 </script>
 </body>
 </html>

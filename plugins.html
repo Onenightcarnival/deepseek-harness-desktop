@@ -255,6 +255,7 @@
     $('s-install').disabled = false
     let msg = ''
     if (res.installed && res.installed.length) msg += `已安装：${res.installed.join('、')}，即时生效。`
+    if (res.overwritten && res.overwritten.length) msg += ` 已覆盖：${res.overwritten.join('、')}。`
     if (res.skipped && res.skipped.length) msg += ` 同名跳过：${res.skipped.join('、')}。`
     if (res.rejected && res.rejected.length) msg += ` 名称非法跳过：${res.rejected.join('、')}。`
     if (!msg) msg = res.error || ''

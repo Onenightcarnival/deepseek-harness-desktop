@@ -760,17 +760,42 @@ ipcMain.handle('skills:installZip', async () => {
       return { ok: false, error: `压缩包里没有可识别的技能（需要 SKILL.md 目录包或 .md 文件）${rejected.length ? `；名称无法转为 kebab-case 的已跳过：${rejected.join(', ')}` : ''}` }
     }
     fs.mkdirSync(skillsDir(), { recursive: true })
+    const exists = (name) => fs.existsSync(path.join(skillsDir(), name)) || fs.existsSync(path.join(skillsDir(), `${name}.md`))
+    const conflicts = found.filter((s) => exists(s.name)).map((s) => s.name)
+
+    // Same-name skills: ask once for the whole batch — overwrite, skip, or abort.
+    let overwrite = false
+    if (conflicts.length > 0) {
+      const { response } = await dialog.showMessageBox(pluginWindow || mainWindow, {
+        type: 'question',
+        title: '技能已存在',
+        message: `以下技能已存在：${conflicts.join('、')}`,
+        detail: '覆盖会用压缩包里的版本替换现有技能（原内容删除）；跳过则只安装不冲突的技能。',
+        buttons: ['覆盖', '跳过同名', '取消安装'],
+        defaultId: 1,
+        cancelId: 2,
+      })
+      if (response === 2) return { ok: false, error: '已取消安装' }
+      overwrite = response === 0
+    }
+
     const installed = []
+    const overwritten = []
     const skipped = []
     for (const s of found) {
+      const conflicted = exists(s.name)
+      if (conflicted && !overwrite) { skipped.push(s.name); continue }
+      if (conflicted) {
+        fs.rmSync(path.join(skillsDir(), s.name), { recursive: true, force: true })
+        fs.rmSync(path.join(skillsDir(), `${s.name}.md`), { force: true })
+      }
       const dest = path.join(skillsDir(), s.kind === 'bundle' ? s.name : `${s.name}.md`)
-      if (fs.existsSync(dest) || fs.existsSync(path.join(skillsDir(), s.name))) { skipped.push(s.name); continue }
       if (s.kind === 'bundle') fs.cpSync(s.src, dest, { recursive: true })
       else fs.copyFileSync(s.src, dest)
-      installed.push(s.name)
+      ;(conflicted ? overwritten : installed).push(s.name)
     }
-    return { ok: installed.length > 0, installed, skipped, rejected,
-      error: installed.length === 0 ? `全部同名跳过：${skipped.join(', ')}` : '' }
+    return { ok: installed.length + overwritten.length > 0, installed, overwritten, skipped, rejected,
+      error: installed.length + overwritten.length === 0 ? `全部同名跳过：${skipped.join(', ')}` : '' }
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) }
   } finally {

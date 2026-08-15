@@ -15,7 +15,9 @@ main.js             主进程全部逻辑：服务拉起/守护、菜单、更�
 runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目录选择（升级版优先+损坏回退）、
                     engines 粗校验、cordis patch 托管区块编辑（upsertManagedBlock/buildMcpBlock）、
                     zip 技能包内容识别（collectSkills）—— 刻意抽出来以便普通 node 直接单测
-plugins.html        配置中心窗口（三标签：插件 / MCP 服务器 / 技能）
+plugins.html        配置中心窗口（左侧导航三页：插件 / MCP 服务器 / 技能；MCP 为主从
+                    布局，表单仅暴露 streamable-http——validateMcpServer 与 buildMcpBlock
+                    仍接受 stdio 以兼容旧存量条目）
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动等待页
 stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 staging/<platform>-<arch>/dsh，

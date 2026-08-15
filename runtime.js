@@ -133,6 +133,7 @@ function buildMcpBlock(servers) {
   for (const s of servers) {
     lines.push(`    - id: mcp-${s.serverName}`)
     lines.push(`      name: '@deepseek-ai/dsh-mcp-client'`)
+    if (s.enabled === false) lines.push('      disabled: true')
     lines.push('      config:')
     lines.push(`        serverName: ${q(s.serverName)}`)
     lines.push(`        transport: ${q(s.transport)}`)

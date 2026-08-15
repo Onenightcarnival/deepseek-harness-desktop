@@ -4,95 +4,161 @@
 <meta charset="utf-8">
 <title>配置中心</title>
 <style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-         margin: 0; padding: 0; background: #16161a; color: #e8e8ec; font-size: 13px; }
-  #tabs { display: flex; border-bottom: 1px solid #2c2c34; background: #1c1c22; }
-  #tabs button { background: none; border: none; color: #9a9aa4; padding: 12px 20px; cursor: pointer;
-                 font-size: 13px; border-bottom: 2px solid transparent; }
-  #tabs button.active { color: #e8e8ec; border-bottom-color: #4d6bfe; }
-  .pane { display: none; padding: 16px; }
-  .pane.active { display: block; }
-  h2 { font-size: 14px; margin: 0 0 10px; }
-  .row { display: flex; gap: 8px; margin-bottom: 12px; }
-  input, select { background: #232329; color: #e8e8ec; border: 1px solid #34343c;
-          border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; }
-  input { flex: 1; }
-  input:focus, select:focus { border-color: #4d6bfe; }
-  button { background: #2c2c34; color: #e8e8ec; border: 1px solid #3a3a44; border-radius: 6px;
-           padding: 7px 14px; cursor: pointer; font-size: 13px; }
+         margin: 0; display: flex; background: #131318; color: #e8e8ec; font-size: 13px; }
+
+  /* ---- left nav ---- */
+  #nav { width: 148px; flex: none; background: #18181e; border-right: 1px solid #26262e;
+         padding: 14px 8px; display: flex; flex-direction: column; gap: 2px; }
+  #nav .nav-title { color: #7a7a86; font-size: 11px; padding: 0 10px 8px; letter-spacing: .5px; }
+  #nav button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+                background: none; border: none; color: #b9b9c2; padding: 8px 10px; border-radius: 8px;
+                cursor: pointer; font-size: 13px; }
+  #nav button:hover { background: #22222a; }
+  #nav button.active { background: #2a2c3a; color: #fff; }
+  #nav .icon { width: 16px; text-align: center; opacity: .9; }
+
+  /* ---- panes ---- */
+  #content { flex: 1; overflow: hidden; display: flex; }
+  .pane { display: none; flex: 1; min-width: 0; }
+  .pane.active { display: flex; }
+  .single { flex-direction: column; padding: 18px 20px; overflow: auto; }
+  h2 { font-size: 15px; margin: 0 0 4px; }
+  .sub { color: #8a8a96; font-size: 12px; line-height: 1.6; margin: 0 0 14px; }
+
+  /* ---- shared controls ---- */
+  input, select { background: #1e1e26; color: #e8e8ec; border: 1px solid #32323c;
+                  border-radius: 8px; padding: 8px 11px; font-size: 13px; outline: none; width: 100%; }
+  input:focus { border-color: #4d6bfe; }
+  button { background: #26262e; color: #e8e8ec; border: 1px solid #3a3a44; border-radius: 8px;
+           padding: 8px 14px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #2d2d37; }
   button.primary { background: #4d6bfe; border-color: #4d6bfe; color: #fff; }
-  button:disabled { opacity: .5; cursor: default; }
-  .list { background: #1c1c22; border: 1px solid #2c2c34; border-radius: 6px;
-          padding: 10px; margin-bottom: 12px; min-height: 48px; }
-  .item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; gap: 8px; }
-  .item .meta { color: #9a9aa4; font-size: 11.5px; }
-  .tag { color: #7ea0ff; font-size: 11px; margin-left: 8px; }
-  .rm { background: none; border: none; color: #ff7a7a; cursor: pointer; font-size: 12px; padding: 2px 6px; }
-  .log { background: #101014; border: 1px solid #2c2c34; border-radius: 6px; padding: 10px;
-         height: 150px; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace;
-         font-size: 11.5px; color: #9a9aa4; }
-  .hint { color: #9a9aa4; font-size: 12px; margin: 8px 0 12px; line-height: 1.6; }
-  .restart { display: none; margin-top: 12px; text-align: right; }
-  form.mcp { background: #1c1c22; border: 1px solid #2c2c34; border-radius: 6px; padding: 12px; margin-bottom: 12px; }
-  form.mcp .grid { display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
-  form.mcp label { color: #9a9aa4; font-size: 12px; text-align: right; }
-  form.mcp textarea { background: #232329; color: #e8e8ec; border: 1px solid #34343c; border-radius: 6px;
-                      padding: 6px 10px; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace;
-                      resize: vertical; min-height: 40px; }
+  button.primary:hover { background: #5d79ff; }
+  button.danger { background: none; border-color: #55333a; color: #ff8585; }
+  button.ghost { background: none; border: none; color: #8a8a96; padding: 4px 8px; }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .msg { color: #8a8a96; font-size: 12px; line-height: 1.6; min-height: 18px; margin-top: 10px; white-space: pre-wrap; }
+  .msg.ok { color: #6fd08c; } .msg.err { color: #ff8585; }
+
+  /* ---- cards & lists ---- */
+  .card { background: #1a1a21; border: 1px solid #26262e; border-radius: 10px; padding: 12px 14px; }
+  .item-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; }
+  .item-row:hover { background: #20202a; }
+  .item-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { color: #7a7a86; font-size: 11.5px; }
+  .tag { color: #7ea0ff; background: #232a45; border-radius: 5px; font-size: 10.5px; padding: 2px 6px; }
+
+  /* ---- toggle ---- */
+  .toggle { position: relative; width: 34px; height: 19px; flex: none; cursor: pointer; }
+  .toggle input { display: none; }
+  .toggle .knob { position: absolute; inset: 0; background: #3a3a46; border-radius: 10px; transition: background .15s; }
+  .toggle .knob::after { content: ''; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+                         background: #fff; border-radius: 50%; transition: left .15s; }
+  .toggle input:checked + .knob { background: #4d6bfe; }
+  .toggle input:checked + .knob::after { left: 17px; }
+
+  /* ---- MCP master-detail ---- */
+  #pane-mcp { flex-direction: row; }
+  #mcp-side { width: 220px; flex: none; border-right: 1px solid #26262e; display: flex; flex-direction: column; }
+  #mcp-side .side-head { padding: 16px 14px 10px; display: flex; align-items: center; justify-content: space-between; }
+  #mcp-side .side-head h2 { font-size: 14px; }
+  #mcp-side .add-btn { border-radius: 8px; padding: 4px 10px; font-size: 15px; line-height: 1; }
+  #mcp-servers { flex: 1; overflow: auto; padding: 0 8px 12px; }
+  .srv { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
+  .srv:hover { background: #20202a; }
+  .srv.sel { background: #2a2c3a; }
+  .srv .dot { width: 8px; height: 8px; border-radius: 50%; background: #4a4a56; flex: none; }
+  .srv .dot.ok { background: #58c07a; } .srv .dot.err { background: #e05b5b; }
+  .srv .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .srv .off { color: #7a7a86; font-size: 10.5px; }
+  #mcp-empty { color: #7a7a86; font-size: 12px; text-align: center; padding: 30px 12px; }
+  #mcp-detail { flex: 1; overflow: auto; padding: 18px 22px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; color: #9a9aa6; font-size: 12px; margin-bottom: 6px; }
+  .kv-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .kv-row input { flex: 1; }
+  .kv-row .k { flex: 0 0 38%; }
+  #mcp-none { color: #7a7a86; display: flex; flex: 1; align-items: center; justify-content: center; }
+
+  .log { background: #101014; border: 1px solid #26262e; border-radius: 10px; padding: 10px 12px;
+         height: 170px; overflow: auto; white-space: pre-wrap;
+         font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #9a9aa4; }
+  .spacer { flex: 1; }
 </style>
 </head>
 <body>
-  <div id="tabs">
-    <button data-pane="plugins" class="active">插件</button>
-    <button data-pane="mcp">MCP 服务器</button>
-    <button data-pane="skills">技能</button>
-  </div>
+  <nav id="nav">
+    <div class="nav-title">配置中心</div>
+    <button data-pane="plugins" class="active"><span class="icon">◫</span>插件</button>
+    <button data-pane="mcp"><span class="icon">⇄</span>MCP 服务器</button>
+    <button data-pane="skills"><span class="icon">✦</span>技能</button>
+  </nav>
+
+  <div id="content">
 
   <!-- ============ 插件 ============ -->
-  <div class="pane active" id="pane-plugins">
-    <h2>安装插件</h2>
-    <div class="row">
-      <input id="spec" placeholder="npm 包名或来源，如 some-dsh-plugin@1.2.0、github:owner/repo" spellcheck="false">
-      <button id="add" class="primary">安装</button>
+  <div class="pane single active" id="pane-plugins">
+    <h2>插件</h2>
+    <p class="sub">按 npm 包名或来源安装到你的用户配置层；带 bundle 标记的重启后自动生效。需要执行构建脚本的插件（多为 GitHub 源码分发）请通过菜单「插件 → 打开命令行窗口」按提示安装。</p>
+    <div class="row" style="margin-bottom:12px">
+      <input id="spec" placeholder="some-dsh-plugin@1.2.0 或 github:owner/repo" spellcheck="false">
+      <button id="add" class="primary" style="flex:none">安装</button>
     </div>
-    <div class="hint">插件安装到你的用户配置（~/.dsh/profiles/web），声明了 dsh.bundle 的插件包重启后自动生效；普通插件包还需在配置层挂载。需要执行构建脚本的插件（多为 GitHub 源码分发）请通过命令行窗口按提示安装。</div>
-    <h2>已安装（用户配置层）</h2>
-    <div id="installed" class="list">加载中…</div>
-    <h2>输出</h2>
-    <div id="log" class="log"></div>
-    <div class="restart" id="restart-plugins"><button class="primary" onclick="pluginApi.restart()">重启应用生效</button></div>
+    <div class="card" id="installed" style="margin-bottom:12px">加载中…</div>
+    <div class="log" id="log"></div>
+    <div class="row" style="margin-top:10px; display:none" id="restart-plugins">
+      <span class="spacer"></span><button class="primary" onclick="pluginApi.restart()">重启应用生效</button>
+    </div>
   </div>
 
   <!-- ============ MCP ============ -->
   <div class="pane" id="pane-mcp">
-    <h2>MCP 服务器</h2>
-    <div class="hint">连接的 MCP 服务器工具会以 mcp__服务器名__工具名 的形式提供给模型。本机没有 npm/npx：stdio 命令请用 pnpm dlx 包名 的形式，或填可执行文件绝对路径。保存即生效（配置写入你的用户配置层，dsh 几秒内热加载，无需重启）。连不上时点「查看服务日志」排查。</div>
-    <div id="mcp-list" class="list">加载中…</div>
-    <form class="mcp" id="mcp-form" onsubmit="return false">
-      <div class="grid">
-        <label>服务器名</label><input id="m-name" placeholder="github（字母数字_-，作为工具名前缀）" spellcheck="false">
-        <label>传输方式</label><select id="m-transport"><option value="stdio">stdio（本地进程）</option><option value="streamable-http">streamable-http（远程 URL）</option></select>
-        <label id="l-cmd">命令</label><input id="m-command" placeholder="pnpm" spellcheck="false">
-        <label id="l-args">参数</label><input id="m-args" placeholder="dlx @modelcontextprotocol/server-github（空格分隔）" spellcheck="false">
-        <label id="l-url" style="display:none">URL</label><input id="m-url" placeholder="https://example.com/mcp" spellcheck="false" style="display:none">
-        <label>环境变量/头</label><textarea id="m-kv" placeholder="每行一条 KEY=VALUE（stdio 为环境变量，http 为请求头）" spellcheck="false"></textarea>
+    <div id="mcp-side">
+      <div class="side-head"><h2>MCP 服务器</h2><button class="add-btn" id="m-add" title="添加服务器">＋</button></div>
+      <div id="mcp-servers"></div>
+    </div>
+    <div id="mcp-detail" style="display:none">
+      <div class="row" style="margin-bottom:16px">
+        <h2 id="m-title" style="flex:1">服务器</h2>
+        <label class="toggle" title="启用/停用（停用保留配置，热断开连接）">
+          <input type="checkbox" id="m-enabled"><span class="knob"></span>
+        </label>
       </div>
-      <div style="text-align:right"><button id="m-test">测试连接</button> <button class="primary" id="m-save">添加并保存</button></div>
-    </form>
-    <div id="mcp-msg" class="hint"></div>
-    <div style="text-align:right"><button onclick="pluginApi.openLog()">查看服务日志</button></div>
+      <div class="field"><label>名称（作为工具前缀 mcp__名称__，限字母数字_-）</label>
+        <input id="m-name" placeholder="my-server" spellcheck="false"></div>
+      <div class="field"><label>服务器地址（streamable-http；本机/内网服务通常是 http:// 而非 https://）</label>
+        <input id="m-url" placeholder="http://127.0.0.1:8080/mcp" spellcheck="false"></div>
+      <div class="field"><label>请求头（用于认证等，可留空）</label>
+        <div id="m-headers"></div>
+        <button class="ghost" id="m-add-header">＋ 添加请求头</button></div>
+      <div class="row" style="margin-top:18px">
+        <button class="danger" id="m-del">删除</button>
+        <span class="spacer"></span>
+        <button id="m-test">测试连接</button>
+        <button class="primary" id="m-save">保存</button>
+      </div>
+      <div class="msg" id="mcp-msg"></div>
+      <p class="sub" style="margin-top:14px">保存即生效：配置写入你的用户配置层，dsh 几秒内热加载，无需重启。连接失败不会弹错——用「测试连接」验证，或<a href="#" onclick="pluginApi.openLog();return false" style="color:#7ea0ff">查看服务日志</a>。</p>
+    </div>
+    <div id="mcp-none">左侧 ＋ 添加一个 MCP 服务器</div>
   </div>
 
   <!-- ============ 技能 ============ -->
-  <div class="pane" id="pane-skills">
-    <h2>技能（~/.dsh/skills）</h2>
-    <div class="hint">技能是给模型的可选指令包，模型按名称和描述自行决定调用。安装/删除即时生效，无需重启。zip 可以是单个技能（根目录含 SKILL.md）或多技能合集（每个子目录一个技能）；也可直接打开目录手动增删，项目级技能放项目根目录的 .dsh/skills/ 下（优先级更高）。</div>
-    <div class="row">
+  <div class="pane single" id="pane-skills">
+    <h2>技能</h2>
+    <p class="sub">给模型的可选指令包，按名称与描述自动调用；安装/删除即时生效。zip 可为单个技能（根目录含 SKILL.md）或多技能合集（每个子目录一个技能）。</p>
+    <div class="row" style="margin-bottom:12px">
       <button id="s-install" class="primary">安装技能（.zip）</button>
       <button id="s-open">打开技能目录</button>
     </div>
-    <div id="skills-list" class="list">加载中…</div>
-    <div id="skills-msg" class="hint"></div>
+    <div class="card" id="skills-list">加载中…</div>
+    <div class="msg" id="skills-msg"></div>
+  </div>
+
   </div>
 
 <script>
@@ -100,33 +166,37 @@
   const log = (t) => { $('log').textContent += t + '\n'; $('log').scrollTop = 1e9 }
   let busy = false
 
-  // ---- tabs ----
-  for (const b of document.querySelectorAll('#tabs button')) {
+  // ---- nav ----
+  for (const b of document.querySelectorAll('#nav button')) {
     b.onclick = () => {
-      document.querySelectorAll('#tabs button').forEach((x) => x.classList.remove('active'))
+      document.querySelectorAll('#nav button').forEach((x) => x.classList.remove('active'))
       document.querySelectorAll('.pane').forEach((x) => x.classList.remove('active'))
       b.classList.add('active')
       $('pane-' + b.dataset.pane).classList.add('active')
     }
   }
 
-  // ---- plugins ----
+  // ================= 插件 =================
   async function refreshPlugins() {
     const { deps, bundles } = await pluginApi.list()
     const names = Object.keys(deps)
     const box = $('installed')
-    if (names.length === 0) { box.textContent = '（无：还没有通过用户配置安装的插件）'; return }
+    if (names.length === 0) { box.textContent = '还没有通过用户配置安装的插件'; return }
     box.innerHTML = ''
     for (const name of names) {
-      const div = document.createElement('div'); div.className = 'item'
-      const label = document.createElement('span'); label.textContent = `${name}  ${deps[name]}`
+      const div = document.createElement('div'); div.className = 'item-row'
+      const label = document.createElement('span'); label.className = 'grow'; label.textContent = name
+      const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = deps[name]
+      div.appendChild(label)
       if (bundles.includes(name)) {
-        const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = 'bundle·自动挂载'
-        label.appendChild(tag)
+        const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = '自动挂载'
+        div.appendChild(tag)
       }
-      const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '移除'
-      rm.onclick = () => runPlugin('remove', name)
-      div.appendChild(label); div.appendChild(rm); box.appendChild(div)
+      div.appendChild(meta)
+      const rm = document.createElement('button'); rm.className = 'danger'; rm.style.padding = '3px 10px'
+      rm.textContent = '移除'; rm.onclick = () => runPlugin('remove', name)
+      div.appendChild(rm)
+      box.appendChild(div)
     }
   }
   async function runPlugin(action, spec) {
@@ -135,7 +205,7 @@
     log(`> dsh plugin --profile web ${action} ${spec}`)
     const { code, output, needsAllowBuilds } = await pluginApi.run(action, spec)
     log(output.trim()); log(code === 0 ? '✓ 完成' : `✗ 失败 (exit ${code})`)
-    if (code === 0) $('restart-plugins').style.display = 'block'
+    if (code === 0) $('restart-plugins').style.display = 'flex'
     busy = false; $('add').disabled = false
     refreshPlugins()
     if (code !== 0 && needsAllowBuilds && needsAllowBuilds.length > 0) {
@@ -149,97 +219,142 @@
   $('add').onclick = () => runPlugin('add', $('spec').value.trim())
   $('spec').addEventListener('keydown', (e) => { if (e.key === 'Enter') runPlugin('add', $('spec').value.trim()) })
 
-  // ---- MCP ----
-  let mcpServers = []
-  function renderMcp() {
-    const box = $('mcp-list')
-    if (mcpServers.length === 0) { box.textContent = '（尚未配置 MCP 服务器）'; return }
+  // ================= MCP（主-从） =================
+  let servers = []            // 持久数据
+  let sel = -1                // 选中下标
+  const testState = {}        // serverName -> 'ok' | 'err'
+
+  function renderServerList() {
+    const box = $('mcp-servers')
     box.innerHTML = ''
-    for (const s of mcpServers) {
-      const div = document.createElement('div'); div.className = 'item'
-      const label = document.createElement('span')
-      label.innerHTML = `<b>${s.serverName}</b> <span class="meta">${s.transport === 'stdio'
-        ? `${s.command} ${(s.args || []).join(' ')}` : s.url}</span>`
-      const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '删除'
-      rm.onclick = async () => {
-        mcpServers = mcpServers.filter((x) => x.serverName !== s.serverName)
-        await saveMcp()
+    if (servers.length === 0) {
+      const d = document.createElement('div'); d.id = 'mcp-empty'
+      d.textContent = '还没有服务器'
+      box.appendChild(d)
+    }
+    servers.forEach((s, i) => {
+      const div = document.createElement('div'); div.className = 'srv' + (i === sel ? ' sel' : '')
+      const dot = document.createElement('span')
+      dot.className = 'dot' + (testState[s.serverName] === 'ok' ? ' ok' : testState[s.serverName] === 'err' ? ' err' : '')
+      const name = document.createElement('span'); name.className = 'name'
+      name.textContent = s.serverName || '（未命名）'
+      div.appendChild(dot); div.appendChild(name)
+      if (s.enabled === false) {
+        const off = document.createElement('span'); off.className = 'off'; off.textContent = '已停用'
+        div.appendChild(off)
       }
-      div.appendChild(label); div.appendChild(rm); box.appendChild(div)
-    }
-  }
-  async function saveMcp() {
-    const res = await pluginApi.mcpSave(mcpServers)
-    $('mcp-msg').textContent = res.ok ? '' : ('保存失败：' + res.error)
-    if (res.ok) { $('mcp-msg').textContent = '已保存并热加载生效（如服务器连接失败不会报错，请查日志确认）。'; renderMcp() }
-    else { mcpServers = await pluginApi.mcpList(); renderMcp() }
-    return res.ok
-  }
-  $('m-transport').onchange = () => {
-    const stdio = $('m-transport').value === 'stdio'
-    for (const id of ['l-cmd', 'm-command', 'l-args', 'm-args']) $(id).style.display = stdio ? '' : 'none'
-    for (const id of ['l-url', 'm-url']) $(id).style.display = stdio ? 'none' : ''
-  }
-  function readMcpForm() {
-    const kv = {}
-    for (const line of $('m-kv').value.split('\n')) {
-      const t = line.trim(); if (!t) continue
-      const i = t.indexOf('='); if (i < 1) return { error: `无效的 KEY=VALUE 行：${t}` }
-      kv[t.slice(0, i).trim()] = t.slice(i + 1).trim()
-    }
-    const transport = $('m-transport').value
-    const server = { serverName: $('m-name').value.trim(), transport }
-    if (transport === 'stdio') {
-      server.command = $('m-command').value.trim()
-      server.args = $('m-args').value.trim() ? $('m-args').value.trim().split(/\s+/) : []
-      if (Object.keys(kv).length) server.env = kv
-    } else {
-      server.url = $('m-url').value.trim()
-      if (Object.keys(kv).length) server.headers = kv
-    }
-    return { server }
-  }
-  $('m-test').onclick = async () => {
-    const { server, error } = readMcpForm()
-    if (error) { $('mcp-msg').textContent = error; return }
-    $('m-test').disabled = true
-    $('mcp-msg').textContent = '测试中…'
-    const res = await pluginApi.mcpTest(server)
-    $('mcp-msg').textContent = (res.ok ? '✓ ' : '✗ ') + res.detail
-    $('m-test').disabled = false
-  }
-  $('m-save').onclick = async () => {
-    const kv = {}
-    for (const line of $('m-kv').value.split('\n')) {
-      const t = line.trim(); if (!t) continue
-      const i = t.indexOf('='); if (i < 1) { $('mcp-msg').textContent = `无效的 KEY=VALUE 行：${t}`; return }
-      kv[t.slice(0, i).trim()] = t.slice(i + 1).trim()
-    }
-    const transport = $('m-transport').value
-    const server = { serverName: $('m-name').value.trim(), transport }
-    if (transport === 'stdio') {
-      server.command = $('m-command').value.trim()
-      server.args = $('m-args').value.trim() ? $('m-args').value.trim().split(/\s+/) : []
-      if (Object.keys(kv).length) server.env = kv
-    } else {
-      server.url = $('m-url').value.trim()
-      if (Object.keys(kv).length) server.headers = kv
-    }
-    mcpServers = mcpServers.filter((x) => x.serverName !== server.serverName).concat([server])
-    if (await saveMcp()) { for (const id of ['m-name', 'm-command', 'm-args', 'm-url', 'm-kv']) $(id).value = '' }
+      div.onclick = () => { select(i) }
+      box.appendChild(div)
+    })
   }
 
-  // ---- skills ----
+  function headerRow(k = '', v = '') {
+    const row = document.createElement('div'); row.className = 'kv-row'
+    const ki = document.createElement('input'); ki.className = 'k'; ki.placeholder = 'Authorization'; ki.value = k
+    const vi = document.createElement('input'); vi.placeholder = 'Bearer …'; vi.value = v
+    const x = document.createElement('button'); x.className = 'ghost'; x.textContent = '×'
+    x.onclick = () => row.remove()
+    row.appendChild(ki); row.appendChild(vi); row.appendChild(x)
+    return row
+  }
+
+  function select(i) {
+    sel = i
+    renderServerList()
+    const s = servers[i]
+    if (!s) { $('mcp-detail').style.display = 'none'; $('mcp-none').style.display = 'flex'; return }
+    $('mcp-none').style.display = 'none'
+    $('mcp-detail').style.display = 'block'
+    $('m-title').textContent = s.serverName || '新服务器'
+    $('m-enabled').checked = s.enabled !== false
+    $('m-name').value = s.serverName || ''
+    $('m-url').value = s.url || ''
+    const hb = $('m-headers'); hb.innerHTML = ''
+    for (const [k, v] of Object.entries(s.headers || {})) hb.appendChild(headerRow(k, v))
+    $('mcp-msg').textContent = ''; $('mcp-msg').className = 'msg'
+    if (s.transport === 'stdio') setMsg('此条目为 stdio 类型（旧版创建），当前界面仅支持 streamable-http：保留它会继续生效，但在此保存会转换类型。', 'err')
+  }
+
+  function readForm() {
+    const headers = {}
+    for (const row of $('m-headers').querySelectorAll('.kv-row')) {
+      const [ki, vi] = row.querySelectorAll('input')
+      if (ki.value.trim()) headers[ki.value.trim()] = vi.value.trim()
+    }
+    const s = {
+      serverName: $('m-name').value.trim(),
+      transport: 'streamable-http',
+      url: $('m-url').value.trim(),
+      enabled: $('m-enabled').checked,
+    }
+    if (Object.keys(headers).length) s.headers = headers
+    return s
+  }
+
+  function setMsg(text, cls) { const m = $('mcp-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
+
+  async function persist() {
+    const res = await pluginApi.mcpSave(servers)
+    if (!res.ok) { setMsg('保存失败：' + res.error, 'err'); servers = await pluginApi.mcpList(); renderServerList(); return false }
+    setMsg('已保存，热加载生效（连接失败不会弹错，可用「测试连接」验证）', 'ok')
+    renderServerList()
+    return true
+  }
+
+  $('m-add').onclick = () => {
+    servers.push({ serverName: '', transport: 'streamable-http', url: '', enabled: true })
+    select(servers.length - 1)
+    $('m-name').focus()
+  }
+  $('m-save').onclick = async () => {
+    if (sel < 0) return
+    const s = readForm()
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(s.serverName)) { setMsg('名称需为 1-32 位字母/数字/_-', 'err'); return }
+    if (!/^https?:\/\//.test(s.url)) { setMsg('地址需以 http:// 或 https:// 开头', 'err'); return }
+    if (servers.some((x, i) => i !== sel && x.serverName === s.serverName)) { setMsg('名称与已有服务器重复', 'err'); return }
+    servers[sel] = s
+    if (await persist()) $('m-title').textContent = s.serverName
+  }
+  $('m-del').onclick = async () => {
+    if (sel < 0) return
+    const name = servers[sel].serverName || '（未命名）'
+    if (!confirm(`删除服务器 "${name}"？`)) return
+    servers.splice(sel, 1)
+    await persist()
+    select(servers.length ? Math.min(sel, servers.length - 1) : -1)
+  }
+  $('m-enabled').onchange = async () => {
+    if (sel < 0) return
+    servers[sel].enabled = $('m-enabled').checked
+    if (servers[sel].serverName) await persist()
+    renderServerList()
+  }
+  $('m-add-header').onclick = () => $('m-headers').appendChild(headerRow())
+  $('m-test').onclick = async () => {
+    if (sel < 0) return
+    const s = readForm()
+    if (!/^https?:\/\//.test(s.url)) { setMsg('先填写有效地址再测试', 'err'); return }
+    $('m-test').disabled = true
+    setMsg('测试中…')
+    const res = await pluginApi.mcpTest(s)
+    testState[s.serverName] = res.ok ? 'ok' : 'err'
+    setMsg((res.ok ? '✓ ' : '✗ ') + res.detail, res.ok ? 'ok' : 'err')
+    $('m-test').disabled = false
+    renderServerList()
+  }
+
+  // ================= 技能 =================
   async function refreshSkills() {
     const skills = await pluginApi.skillsList()
     const box = $('skills-list')
-    if (skills.length === 0) { box.textContent = '（还没有用户技能，点"新建"创建一个）'; return }
+    if (skills.length === 0) { box.textContent = '还没有用户技能，点「安装技能」导入一个'; return }
     box.innerHTML = ''
     for (const s of skills) {
-      const div = document.createElement('div'); div.className = 'item'
-      const label = document.createElement('span')
+      const div = document.createElement('div'); div.className = 'item-row'
+      const label = document.createElement('span'); label.className = 'grow'
       label.innerHTML = `<b>${s.name}</b> <span class="meta">${s.description || ''}</span>`
-      const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '删除'
+      const rm = document.createElement('button'); rm.className = 'danger'; rm.style.padding = '3px 10px'
+      rm.textContent = '删除'
       rm.onclick = async () => {
         if (!confirm(`删除技能 "${s.name}"？`)) return
         const res = await pluginApi.skillsDelete(s.name)
@@ -264,8 +379,9 @@
   }
   $('s-open').onclick = () => pluginApi.skillsOpen()
 
+  // ---- init ----
   refreshPlugins()
-  pluginApi.mcpList().then((s) => { mcpServers = s; renderMcp() })
+  pluginApi.mcpList().then((s) => { servers = s; renderServerList(); if (servers.length) select(0) })
   refreshSkills()
 </script>
 </body>

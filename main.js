@@ -251,6 +251,7 @@ function applyMcpToProfile(servers) {
 /** Validate one MCP server object from the GUI; returns an error string or null. */
 function validateMcpServer(s, seen) {
   if (!/^[A-Za-z0-9_-]{1,32}$/.test(s.serverName || '')) return `服务器名 "${s.serverName}" 无效（限 [A-Za-z0-9_-]{1,32}）`
+  if (s.enabled !== undefined && typeof s.enabled !== 'boolean') return `"${s.serverName}" 的 enabled 无效`
   if (seen.has(s.serverName)) return `服务器名 "${s.serverName}" 重复`
   seen.add(s.serverName)
   const noCtl = (v) => typeof v === 'string' && v.length < 2000 && !/[\r\n\0]/.test(v)
@@ -565,8 +566,8 @@ let pluginWindow = null
 function openPluginManager() {
   if (pluginWindow && !pluginWindow.isDestroyed()) { pluginWindow.focus(); return }
   pluginWindow = new BrowserWindow({
-    width: 640,
-    height: 560,
+    width: 880,
+    height: 620,
     title: '配置中心',
     parent: mainWindow || undefined,
     webPreferences: {

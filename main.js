@@ -717,8 +717,10 @@ function stopServer() {
   if (serverProc) {
     try {
       if (process.platform === 'win32') {
-        // Kill the whole tree on Windows (dsh spawns its own children).
-        spawn('taskkill', ['/pid', String(serverProc.pid), '/T', '/F'], { windowsHide: true })
+        // Kill the whole tree on Windows (dsh spawns its own children) and
+        // wait for it, so quitting the app never abandons lock-holding
+        // descendants (conpty agents etc.) in the install directory.
+        require('child_process').spawnSync('taskkill', ['/pid', String(serverProc.pid), '/T', '/F'], { windowsHide: true, timeout: 10_000 })
       } else {
         serverProc.kill('SIGTERM')
       }

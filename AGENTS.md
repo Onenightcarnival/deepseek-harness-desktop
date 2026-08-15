@@ -22,7 +22,8 @@ stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 st
 afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh
 desktop-patch.yml   随包分发的插件组合覆盖层（默认空）
 plugins.json        要预置进安装包的插件 npm 包列表（默认空）
-build/              图标；.github/workflows/release.yml  CI 构建与发版
+build/              图标 + installer.nsh（NSIS customCheckAppRunning 覆盖：安装前
+                    树杀应用进程 + 按路径扫尾，见坑清单）；.github/workflows/release.yml  CI 构建与发版
 ```
 
 ## Agent 工作环境与验证手段
@@ -54,6 +55,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - **本仓库若被放进 pnpm workspace（如上游 fork 的子目录）**，electron-builder 会向上探测 workspace 根并错误改用 pnpm 收集依赖——必须把本目录拷到仓库外构建（独立仓库布局无此问题）。
 - **CLI 启动器是 dsh / pnpm / node 三件套**，缺一不可：pnpm 生命周期脚本会裸调 `node`，用户机器上没有 Node.js。pnpm 本体只随**内置**运行时分发（`dsh/tools/`），应用内升级的运行时没有 tools 目录，取 pnpm 路径必须锚定 `bundledDshDir()`。
 - **pnpm 两道门禁**：allowBuilds（构建脚本审批——配置中心**有意不代为放行**，这是安全边界，只提示走命令行）；minimumReleaseAge（新发布版本冷却期——裸装包名可能**静默降级**到远古版本，表现为"装上了但没效果"，显式带版本号可豁免）。
+- **Windows 覆盖安装靠 build/installer.nsh 的 customCheckAppRunning**。默认 NSIS 关闭逻辑在 PowerShell 不可用时只按进程名杀主程序，漏掉安装目录里 dsh 拉起的 conpty 代理（OpenConsole.exe / winpty-agent.exe），文件被锁导致 "app cannot be closed"。自定义宏用 `taskkill /F /T` 树杀 + 路径扫尾。注意：定义了 customCheckAppRunning 后模板会跳过自带的 `Var pid` 与 getProcessInfo include，必须自备（编译期 warning 即失败，本地 `electron-builder --win` 能在 Linux 上验证 NSIS 编译）。
 - **升级 Electron 版本前**确认其内置 Node 满足 dsh 的 engines（当前 `^22.19 || >=24`）；`runtime.js` 的 `satisfiesNode` 在应用内内核升级前也做同样检查，升级失败有自动隔离回退（`.broken-` 目录后缀）。
 
 ## 维护本文档与 README

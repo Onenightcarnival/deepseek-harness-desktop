@@ -1,7 +1,7 @@
 {
   "name": "deepseek-harness-desktop",
   "productName": "DeepSeek Harness",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Desktop shell for DeepSeek Harness (dsh) — unofficial packaging of the dsh web UI",
   "main": "main.js",
   "license": "MIT",
@@ -53,7 +53,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "DeepSeek Harness",
-      "artifactName": "DeepSeek-Harness-Setup-${version}-win-${arch}.${ext}"
+      "artifactName": "DeepSeek-Harness-Setup-${version}-win-${arch}.${ext}",
+      "include": "build/installer.nsh"
     },
     "mac": {
       "target": [

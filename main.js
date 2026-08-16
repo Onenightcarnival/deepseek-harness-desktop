@@ -369,11 +369,26 @@ function writeCliLaunchers() {
 function openCliTerminal() {
   const binDir = writeCliLaunchers()
   if (process.platform === 'win32') {
-    // A fresh console window running cmd with PATH prepended.
-    const child = spawn('cmd.exe', ['/K', `set "PATH=${binDir};%PATH%" && title DeepSeek Harness CLI && echo dsh 命令行已就绪：可直接使用 dsh / pnpm 命令`], {
-      detached: true, stdio: 'ignore', windowsHide: false,
+    // Mirror of the macOS .command approach: write a batch file and let
+    // ShellExecute run it — that reliably allocates a visible console.
+    // A direct spawn('cmd.exe', …, { detached }) does NOT: libuv maps
+    // detached to DETACHED_PROCESS, so cmd runs without a console window
+    // ("nothing happens"). Batch is parsed in the console codepage, hence
+    // chcp 65001 before any non-ASCII line (file is saved as UTF-8).
+    const cmdFile = path.join(binDir, 'DeepSeek Harness CLI.cmd')
+    fs.writeFileSync(cmdFile, [
+      '@echo off',
+      'chcp 65001 >nul',
+      'title DeepSeek Harness CLI',
+      `set "PATH=${binDir};%PATH%"`,
+      'echo dsh 命令行已就绪：可直接使用 dsh / pnpm 命令',
+      'echo 例如：dsh plugin --profile web add ^<插件包^>',
+      'cmd /K',
+      '',
+    ].join('\r\n'))
+    shell.openPath(cmdFile).then((err) => {
+      if (err) dialog.showErrorBox('无法打开命令行窗口', `${err}\n\n可手动打开该文件：\n${cmdFile}`)
     })
-    child.unref()
     return
   }
   if (process.platform === 'darwin') {

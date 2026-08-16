@@ -60,6 +60,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - **pnpm 两道门禁**：allowBuilds（构建脚本审批——配置中心**有意不代为放行**，这是安全边界，只提示走命令行）；minimumReleaseAge（新发布版本冷却期——裸装包名可能**静默降级**到远古版本，表现为"装上了但没效果"，显式带版本号可豁免）。
 - **MCP 的 GUI 配置写入 `~/.dsh/profiles/web/cordis.patch.yml` 的标记托管区块**（`# >>> dsh-desktop mcp >>>`），因为该文件被 dsh 热加载、dsh-mcp-client 支持配置热替换——保存即生效不用重启。只改标记区块、保留用户手写条目；文件默认内容是 flow 空列表 `[]`，与块列表条目不能共存，upsertManagedBlock 已处理（含单测）。已知余波：移除条目时经 `pnpm dlx` 包装启动的旧 MCP 服务器进程可能残留到应用退出。
 - **Windows 覆盖安装靠 build/installer.nsh 的 customCheckAppRunning**。默认 NSIS 关闭逻辑在 PowerShell 不可用时只按进程名杀主程序，漏掉安装目录里 dsh 拉起的 conpty 代理（OpenConsole.exe / winpty-agent.exe），文件被锁导致 "app cannot be closed"。自定义宏用 `taskkill /F /T` 树杀 + 路径扫尾。注意：定义了 customCheckAppRunning 后模板会跳过自带的 `Var pid` 与 getProcessInfo include，必须自备（编译期 warning 即失败，本地 `electron-builder --win` 能在 Linux 上验证 NSIS 编译）。
+- **Windows 上开新控制台窗口不能用 `spawn('cmd.exe', …, { detached: true })`**：libuv 把 detached 映射为 `DETACHED_PROCESS`，cmd 不会分配控制台，表现为"点了没反应"。写 `.cmd` 批处理文件再 `shell.openPath`（ShellExecute）才可靠出窗口；批处理按控制台代码页解析，含中文需文件存 UTF-8 且首行后紧跟 `chcp 65001`。
 - **升级 Electron 版本前**确认其内置 Node 满足 dsh 的 engines（当前 `^22.19 || >=24`）；`runtime.js` 的 `satisfiesNode` 在应用内内核升级前也做同样检查，升级失败有自动隔离回退（`.broken-` 目录后缀）。
 
 ## 维护本文档与 README

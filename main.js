@@ -450,38 +450,47 @@ function openCliTerminal() {
  */
 function seedPresetPlugins() {
   try {
-    const manifestPath = path.join(bundledDshDir(), 'preset-plugins.json')
-    if (!fs.existsSync(manifestPath)) return
-    const presets = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    // Runs in EVERY flavor: the minimal build must be able to withdraw
+    // seeds a previously installed full build left in the profile, or an
+    // overwrite install full→minimal crashes boot with "cannot resolve
+    // profile bundle".
+    let presets = {}
+    try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')) } catch { /* minimal flavor */ }
     const markerPath = path.join(app.getPath('userData'), 'seeded-presets.json')
     let seeded = []
     try { seeded = JSON.parse(fs.readFileSync(markerPath, 'utf8')) } catch { /* first run */ }
+    if (Object.keys(presets).length === 0 && seeded.length === 0) return
     const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
-    // Every boot, not just when seeding: a stale leftover of the package in
-    // the profile's OWN node_modules (remnants of an old `dsh plugin
-    // remove` can keep package.json/LICENSE while losing the code) shadows
-    // the healed fallback in profiles/node_modules and crashes boot with
-    // "Cannot find package …". Usable = its declared entry file actually
-    // exists; anything else is trash — clear it. A real install is left
-    // alone and wins over the preset.
-    for (const name of Object.keys(presets)) {
-      const localDir = path.join(profileDir, 'node_modules', ...name.split('/'))
+
+    /** Does <dir> hold a loadable copy of the package (entry file exists)? */
+    const usableAt = (base, name) => {
+      const pkgDir = path.join(base, ...name.split('/'))
       try {
-        if (!fs.existsSync(localDir)) continue
-        let usable = false
-        try {
-          const pj = JSON.parse(fs.readFileSync(path.join(localDir, 'package.json'), 'utf8'))
-          const entry = pj.main || (typeof pj.exports === 'string' ? pj.exports : null) || 'index.js'
-          usable = fs.existsSync(path.join(localDir, entry))
-        } catch { /* no/broken package.json -> not usable */ }
-        if (!usable) {
+        const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'))
+        const entry = pj.main || (typeof pj.exports === 'string' ? pj.exports : null) || 'index.js'
+        return fs.existsSync(path.join(pkgDir, entry))
+      } catch { return false }
+    }
+    const localNm = path.join(profileDir, 'node_modules')
+    const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
+    // Resolvable by the ACTIVE runtime = user's own profile install, or the
+    // runtime's app closure (what heals into profiles/node_modules).
+    const resolvable = (name) => usableAt(localNm, name) || usableAt(runtimeNm, name)
+
+    // A stale leftover of the package in the profile's OWN node_modules
+    // (remnants of `dsh plugin remove` can keep package.json/LICENSE while
+    // losing the code) shadows the healed fallback and crashes boot —
+    // clear it. A real install (entry file present) wins over the preset.
+    for (const name of new Set([...Object.keys(presets), ...seeded])) {
+      const localDir = path.join(localNm, ...name.split('/'))
+      try {
+        if (fs.existsSync(localDir) && !usableAt(localNm, name)) {
           fs.rmSync(localDir, { recursive: true, force: true })
           console.log(`cleared broken leftover of ${name} from profile node_modules`)
         }
       } catch { /* best-effort */ }
     }
-    const pending = Object.keys(presets).filter((n) => !seeded.includes(n))
-    if (pending.length === 0) return
+
     const pkgPath = path.join(profileDir, 'package.json')
     let pkg = fs.existsSync(pkgPath)
       ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
@@ -490,14 +499,42 @@ function seedPresetPlugins() {
     pkg.dsh ??= {}
     pkg.dsh.profile ??= {}
     pkg.dsh.profile.bundles ??= []
-    for (const name of pending) {
+    let changed = false
+
+    // Withdraw seeds that no longer resolve (flavor switched away, or a
+    // pre-preset core upgrade). Only names WE seeded are touched — a
+    // user's own broken config is not ours to edit. Dropping the marker
+    // lets a later full install re-seed cleanly.
+    for (const name of [...seeded]) {
+      if (resolvable(name)) continue
+      const b = pkg.dsh.profile.bundles
+      if (b.includes(name) || pkg.dependencies[name]) {
+        pkg.dsh.profile.bundles = b.filter((x) => x !== name)
+        delete pkg.dependencies[name]
+        console.log(`withdrew preset ${name}: not resolvable by the active runtime`)
+        changed = true
+      }
+      seeded = seeded.filter((x) => x !== name)
+    }
+
+    // Seed presets this runtime can actually serve, once per package: the
+    // marker keeps us from re-adding a bundle the user deliberately
+    // removed via GUI/CLI.
+    for (const name of Object.keys(presets)) {
+      if (seeded.includes(name)) continue
+      if (!resolvable(name)) { console.log(`preset ${name} not resolvable by active runtime; skip seeding`); continue }
       pkg.dependencies[name] ??= presets[name]
       if (!pkg.dsh.profile.bundles.includes(name)) pkg.dsh.profile.bundles.push(name)
+      seeded.push(name)
+      console.log(`seeded preset plugin into web profile: ${name}`)
+      changed = true
     }
-    fs.mkdirSync(profileDir, { recursive: true })
-    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
-    fs.writeFileSync(markerPath, JSON.stringify([...seeded, ...pending], null, 2))
-    console.log(`seeded preset plugins into web profile: ${pending.join(', ')}`)
+
+    if (changed) {
+      fs.mkdirSync(profileDir, { recursive: true })
+      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
+    }
+    fs.writeFileSync(markerPath, JSON.stringify(seeded, null, 2))
   } catch (err) {
     console.error('preset plugin seeding failed (non-fatal):', err)
   }

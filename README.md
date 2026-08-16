@@ -46,6 +46,13 @@ GitHub Release。**版本号以标签为准**：CI 会把 `vX.Y.Z` 写进
 `version` 字段仅作为手动触发构建时的默认值）。
 升级内置的 dsh 只需等 npm 出新版后重新打标签（或用 `DSH_VERSION` 锁定）。
 
+每个平台出两种安装包（CI matrix 的 flavor 维度）：**常规版**只含官方
+dsh；文件名带 **`-full`** 的版本额外预置
+[@linxin666/dsh-web-ui-all](https://github.com/zhu1090093659/dsh-web-ui)
+插件全家桶（任务看板、SSH、皮肤中心、宠物等），首次启动自动挂载进
+用户配置层，之后可像普通插件一样在配置中心移除（移除后不会被重新
+塞回来）。两种版本共享 `~/.dsh` 数据，可互相覆盖安装切换。
+
 ## 预置 / 增删插件
 
 dsh 一切皆插件，桌面版留了两个定制入口，改完重新打标签出包即可：
@@ -56,12 +63,14 @@ dsh 一切皆插件，桌面版留了两个定制入口，改完重新打标签�
 `~/.dsh/profiles/web/cordis.patch.yml` 是同样的语法，改动在它之后应用，
 所以用户仍能覆盖打包默认值。
 
-**`plugins.json`** — 要额外内置进安装包的插件 npm 包列表，例如
-`{"packages": ["some-dsh-plugin@1.2.0"]}`。stage 脚本会把它们装进运行时，
-并注册进内置 dsh 的依赖清单（dsh 启动时按依赖闭包把包软链进
-`~/.dsh/profiles/node_modules`，插件才能从 profile 解析到——只装进
-运行时目录是不够的）。装完还要在 `desktop-patch.yml` 里 insert 对应条目
-才会真正挂载；带界面的双面插件要把 host 和 client-ui 两半都挂上
+**`plugins.json` / `plugins-<flavor>.json`** — 要预置进安装包的插件
+npm 包列表，例如 `{"packages": ["some-dsh-plugin@1.2.0"]}`；stage 脚本
+按 `DSH_FLAVOR` 环境变量选清单（默认 `plugins.json`，
+`DSH_FLAVOR=full` 读 `plugins-full.json`，CI 两种都构建）。声明了
+`dsh.bundle` 的插件包走这条路即可：stage 脚本把它装进运行时并注册进
+内置 dsh 的依赖清单，应用首次启动把它写进用户 profile 的 bundles
+自动挂载。不带 bundle 的散装插件才需要在 `desktop-patch.yml` 里
+insert 挂载条目；带界面的双面插件要把 host 和 client-ui 两半都挂上
 （参考 main.js 里目录选择器的写法）。
 
 注意选与内置 dsh 版本匹配的插件版本：peer 依赖指向旧版 dsh 的插件包

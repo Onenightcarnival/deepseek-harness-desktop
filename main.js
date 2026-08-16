@@ -174,7 +174,16 @@ function installCoreRuntime(version) {
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true }, null, 2))
     const pnpmCjs = path.join(bundledDshDir(), 'tools', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
     if (!fs.existsSync(pnpmCjs)) { reject(new Error('bundled pnpm missing')); return }
-    const child = spawn(process.execPath, [pnpmCjs, 'add', `@deepseek-ai/dsh@${version}`, '--ignore-scripts'], {
+    // Full-flavor builds: the upgraded runtime must also carry the preset
+    // plugins, or the seeded profile bundles stop resolving (the profile
+    // resolves plugins from the ACTIVE runtime's app closure). Exact staged
+    // versions — deterministic, immune to minimumReleaseAge downgrades.
+    const presetSpecs = []
+    try {
+      const presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8'))
+      for (const [name, v] of Object.entries(presets)) presetSpecs.push(`${name}@${v}`)
+    } catch { /* minimal flavor */ }
+    const child = spawn(process.execPath, [pnpmCjs, 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
       cwd: dir,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -186,6 +195,23 @@ function installCoreRuntime(version) {
     child.stderr.on('data', onChunk)
     child.on('exit', (code) => {
       if (code === 0 && runtimeVersion(dir) === version) {
+        // Mirror stage-dsh.mjs: presets must be dependencies of the dsh APP
+        // manifest — the profile resolves plugins from the app's dependency
+        // closure, the runtime root manifest is not part of it.
+        if (presetSpecs.length > 0) {
+          try {
+            const appManifestPath = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+            const appManifest = JSON.parse(fs.readFileSync(appManifestPath, 'utf8'))
+            appManifest.dependencies ??= {}
+            for (const spec of presetSpecs) {
+              const name = spec.slice(0, spec.lastIndexOf('@'))
+              appManifest.dependencies[name] ??= '*'
+            }
+            fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2))
+          } catch (err) {
+            console.error('preset registration in upgraded runtime failed:', err)
+          }
+        }
         // keep only the freshly installed runtime
         for (const name of fs.readdirSync(runtimesDir())) {
           if (name !== version) fs.rmSync(path.join(runtimesDir(), name), { recursive: true, force: true })
@@ -411,6 +437,72 @@ function openCliTerminal() {
   shell.openPath(binDir)
 }
 
+/**
+ * Full-flavor builds ship preset plugin bundles inside the runtime
+ * (plugins-full.json → stage-dsh.mjs → preset-plugins.json). Being a
+ * dependency of the bundled dsh app only makes a package RESOLVABLE from
+ * the profile (dsh symlinks the app closure into profiles/node_modules);
+ * ACTIVATION requires the profile manifest to list it in dependencies +
+ * dsh.profile.bundles — verified against dsh 0.1.x. Seed those entries
+ * here, once per package: a marker in userData keeps us from re-adding a
+ * bundle the user deliberately removed via GUI/CLI. Cold start (no
+ * profile yet) writes the same skeleton dsh itself generates.
+ */
+function seedPresetPlugins() {
+  try {
+    const manifestPath = path.join(bundledDshDir(), 'preset-plugins.json')
+    if (!fs.existsSync(manifestPath)) return
+    const presets = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    const markerPath = path.join(app.getPath('userData'), 'seeded-presets.json')
+    let seeded = []
+    try { seeded = JSON.parse(fs.readFileSync(markerPath, 'utf8')) } catch { /* first run */ }
+    const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
+    // Every boot, not just when seeding: a stale leftover of the package in
+    // the profile's OWN node_modules (remnants of an old `dsh plugin
+    // remove` can keep package.json/LICENSE while losing the code) shadows
+    // the healed fallback in profiles/node_modules and crashes boot with
+    // "Cannot find package …". Usable = its declared entry file actually
+    // exists; anything else is trash — clear it. A real install is left
+    // alone and wins over the preset.
+    for (const name of Object.keys(presets)) {
+      const localDir = path.join(profileDir, 'node_modules', ...name.split('/'))
+      try {
+        if (!fs.existsSync(localDir)) continue
+        let usable = false
+        try {
+          const pj = JSON.parse(fs.readFileSync(path.join(localDir, 'package.json'), 'utf8'))
+          const entry = pj.main || (typeof pj.exports === 'string' ? pj.exports : null) || 'index.js'
+          usable = fs.existsSync(path.join(localDir, entry))
+        } catch { /* no/broken package.json -> not usable */ }
+        if (!usable) {
+          fs.rmSync(localDir, { recursive: true, force: true })
+          console.log(`cleared broken leftover of ${name} from profile node_modules`)
+        }
+      } catch { /* best-effort */ }
+    }
+    const pending = Object.keys(presets).filter((n) => !seeded.includes(n))
+    if (pending.length === 0) return
+    const pkgPath = path.join(profileDir, 'package.json')
+    let pkg = fs.existsSync(pkgPath)
+      ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+      : { name: 'dsh-profile-web', private: true, dependencies: {}, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } } }
+    pkg.dependencies ??= {}
+    pkg.dsh ??= {}
+    pkg.dsh.profile ??= {}
+    pkg.dsh.profile.bundles ??= []
+    for (const name of pending) {
+      pkg.dependencies[name] ??= presets[name]
+      if (!pkg.dsh.profile.bundles.includes(name)) pkg.dsh.profile.bundles.push(name)
+    }
+    fs.mkdirSync(profileDir, { recursive: true })
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
+    fs.writeFileSync(markerPath, JSON.stringify([...seeded, ...pending], null, 2))
+    console.log(`seeded preset plugins into web profile: ${pending.join(', ')}`)
+  } catch (err) {
+    console.error('preset plugin seeding failed (non-fatal):', err)
+  }
+}
+
 function startServer() {
   return new Promise((resolve, reject) => {
     const entry = dshEntry()
@@ -418,6 +510,7 @@ function startServer() {
       reject(new Error(`bundled dsh not found at ${entry}`))
       return
     }
+    seedPresetPlugins()
 
     const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
     // Electron-specific vars must not leak into the node child.

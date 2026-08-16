@@ -14,15 +14,17 @@ jobs:
   build:
     strategy:
       fail-fast: false
+      # 两个 flavor：minimal（极简，plugins.json）与 full（预置
+      # @linxin666/dsh-web-ui-all 全家桶，plugins-full.json，产物名带 -full）。
       matrix:
         include:
-          - os: windows-latest          # x64
-            args: --win --x64
-          - os: macos-latest            # Apple Silicon (arm64)
-            args: --mac --arm64
+          - { os: windows-latest, args: --win --x64,   flavor: minimal }   # x64
+          - { os: windows-latest, args: --win --x64,   flavor: full }
+          - { os: macos-latest,   args: --mac --arm64, flavor: minimal }   # Apple Silicon
+          - { os: macos-latest,   args: --mac --arm64, flavor: full }
           # 需要 Intel Mac 版时取消注释：
-          # - os: macos-15-intel
-          #   args: --mac --x64
+          # - { os: macos-15-intel, args: --mac --x64, flavor: minimal }
+          # - { os: macos-15-intel, args: --mac --x64, flavor: full }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -42,17 +44,27 @@ jobs:
 
       - name: Stage dsh runtime
         run: node stage-dsh.mjs
-        # 想锁定 dsh 版本时： env: { DSH_VERSION: 0.1.0-rc.6 }
+        env:
+          DSH_FLAVOR: ${{ matrix.flavor }}
+        # 想锁定 dsh 版本时再加： DSH_VERSION: 0.1.0-rc.6
 
       - name: Install desktop shell deps
         run: npm install --no-audit --no-fund
 
+      # full flavor 通过命令行覆盖产物名加 -full 后缀，其余配置共用。
       - name: Build installer
-        run: npx electron-builder ${{ matrix.args }} --publish never
+        shell: bash
+        run: |
+          EXTRA=()
+          if [ "${{ matrix.flavor }}" = "full" ]; then
+            EXTRA+=('-c.nsis.artifactName=DeepSeek-Harness-Setup-${version}-win-${arch}-full.${ext}')
+            EXTRA+=('-c.mac.artifactName=DeepSeek-Harness-${version}-mac-${arch}-full.${ext}')
+          fi
+          npx electron-builder ${{ matrix.args }} --publish never "${EXTRA[@]}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.os }}
+          name: desktop-${{ matrix.os }}-${{ matrix.flavor }}
           path: |
             dist/*.exe
             dist/*.dmg
@@ -79,6 +91,11 @@ jobs:
           body: |
             非官方桌面版（Electron 壳 + npm 发布版 `@deepseek-ai/dsh`）。
             上游项目：https://github.com/deepseek-ai/deepseek-harness
+
+            每个平台两种安装包：
+            - 常规版：只含官方 dsh，插件自装。
+            - 文件名带 `-full`：额外预置 [@linxin666/dsh-web-ui-all](https://github.com/zhu1090093659/dsh-web-ui)
+              插件全家桶（任务看板、SSH、皮肤等）。
 
             安装包未做代码签名：
             - Windows 首次运行如弹出 SmartScreen，点「更多信息 → 仍要运行」。

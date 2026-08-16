@@ -24,7 +24,10 @@ stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 st
                     裁剪，安装 pnpm 到 dsh/tools/，把预置插件注册进 dsh 应用依赖清单
 afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh
 desktop-patch.yml   随包分发的插件组合覆盖层（默认空）
-plugins.json        要预置进安装包的插件 npm 包列表（默认空）
+plugins.json        要预置进安装包的插件 npm 包列表（默认空 = minimal flavor）
+plugins-full.json   full flavor 的预置清单（@linxin666/dsh-web-ui-all 全家桶）；
+                    stage 按 DSH_FLAVOR 选清单并把各包精确版本写进运行时的
+                    preset-plugins.json，main.js 启动时据此做一次性 profile 播种
 build/              图标 + installer.nsh（NSIS customCheckAppRunning 覆盖：安装前
                     树杀应用进程 + 按路径扫尾，见坑清单）；.github/workflows/release.yml  CI 构建与发版
 ```
@@ -40,6 +43,8 @@ node --check main.js runtime.js preload-plugins.js   # 语法
 node -e "require('./runtime.js')"                     # runtime.js 可独立加载，纯函数可直接写单测
 node stage-dsh.mjs                                    # linux 上实跑 staging（node-pty 无 linux 预编译
                                                       #   是预期的，脚本已按平台跳过该断言）
+DSH_FLAVOR=full node stage-dsh.mjs                    # full flavor：验证预置插件清单能装、
+                                                      #   peer 与内置 dsh 匹配、preset-plugins.json 生成
 node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
   web --patch desktop-patch.yml --dump-config         # 验证 patch 覆盖层能正确并入组合树
 ```
@@ -53,7 +58,8 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - **Electron-as-node 跑 dsh 必须加 `--expose-internals`**。cordis 加载器靠 Node internals 做模块解析；纯 node 下能容忍缺失，Electron 下不加会在启动时随机炸 HMR 相关加载。
 - **Windows 目录选择器钉死为 browse 组合**（main.js 的 `pickerPatchArgs`）。dsh 原生 Win32 弹窗靠子进程重新 spawn `process.execPath`，在打包后的 Electron 环境下起不来。dsh 的交互插件是"host + client-ui 成对"的——patch 里只挂一半界面不会出现，这个错犯过一次。
 - **`--patch` 启动参数层在用户 profile 配置层之后应用**，desktop-patch.yml 里写死的条目用户无法覆盖，保持克制。
-- **预置插件必须注册进内置 dsh 的 package.json dependencies**（stage-dsh.mjs 已做）。dsh 启动时按"应用依赖闭包"把包软链到 `~/.dsh/profiles/node_modules`，插件才能从 profile 解析到；只装进 staging 目录是不够的。
+- **预置插件"注册进内置 dsh 依赖"只解决可解析，激活是另一回事**。注册（stage-dsh.mjs 已做）让 dsh 启动时按"应用依赖闭包"把包软链到 `~/.dsh/profiles/node_modules`；但 bundle 的激活以 profile 清单为准——必须出现在 `~/.dsh/profiles/web/package.json` 的 dependencies + `dsh.profile.bundles` 里（main.js 的 seedPresetPlugins 按运行时 preset-plugins.json 做一次性播种，userData 的 seeded-presets.json 标记防止把用户删掉的包塞回去）。应用内内核升级后的运行时也要带上预置包并重新注册，否则播种过的 profile 解析不到（installCoreRuntime 已做）。
+- **profile 自己 node_modules 里的残缺包会遮蔽闭包软链并炸掉启动**。`dsh plugin remove` 的残留目录可能保留 package.json/LICENSE 但丢失代码，Node 解析优先命中它，报 "Cannot find package …"，整个 dsh 起不来。判断标准是"声明的入口文件存在"而非"有 package.json"；seedPresetPlugins 每次启动对预置包做该清理。
 - **electron-builder 的 extraResources 默认排除 node_modules**，运行时必须走 afterPack 钩子复制，别改回 extraResources。
 - **本仓库若被放进 pnpm workspace（如上游 fork 的子目录）**，electron-builder 会向上探测 workspace 根并错误改用 pnpm 收集依赖——必须把本目录拷到仓库外构建（独立仓库布局无此问题）。
 - **CLI 启动器是 dsh / pnpm / node 三件套**，缺一不可：pnpm 生命周期脚本会裸调 `node`，用户机器上没有 Node.js。pnpm 本体只随**内置**运行时分发（`dsh/tools/`），应用内升级的运行时没有 tools 目录，取 pnpm 路径必须锚定 `bundledDshDir()`。

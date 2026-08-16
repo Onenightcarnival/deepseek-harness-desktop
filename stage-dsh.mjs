@@ -10,6 +10,9 @@
  *
  * Env:
  *   DSH_VERSION  npm version/tag of @deepseek-ai/dsh (default: latest)
+ *   DSH_FLAVOR   preset-plugin manifest to use: "minimal" (default) reads
+ *                plugins.json, anything else reads plugins-<flavor>.json
+ *                (e.g. full -> plugins-full.json); missing manifest = error
  */
 import { execSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -31,15 +34,17 @@ fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-run
 // --ignore-scripts: skip node-gyp fallbacks entirely; every native dep this
 // runtime needs (node-pty, sharp via @img/*, koffi via @koromix/*) ships
 // prebuilt binaries selected by npm's os/cpu fields.
-// Extra preset plugin packages from plugins.json (installed alongside dsh so
-// the loader resolves them from the same node_modules tree; mount them via
-// desktop-patch.yml).
+// Extra preset plugin packages (installed alongside dsh so the loader
+// resolves them from the same node_modules tree; activated by main.js
+// seeding them into the user profile, see preset-plugins.json below).
 let extraPackages = []
-const pluginsFile = path.join(here, 'plugins.json')
-if (fs.existsSync(pluginsFile)) {
-  extraPackages = JSON.parse(fs.readFileSync(pluginsFile, 'utf8')).packages ?? []
-  if (extraPackages.length > 0) console.log(`preset plugins: ${extraPackages.join(', ')}`)
+const flavor = (process.env.DSH_FLAVOR || 'minimal').trim()
+const pluginsFile = path.join(here, flavor === 'minimal' ? 'plugins.json' : `plugins-${flavor}.json`)
+if (!fs.existsSync(pluginsFile)) {
+  throw new Error(`flavor "${flavor}" 对应的插件清单不存在：${pluginsFile}`)
 }
+extraPackages = JSON.parse(fs.readFileSync(pluginsFile, 'utf8')).packages ?? []
+if (extraPackages.length > 0) console.log(`flavor "${flavor}" preset plugins: ${extraPackages.join(', ')}`)
 
 const cross = platform !== process.platform || arch !== process.arch
 const crossFlags = cross ? [`--os=${platform}`, `--cpu=${arch}`, '--force'] : []
@@ -68,6 +73,17 @@ if (extraPackages.length > 0) {
   for (const name of pluginNames) appManifest.dependencies[name] ??= '*'
   fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2))
   console.log(`registered preset plugins in dsh app manifest: ${pluginNames.join(', ')}`)
+
+  // Registration only makes the packages RESOLVABLE from the profile.
+  // Activation happens at runtime: main.js seeds each preset (once) into
+  // the profile manifest's dependencies + dsh.profile.bundles, reading
+  // this manifest of exact staged versions.
+  const presets = {}
+  for (const name of pluginNames) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'node_modules', ...name.split('/'), 'package.json'), 'utf8'))
+    presets[name] = pkg.version
+  }
+  fs.writeFileSync(path.join(dir, 'preset-plugins.json'), JSON.stringify(presets, null, 2))
 }
 
 // ---- bundled CLI tooling ----

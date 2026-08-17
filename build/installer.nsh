@@ -1,18 +1,25 @@
 # Custom close-app logic for the NSIS installer/uninstaller.
 #
-# Two failure modes the stock CHECK_APP_RUNNING misses:
-# 1. It kills by process NAME only, so helper processes living in $INSTDIR
-#    (node-pty's conpty OpenConsole.exe / winpty-agent.exe spawned by the
-#    bundled dsh server) survive and keep files locked.
-# 2. Its whole cleanup runs ONLY when the app exe is currently running.
-#    Orphaned helpers can outlive the app (crash, or conpty agents left
-#    behind after quit) — the user closes the app, the check finds nothing,
-#    nothing gets swept, and extraction / old-file deletion later fails
-#    with the same misleading "app cannot be closed" dialog
-#    (extractAppPackage.nsh and installUtil.nsh reuse that string).
-#
-# So: the INSTDIR path sweep runs UNCONDITIONALLY, and killing is done in
-# several redundant passes (tree kill, plain image kill, path sweep).
+# Hard-won facts behind this design (details in AGENTS.md pitfalls):
+# - electron-builder's FIND_PROCESS is NOT a by-name check when PowerShell
+#   is available: it reports "found" if ANY process's path is under
+#   $INSTDIR. It false-positives (wine's stub powershell exits 0 for
+#   everything; a broad custom install dir can contain unrelated running
+#   programs), so it must NEVER gate the install with a dialog/Quit.
+#   Kill what we know, then proceed — genuinely locked files surface in
+#   the extraction stage, which has its own retry dialog.
+# - The default close logic misses $INSTDIR-hosted helpers (node-pty's
+#   conpty OpenConsole.exe / winpty-agent.exe) which can outlive the app,
+#   so the sweep runs unconditionally — and scoped to KNOWN binary names
+#   (a bare path-prefix sweep could kill unrelated processes when
+#   $INSTDIR is a broad custom directory).
+# - Old installed builds embed uninstallers with the previous, quitting
+#   logic: their silent run exits non-zero on any false positive and the
+#   overwrite install dies with the misleading "app cannot be closed"
+#   (installUtil.nsh reuses that string for uninstall failures).
+#   customInit pre-runs the old uninstaller itself and, if it fails,
+#   drops its registry entry + old payload so the template's uninstall
+#   step is skipped and extraction proceeds on a clean slate.
 
 # When customCheckAppRunning is defined the stock template skips its own
 # getProcessInfo include and `Var pid` declaration — provide our own.
@@ -25,18 +32,15 @@ Var customPid
   nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /T /IM "${APP_EXECUTABLE_FILENAME}" /FI "PID ne $customPid"`
   Pop $0
   # Second pass without /T or filters: taskkill's tree mode aborts the
-  # whole kill when any descendant is gone/unkillable mid-walk, and a
-  # malformed PID filter would silently kill nothing. The CLI shims also
-  # run this same image standalone (dsh/pnpm/node on the app exe) with no
-  # tree link to the app.
+  # whole kill when any descendant is gone/unkillable mid-walk. The CLI
+  # shims also run this same image standalone (dsh/pnpm/node on the app
+  # exe) with no tree link to the app.
   nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
   Pop $0
-  # Path sweep: anything still executing out of the install dir — conpty
-  # agents and other helpers, including ORPHANS from sessions whose app is
-  # long gone. This pass is why the macro must run even when the app exe
-  # itself is not running.
+  # Scoped path sweep: known helper binaries still executing out of the
+  # install dir (conpty agents — including orphans whose app is long gone).
   ${if} $IsPowerShellAvailable == 0
-    nsExec::Exec `"$PowerShellPath" -C "Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
+    nsExec::Exec `"$PowerShellPath" -C "$$names = @('OpenConsole.exe','winpty-agent.exe','${APP_EXECUTABLE_FILENAME}'); Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR\', 'CurrentCultureIgnoreCase') -and $$names -contains $$_.Name} | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"`
     Pop $0
   ${endIf}
 !macroend
@@ -55,29 +59,51 @@ Var customPid
 
   customDoSweep:
   DetailPrint "$(appClosing)"
-
-  # Always at least one full sweep, app running or not (see header).
-  !insertmacro customKillPasses
-  Sleep 500
-
-  # If the app exe itself is (still) alive, keep at it with retries.
   StrCpy $R1 0
   customKillLoop:
+    !insertmacro customKillPasses
+    Sleep 800
     !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
     ${if} $R0 == 0
       IntOp $R1 $R1 + 1
-      ${if} $R1 > 8
-        # Diagnostics before giving up: dump what still lives in $INSTDIR
-        # to the desktop, so "cannot be closed" reports become actionable.
-        ${if} $IsPowerShellAvailable == 0
-          nsExec::Exec `"$PowerShellPath" -C "Get-Date | Out-File -Encoding utf8 -Append '$DESKTOP\dsh-install-debug.txt'; Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | Select-Object ProcessId,Name,Path | Format-List | Out-File -Encoding utf8 -Append '$DESKTOP\dsh-install-debug.txt'"`
-          Pop $0
-        ${endIf}
-        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY customKillLoop
-        Quit
+      ${if} $R1 < 4
+        Goto customKillLoop
       ${endIf}
-      !insertmacro customKillPasses
-      Sleep 1500
-      Goto customKillLoop
+      # Still "found" after several rounds: a genuinely stuck process
+      # (extraction's own retry dialog will surface it) or a FIND_PROCESS
+      # false positive. Either way: log for diagnosis and PROCEED —
+      # never block the install here.
+      ${if} $IsPowerShellAvailable == 0
+        nsExec::Exec `"$PowerShellPath" -C "Get-Date | Out-File -Encoding utf8 -Append '$DESKTOP\dsh-install-debug.txt'; Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | Select-Object ProcessId,Name,Path | Format-List | Out-File -Encoding utf8 -Append '$DESKTOP\dsh-install-debug.txt'"`
+        Pop $0
+      ${endIf}
+      DetailPrint "close check inconclusive - proceeding (see dsh-install-debug.txt on the desktop)"
     ${endIf}
+!macroend
+
+# Pre-empt the template's uninstallOldVersion (see header). Per-user
+# installs only (matches this app's install mode).
+!macro customInit
+  ReadRegStr $R8 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
+  ${if} $R8 != ""
+    ReadRegStr $R7 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ${if} $R7 != ""
+    ${andIf} ${FileExists} "$R7\${UNINSTALL_FILENAME}"
+      InitPluginsDir
+      CopyFiles /SILENT "$R7\${UNINSTALL_FILENAME}" "$PLUGINSDIR\pre-old-uninstaller.exe"
+      ExecWait '"$PLUGINSDIR\pre-old-uninstaller.exe" /S /KEEP_APP_DATA /currentuser --updated _?=$R7' $R6
+      ${if} $R6 != 0
+        # Broken old uninstaller (pre-fix builds quit non-zero on false
+        # positives): bypass it. Without registry entries the template's
+        # uninstall step self-skips; clearing the payload dirs keeps
+        # stale files out of the new install (mirrors what the
+        # uninstaller would have deleted).
+        DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY}"
+        DeleteRegKey HKCU "${INSTALL_REGISTRY_KEY}"
+        RMDir /r "$R7\resources"
+        RMDir /r "$R7\locales"
+        Delete "$R7\*.*"
+      ${endIf}
+    ${endIf}
+  ${endIf}
 !macroend

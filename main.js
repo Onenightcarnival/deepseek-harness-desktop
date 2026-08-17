@@ -181,7 +181,9 @@ function installCoreRuntime(version) {
     const presetSpecs = []
     try {
       const presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8'))
-      for (const [name, v] of Object.entries(presets)) presetSpecs.push(`${name}@${v}`)
+      for (const group of [presets.seed, presets.carry]) {
+        for (const [name, v] of Object.entries(group || {})) presetSpecs.push(`${name}@${v}`)
+      }
     } catch { /* minimal flavor */ }
     const child = spawn(process.execPath, [pnpmCjs, 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
       cwd: dir,
@@ -612,7 +614,7 @@ function applyBootErrorFix(errText) {
     const dupIds = [...errText.matchAll(/duplicate loader entry id: ([^\s'"]+)/g)].map((m) => m[1])
     if (dupIds.length > 0) {
       let presets = {}
-      try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')) } catch { /* minimal */ }
+      try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')).seed || {} } catch { /* minimal */ }
       const pkgPath = path.join(profileDir, 'package.json')
       const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
       const bundles = (pkg.dsh && pkg.dsh.profile && pkg.dsh.profile.bundles) || []
@@ -671,7 +673,7 @@ function seedPresetPlugins() {
     // overwrite install full→minimal crashes boot with "cannot resolve
     // profile bundle".
     let presets = {}
-    try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')) } catch { /* minimal flavor */ }
+    try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')).seed || {} } catch { /* minimal flavor */ }
     const markerPath = path.join(app.getPath('userData'), 'seeded-presets.json')
     let seeded = []
     try { seeded = JSON.parse(fs.readFileSync(markerPath, 'utf8')) } catch { /* first run */ }
@@ -714,7 +716,11 @@ function seedPresetPlugins() {
     // user's own broken config is not ours to edit. Dropping the marker
     // lets a later full install re-seed cleanly.
     for (const name of [...seeded]) {
-      if (resolvable(name)) continue
+      // keep only what this build still WANTS seeded and what still
+      // resolves; a marker name missing from the current seed manifest was
+      // seeded by an older build whose decision this build revokes (e.g.
+      // skins demoted from seed to carry-only)
+      if (resolvable(name) && presets[name] !== undefined) continue
       const b = pkg.dsh.profile.bundles
       if (b.includes(name) || pkg.dependencies[name]) {
         pkg.dsh.profile.bundles = b.filter((x) => x !== name)

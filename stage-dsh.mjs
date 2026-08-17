@@ -43,8 +43,16 @@ const pluginsFile = path.join(here, flavor === 'minimal' ? 'plugins.json' : `plu
 if (!fs.existsSync(pluginsFile)) {
   throw new Error(`flavor "${flavor}" 对应的插件清单不存在：${pluginsFile}`)
 }
-extraPackages = JSON.parse(fs.readFileSync(pluginsFile, 'utf8')).packages ?? []
-if (extraPackages.length > 0) console.log(`flavor "${flavor}" preset plugins: ${extraPackages.join(', ')}`)
+const pluginsManifest = JSON.parse(fs.readFileSync(pluginsFile, 'utf8'))
+// "packages" get seeded into the user profile (activated); "carry" are
+// only installed + registered so they RESOLVE from the app closure —
+// activation stays with the user (e.g. skins: the skin center enforces
+// one-active-at-a-time, seeding them all would activate every skin at
+// once AND collide entry ids with skins the user installed before).
+const seedPackages = pluginsManifest.packages ?? []
+const carryPackages = pluginsManifest.carry ?? []
+extraPackages = [...seedPackages, ...carryPackages]
+if (extraPackages.length > 0) console.log(`flavor "${flavor}" seed: [${seedPackages.join(', ')}] carry: [${carryPackages.join(', ')}]`)
 
 const cross = platform !== process.platform || arch !== process.arch
 const crossFlags = cross ? [`--os=${platform}`, `--cpu=${arch}`, '--force'] : []
@@ -78,11 +86,10 @@ if (extraPackages.length > 0) {
   // Activation happens at runtime: main.js seeds each preset (once) into
   // the profile manifest's dependencies + dsh.profile.bundles, reading
   // this manifest of exact staged versions.
-  const presets = {}
-  for (const name of pluginNames) {
-    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'node_modules', ...name.split('/'), 'package.json'), 'utf8'))
-    presets[name] = pkg.version
-  }
+  const ver = (name) => JSON.parse(fs.readFileSync(path.join(dir, 'node_modules', ...name.split('/'), 'package.json'), 'utf8')).version
+  const presets = { seed: {}, carry: {} }
+  for (const name of seedPackages) presets.seed[name] = ver(name)
+  for (const name of carryPackages) presets.carry[name] = ver(name)
   fs.writeFileSync(path.join(dir, 'preset-plugins.json'), JSON.stringify(presets, null, 2))
 }
 

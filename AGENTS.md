@@ -25,10 +25,10 @@ stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 st
 afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh
 desktop-patch.yml   随包分发的插件组合覆盖层（默认空）
 plugins.json        要预置进安装包的插件 npm 包列表（默认空 = minimal flavor）
-plugins-full.json   full flavor 的预置清单（dsh-web-ui 精选：任务看板/Git 图谱/
-                    右侧面板/宠物/皮肤中心+十款皮肤/SSH）；stage 按 DSH_FLAVOR 选清单并把各包
-                    精确版本写进运行时的 preset-plugins.json，main.js 启动时据此
-                    做一次性 profile 播种
+plugins-full.json   full flavor 的预置清单，分两组：packages（六件套，播种激活）与
+                    carry（十款皮肤，只装进闭包可解析、不激活）；stage 按 DSH_FLAVOR
+                    选清单并把精确版本写进运行时 preset-plugins.json（{seed, carry}），
+                    main.js 启动时按 seed 组做一次性 profile 播种
 build/              图标 + installer.nsh（NSIS customCheckAppRunning 覆盖：安装前
                     树杀应用进程 + 按路径扫尾，见坑清单）；.github/workflows/release.yml  CI 构建与发版
 ```
@@ -61,7 +61,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - **`--patch` 启动参数层在用户 profile 配置层之后应用**，desktop-patch.yml 里写死的条目用户无法覆盖，保持克制。
 - **预置插件"注册进内置 dsh 依赖"只解决可解析，激活是另一回事**。注册（stage-dsh.mjs 已做）让 dsh 启动时按"应用依赖闭包"把包软链到 `~/.dsh/profiles/node_modules`；但 bundle 的激活以 profile 清单为准——必须出现在 `~/.dsh/profiles/web/package.json` 的 dependencies + `dsh.profile.bundles` 里（main.js 的 seedPresetPlugins 按运行时 preset-plugins.json 做一次性播种，userData 的 seeded-presets.json 标记防止把用户删掉的包塞回去）。播种是可逆的且每个 flavor 都要跑：full→minimal 覆盖安装后，profile 里的预置 bundle 对新运行时不可解析，dsh 直接拒绝启动（"cannot resolve profile bundle"）——seedPresetPlugins 每次启动把"自己播过、现已不可解析"的条目撤出 profile 并清标记（换回 full 会重新播种）；只在包对当前运行时可解析时才播种。应用内内核升级后的运行时也要带上预置包并重新注册，否则播种过的 profile 解析不到（installCoreRuntime 已做）。
 - **profile 自己 node_modules 里的残缺包会遮蔽闭包软链并炸掉启动**。`dsh plugin remove` 的残留目录可能保留 package.json/LICENSE 但丢失代码，Node 解析优先命中它，报 "Cannot find package …"，整个 dsh 起不来。判断"包是否完好"要分场景：作为加载器条目 import 需要 JS 入口文件存在（pkgUsableAt）；作为 bundle/依赖只需清单及其声明的产物齐全——元 bundle 包（如 dsh-skins）没有 main 是正常的，用入口文件标准会误判（pkgIntactAt）。seedPresetPlugins 每次启动对预置包做残缺清理。
-- **加载器持久化的条目也会引用已消失的包并炸掉启动**。皮肤中心等功能在运行时把选中的包 pnpm 装进 profile 并把条目写进 `~/.dsh/profiles/web/cordis.yml`；换 flavor 或本地安装损坏后该包解析不到，dsh 报 ERR_MODULE_NOT_FOUND 拒绝启动。不能安全地改用户配置——healUnresolvableEntries 的做法是给解析不到的条目在 profile node_modules 放一个无操作占位包（带 `.dsh-desktop-stub` 标记），当前运行时能提供真包时占位自动退位（按标记扫描，不依赖配置引用——dsh 会规范化重写 cordis.yml 丢弃条目，孤儿占位必须靠标记找到），真实重装会直接覆盖它。**主动扫描注定不完备**（dsh 持久化条目的位置/格式不可枚举，flow 风格 YAML 就躲得过正则），所以另有反应式兜底 applyBootErrorFix：启动失败时按报错文本识别 Cannot find package / cannot resolve profile bundle，做占位/软链/撤 bundle 后自动重试（最多 6 次，加载器一次只报一处）。还有一类冲突：**预置 bundle 的 insert id 与用户旧配置里的条目重复**（如用户曾用皮肤中心装过某皮肤，后来该皮肤成了预置），报 duplicate loader entry id——处理是撤我方 bundle 但保留播种标记（永不再播），用户自己的条目借运行时闭包里携带的包继续生效。报错信息才是权威来源。
+- **加载器持久化的条目也会引用已消失的包并炸掉启动**。皮肤中心等功能在运行时把选中的包 pnpm 装进 profile 并把条目写进 `~/.dsh/profiles/web/cordis.yml`；换 flavor 或本地安装损坏后该包解析不到，dsh 报 ERR_MODULE_NOT_FOUND 拒绝启动。不能安全地改用户配置——healUnresolvableEntries 的做法是给解析不到的条目在 profile node_modules 放一个无操作占位包（带 `.dsh-desktop-stub` 标记），当前运行时能提供真包时占位自动退位（按标记扫描，不依赖配置引用——dsh 会规范化重写 cordis.yml 丢弃条目，孤儿占位必须靠标记找到），真实重装会直接覆盖它。**主动扫描注定不完备**（dsh 持久化条目的位置/格式不可枚举，flow 风格 YAML 就躲得过正则），所以另有反应式兜底 applyBootErrorFix：启动失败时按报错文本识别 Cannot find package / cannot resolve profile bundle，做占位/软链/撤 bundle 后自动重试（最多 6 次，加载器一次只报一处）。**互斥型插件族（皮肤）只能 carry 不能 seed**：十款皮肤全部播种激活会同时注入十套皮肤（上游靠皮肤中心保证同时只启用一款），且每款的 insert id 都会与用户旧装皮肤条目撞车，冲突数超过自愈重试上限直接起不来——皮肤属于 carry 组：随包可解析、激活权留给皮肤中心；播种标记里"当前 seed 清单已不含"的名字每次启动被撤活（旧版误播的皮肤由此自愈）。还有一类冲突：**预置 bundle 的 insert id 与用户旧配置里的条目重复**（如用户曾用皮肤中心装过某皮肤，后来该皮肤成了预置），报 duplicate loader entry id——处理是撤我方 bundle 但保留播种标记（永不再播），用户自己的条目借运行时闭包里携带的包继续生效。报错信息才是权威来源。
 - **electron-builder 的 extraResources 默认排除 node_modules**，运行时必须走 afterPack 钩子复制，别改回 extraResources。
 - **本仓库若被放进 pnpm workspace（如上游 fork 的子目录）**，electron-builder 会向上探测 workspace 根并错误改用 pnpm 收集依赖——必须把本目录拷到仓库外构建（独立仓库布局无此问题）。
 - **CLI 启动器是 dsh / pnpm / node 三件套**，缺一不可：pnpm 生命周期脚本会裸调 `node`，用户机器上没有 Node.js。pnpm 本体只随**内置**运行时分发（`dsh/tools/`），应用内升级的运行时没有 tools 目录，取 pnpm 路径必须锚定 `bundledDshDir()`。

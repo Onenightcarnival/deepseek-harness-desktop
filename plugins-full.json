@@ -5,7 +5,9 @@
     "@linxin666/dsh-client-ui-aionui-panel",
     "@linxin666/dsh-pet",
     "@linxin666/dsh-skins",
-    "@linxin666/dsh-ssh",
+    "@linxin666/dsh-ssh"
+  ],
+  "carry": [
     "@linxin666/dsh-client-ui-skin-blue-fantasy",
     "@linxin666/dsh-client-ui-skin-dragon-heir",
     "@linxin666/dsh-client-ui-skin-harbor",

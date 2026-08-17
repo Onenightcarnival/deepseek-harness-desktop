@@ -79,16 +79,20 @@ Var customPid
       ${endIf}
       DetailPrint "close check inconclusive - proceeding (see dsh-install-debug.txt on the desktop)"
     ${endIf}
-!macroend
 
-# Pre-empt the template's uninstallOldVersion (see header). Per-user
-# installs only (matches this app's install mode).
-!macro customInit
+!ifndef BUILD_UNINSTALLER
+  # Pre-empt the template's uninstallOldVersion (see header). Lives HERE —
+  # at the tail of the install-section close check, after the user clicked
+  # install — and NOT in customInit: onInit runs before any UI, and a
+  # multi-second silent uninstall at double-click time (killing the running
+  # app with no window in sight) is exactly the wrong user experience.
+  # Installer context only: the uninstaller must not recurse into itself.
   ReadRegStr $R8 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
   ${if} $R8 != ""
     ReadRegStr $R7 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
     ${if} $R7 != ""
     ${andIf} ${FileExists} "$R7\${UNINSTALL_FILENAME}"
+      DetailPrint "正在卸载旧版本…"
       InitPluginsDir
       CopyFiles /SILENT "$R7\${UNINSTALL_FILENAME}" "$PLUGINSDIR\pre-old-uninstaller.exe"
       ExecWait '"$PLUGINSDIR\pre-old-uninstaller.exe" /S /KEEP_APP_DATA /currentuser --updated _?=$R7' $R6
@@ -98,6 +102,7 @@ Var customPid
         # uninstall step self-skips; clearing the payload dirs keeps
         # stale files out of the new install (mirrors what the
         # uninstaller would have deleted).
+        DetailPrint "旧版卸载器异常退出，绕过并清理旧文件…"
         DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY}"
         DeleteRegKey HKCU "${INSTALL_REGISTRY_KEY}"
         RMDir /r "$R7\resources"
@@ -106,4 +111,5 @@ Var customPid
       ${endIf}
     ${endIf}
   ${endIf}
+!endif
 !macroend

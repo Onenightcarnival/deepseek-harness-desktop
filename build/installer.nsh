@@ -36,6 +36,14 @@ Var customPid
       nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /T /IM "${APP_EXECUTABLE_FILENAME}" /FI "PID ne $customPid"`
       Pop $0
 
+      # Second pass without /T or filters: taskkill's tree mode aborts the
+      # whole kill when any descendant is gone/unkillable mid-walk, and a
+      # malformed PID filter (empty $customPid) silently kills nothing.
+      # The CLI shims also run this same image standalone (dsh/pnpm/node on
+      # the app exe) with no tree link to the app.
+      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
+      Pop $0
+
       # Path sweep: anything still executing out of the install dir
       # (conpty agents and other helpers not parented to the app).
       ${if} $IsPowerShellAvailable == 0
@@ -43,11 +51,11 @@ Var customPid
         Pop $0
       ${endIf}
 
-      Sleep 1000
+      Sleep 1500
 
       !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
       ${if} $R0 == 0
-        ${if} $R1 > 4
+        ${if} $R1 > 8
           MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY customKillLoop
           Quit
         ${endIf}

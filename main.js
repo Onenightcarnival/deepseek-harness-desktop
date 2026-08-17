@@ -448,6 +448,107 @@ function openCliTerminal() {
  * bundle the user deliberately removed via GUI/CLI. Cold start (no
  * profile yet) writes the same skeleton dsh itself generates.
  */
+/** Does <base>/<name> hold a loadable copy of the package (entry file exists)? */
+function pkgUsableAt(base, name) {
+  const pkgDir = path.join(base, ...name.split('/'))
+  try {
+    const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'))
+    const entry = pj.main || (typeof pj.exports === 'string' ? pj.exports : null) || 'index.js'
+    return fs.existsSync(path.join(pkgDir, entry))
+  } catch { return false }
+}
+
+/**
+ * Is <base>/<name> an intact package for BUNDLE/dependency purposes?
+ * Weaker than pkgUsableAt: a meta bundle package (e.g. dsh-skins — only a
+ * manifest + cordis.patch.yml, no JS entry) is perfectly valid. Intact =
+ * valid manifest and every artifact it declares (entry, bundle patch)
+ * actually present; a plain lib declaring nothing needs its implicit
+ * index.js. `dsh plugin remove` remnants that keep package.json but lose
+ * the code fail this and are treated as trash.
+ */
+function pkgIntactAt(base, name) {
+  const pkgDir = path.join(base, ...name.split('/'))
+  try {
+    const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'))
+    const entry = pj.main || (typeof pj.exports === 'string' ? pj.exports : null)
+    const bundlePatch = pj.dsh && pj.dsh.bundle && pj.dsh.bundle.patch
+    if (entry && !fs.existsSync(path.join(pkgDir, entry))) return false
+    if (bundlePatch && !fs.existsSync(path.join(pkgDir, bundlePatch))) return false
+    if (!entry && !bundlePatch) return fs.existsSync(path.join(pkgDir, 'index.js')) || !!pj.dsh
+    return true
+  } catch { return false }
+}
+
+/**
+ * The loader persists plugin entries into the profile's cordis.yml (e.g.
+ * picking a skin in dsh-skins' skin center pnpm-installs the skin package
+ * and records an entry). If the referenced package later stops resolving
+ * (flavor switch removed it from the app closure, or the local install
+ * broke), dsh refuses to boot outright (ERR_MODULE_NOT_FOUND during the
+ * plugin tree load). We cannot edit user config safely — instead park a
+ * no-op stub package in the profile's node_modules so the entry loads and
+ * does nothing. The stub carries a marker file and retires itself the
+ * moment the active runtime provides the real package again; a real
+ * pnpm (re)install simply overwrites it.
+ */
+function healUnresolvableEntries() {
+  try {
+    const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
+    const localNm = path.join(profileDir, 'node_modules')
+    const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
+    const candidates = new Set()
+    for (const file of ['cordis.yml', 'cordis.patch.yml']) {
+      let text = ''
+      try { text = fs.readFileSync(path.join(profileDir, file), 'utf8') } catch { continue }
+      // Entry lines look like `name: "@scope/pkg"` (quotes optional).
+      // Restrict to the npm name grammar; a non-package `name:` value that
+      // slips through just fails the resolvability checks or produces an
+      // unused stub dir — harmless either way.
+      for (const m of text.matchAll(/^[\s-]*name:\s*["']?((?:@[a-z0-9~][\w.-]*\/)?[a-z0-9~][\w.-]*)["']?\s*$/gim)) {
+        candidates.add(m[1])
+      }
+    }
+    // Retire stubs FIRST, by scanning for our marker files rather than by
+    // config references — dsh rewrites cordis.yml and may drop the entry
+    // that motivated a stub, leaving it orphaned; an orphaned stub still
+    // shadows the real package once a fuller build provides it again.
+    try {
+      const names = []
+      for (const e of fs.readdirSync(localNm)) {
+        if (e.startsWith('@')) {
+          try { for (const s of fs.readdirSync(path.join(localNm, e))) names.push(`${e}/${s}`) } catch { /* ignore */ }
+        } else if (e !== '.pnpm' && e !== '.bin') names.push(e)
+      }
+      for (const name of names) {
+        const dir = path.join(localNm, ...name.split('/'))
+        if (fs.existsSync(path.join(dir, '.dsh-desktop-stub')) && pkgUsableAt(runtimeNm, name)) {
+          fs.rmSync(dir, { recursive: true, force: true })
+          console.log(`retired stub of ${name}: runtime provides it again`)
+        }
+      }
+    } catch { /* no node_modules yet */ }
+    for (const name of candidates) {
+      const stubDir = path.join(localNm, ...name.split('/'))
+      const stubMarker = path.join(stubDir, '.dsh-desktop-stub')
+      if (pkgUsableAt(runtimeNm, name)) continue // resolvable from runtime closure
+      if (pkgUsableAt(localNm, name)) continue // real local install (or an existing stub)
+      fs.mkdirSync(stubDir, { recursive: true })
+      fs.writeFileSync(path.join(stubDir, 'package.json'), JSON.stringify({ name, version: '0.0.1', main: 'index.js' }, null, 2))
+      fs.writeFileSync(path.join(stubDir, 'index.js'), [
+        "'use strict'",
+        `console.warn('dsh-desktop: 插件 ${name} 不在当前安装包中，已用空实现顶替（安装含该插件的版本或重新安装该插件可恢复）')`,
+        `module.exports = { name: ${JSON.stringify(name)}, apply() {} }`,
+        '',
+      ].join('\n'))
+      fs.writeFileSync(stubMarker, '')
+      console.log(`stubbed unresolvable plugin entry ${name}`)
+    }
+  } catch (err) {
+    console.error('entry healing failed (non-fatal):', err)
+  }
+}
+
 function seedPresetPlugins() {
   try {
     // Runs in EVERY flavor: the minimal build must be able to withdraw
@@ -462,20 +563,12 @@ function seedPresetPlugins() {
     if (Object.keys(presets).length === 0 && seeded.length === 0) return
     const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
 
-    /** Does <dir> hold a loadable copy of the package (entry file exists)? */
-    const usableAt = (base, name) => {
-      const pkgDir = path.join(base, ...name.split('/'))
-      try {
-        const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'))
-        const entry = pj.main || (typeof pj.exports === 'string' ? pj.exports : null) || 'index.js'
-        return fs.existsSync(path.join(pkgDir, entry))
-      } catch { return false }
-    }
     const localNm = path.join(profileDir, 'node_modules')
     const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
     // Resolvable by the ACTIVE runtime = user's own profile install, or the
     // runtime's app closure (what heals into profiles/node_modules).
-    const resolvable = (name) => usableAt(localNm, name) || usableAt(runtimeNm, name)
+    // pkgIntactAt, not pkgUsableAt: meta bundle packages have no JS entry.
+    const resolvable = (name) => pkgIntactAt(localNm, name) || pkgIntactAt(runtimeNm, name)
 
     // A stale leftover of the package in the profile's OWN node_modules
     // (remnants of `dsh plugin remove` can keep package.json/LICENSE while
@@ -484,7 +577,7 @@ function seedPresetPlugins() {
     for (const name of new Set([...Object.keys(presets), ...seeded])) {
       const localDir = path.join(localNm, ...name.split('/'))
       try {
-        if (fs.existsSync(localDir) && !usableAt(localNm, name)) {
+        if (fs.existsSync(localDir) && !pkgIntactAt(localNm, name)) {
           fs.rmSync(localDir, { recursive: true, force: true })
           console.log(`cleared broken leftover of ${name} from profile node_modules`)
         }
@@ -548,6 +641,7 @@ function startServer() {
       return
     }
     seedPresetPlugins()
+    healUnresolvableEntries()
 
     const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
     // Electron-specific vars must not leak into the node child.

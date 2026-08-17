@@ -529,23 +529,106 @@ function healUnresolvableEntries() {
       }
     } catch { /* no node_modules yet */ }
     for (const name of candidates) {
-      const stubDir = path.join(localNm, ...name.split('/'))
-      const stubMarker = path.join(stubDir, '.dsh-desktop-stub')
       if (pkgUsableAt(runtimeNm, name)) continue // resolvable from runtime closure
       if (pkgUsableAt(localNm, name)) continue // real local install (or an existing stub)
-      fs.mkdirSync(stubDir, { recursive: true })
-      fs.writeFileSync(path.join(stubDir, 'package.json'), JSON.stringify({ name, version: '0.0.1', main: 'index.js' }, null, 2))
-      fs.writeFileSync(path.join(stubDir, 'index.js'), [
-        "'use strict'",
-        `console.warn('dsh-desktop: 插件 ${name} 不在当前安装包中，已用空实现顶替（安装含该插件的版本或重新安装该插件可恢复）')`,
-        `module.exports = { name: ${JSON.stringify(name)}, apply() {} }`,
-        '',
-      ].join('\n'))
-      fs.writeFileSync(stubMarker, '')
+      writeStubPackage(localNm, name)
       console.log(`stubbed unresolvable plugin entry ${name}`)
     }
   } catch (err) {
     console.error('entry healing failed (non-fatal):', err)
+  }
+}
+
+/** Replace whatever is at localNm/<name> with a no-op stub package. */
+function writeStubPackage(localNm, name) {
+  const stubDir = path.join(localNm, ...name.split('/'))
+  try { fs.rmSync(stubDir, { recursive: true, force: true }) } catch { /* dangling link etc. */ }
+  fs.mkdirSync(stubDir, { recursive: true })
+  fs.writeFileSync(path.join(stubDir, 'package.json'), JSON.stringify({ name, version: '0.0.1', main: 'index.js' }, null, 2))
+  fs.writeFileSync(path.join(stubDir, 'index.js'), [
+    "'use strict'",
+    `console.warn('dsh-desktop: 插件 ${name} 不在当前安装包中，已用空实现顶替（安装含该插件的版本或重新安装该插件可恢复）')`,
+    `module.exports = { name: ${JSON.stringify(name)}, apply() {} }`,
+    '',
+  ].join('\n'))
+  fs.writeFileSync(path.join(stubDir, '.dsh-desktop-stub'), '')
+}
+
+/**
+ * Reactive boot healing, the backstop behind the proactive passes: parse a
+ * fatal dsh boot error and repair the known classes of profile damage —
+ * config entries referencing packages that no longer resolve (link the
+ * runtime's copy in, or stub), broken local leftovers shadowing the
+ * closure, and profile bundles nothing can resolve (withdraw). Proactive
+ * scans can miss references (dsh persists entries in formats/places we
+ * don't enumerate); the error message is authoritative. Returns true if
+ * something was repaired — the caller then retries the boot.
+ */
+function applyBootErrorFix(errText) {
+  try {
+    let fixed = false
+    const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
+    const localNm = path.join(profileDir, 'node_modules')
+    const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
+    const names = new Set()
+    // bare specifier form: Cannot find package '@scope/pkg' imported from …
+    for (const m of errText.matchAll(/Cannot find (?:package|module) '((?:@[a-z0-9~][\w.-]*\/)?[a-z0-9~][\w.-]*)'/g)) names.add(m[1])
+    // path form: Cannot find package '…/node_modules/@scope/pkg/…' (a broken
+    // local copy shadowing the closure)
+    for (const m of errText.matchAll(/Cannot find (?:package|module) '[^']*[/\\]node_modules[/\\](@[^/\\']+[/\\][^/\\']+|[^@][^/\\']*)/g)) {
+      names.add(m[1].replace(/\\/g, '/'))
+    }
+    for (const name of names) {
+      const localDir = path.join(localNm, ...name.split('/'))
+      let stat = null
+      try { stat = fs.lstatSync(localDir) } catch { /* absent */ }
+      if (stat && !pkgUsableAt(localNm, name) && !pkgIntactAt(localNm, name)) {
+        fs.rmSync(localDir, { recursive: true, force: true })
+        console.log(`boot heal: cleared broken ${name} from profile node_modules`)
+        fixed = true
+        stat = null
+      }
+      if (!pkgUsableAt(localNm, name)) {
+        if (pkgUsableAt(runtimeNm, name)) {
+          // runtime ships it but the profile could not resolve it (e.g. the
+          // closure heal skipped this profile) — link the runtime copy in
+          try { fs.rmSync(localDir, { recursive: true, force: true }) } catch { /* ignore */ }
+          fs.mkdirSync(path.dirname(localDir), { recursive: true })
+          fs.symlinkSync(path.join(runtimeNm, ...name.split('/')), localDir, 'junction')
+          console.log(`boot heal: linked ${name} from the bundled runtime`)
+        } else {
+          writeStubPackage(localNm, name)
+          console.log(`boot heal: stubbed unresolvable ${name}`)
+        }
+        fixed = true
+      }
+    }
+    // unresolvable profile bundle: dsh names it verbatim
+    const bundleNames = [...errText.matchAll(/cannot resolve profile bundle "([^"]+)"/g)].map((m) => m[1])
+    if (bundleNames.length > 0) {
+      const pkgPath = path.join(profileDir, 'package.json')
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+      const bundles = (pkg.dsh && pkg.dsh.profile && pkg.dsh.profile.bundles) || []
+      for (const name of bundleNames) {
+        if (bundles.includes(name) || (pkg.dependencies && pkg.dependencies[name])) {
+          pkg.dsh.profile.bundles = bundles.filter((x) => x !== name)
+          if (pkg.dependencies) delete pkg.dependencies[name]
+          console.log(`boot heal: withdrew unresolvable bundle ${name}`)
+          fixed = true
+        }
+      }
+      if (fixed) fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
+      // let a future fuller install re-seed it
+      try {
+        const markerPath = path.join(app.getPath('userData'), 'seeded-presets.json')
+        const seeded = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
+        fs.writeFileSync(markerPath, JSON.stringify(seeded.filter((n) => !bundleNames.includes(n)), null, 2))
+      } catch { /* no marker */ }
+    }
+    return fixed
+  } catch (err) {
+    console.error('boot heal failed:', err)
+    return false
   }
 }
 
@@ -1113,7 +1196,20 @@ app.whenReady().then(async () => {
   buildMenu()
   createWindow()
   try {
-    const url = await startServer()
+    let url
+    for (let attempt = 1; ; attempt++) {
+      try {
+        url = await startServer()
+        break
+      } catch (err) {
+        // Self-heal known profile damage from the error text and retry.
+        if (attempt < 3 && applyBootErrorFix(String((err && err.message) || err))) {
+          console.log(`boot self-heal applied, retrying (attempt ${attempt + 1}/3)`)
+          continue
+        }
+        throw err
+      }
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       await mainWindow.loadURL(url)
     }

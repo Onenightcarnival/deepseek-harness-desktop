@@ -11,7 +11,7 @@ const { app, BrowserWindow, dialog, shell, Menu, ipcMain } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
-const { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock } = require('./runtime.js')
+const { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath } = require('./runtime.js')
 
 const READY_RE = /dsh web: (http:\/\/127\.0\.0\.1:\d+)/
 const STARTUP_TIMEOUT_MS = 90_000
@@ -887,7 +887,9 @@ function startServer() {
     // children (dsh's plugin command locates pnpm via PATH).
     try {
       const binDir = writeCliLaunchers()
-      env.PATH = `${binDir}${path.delimiter}${env.PATH || ''}`
+      // case-insensitive: on Windows the spread key is "Path" — writing
+      // "PATH" would leave the child with PATH = binDir only (git vanishes)
+      prependEnvPath(env, binDir, path.delimiter)
     } catch { /* CLI launchers are best-effort */ }
 
     serverProc = spawn(process.execPath, ['--expose-internals', entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--port', '0'], {
@@ -1027,7 +1029,7 @@ function runDshCli(args) {
   return new Promise((resolve) => {
     const binDir = writeCliLaunchers()
     const child = spawn(process.execPath, ['--expose-internals', dshEntry(), ...args], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: `${binDir}${path.delimiter}${process.env.PATH || ''}` },
+      env: prependEnvPath({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, binDir, path.delimiter),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -1183,7 +1185,7 @@ async function testMcpServer(server, extraPath) {
     let child
     try {
       child = spawn(server.command, server.args || [], {
-        env: { ...process.env, ...(server.env || {}), ...(extraPath ? { PATH: `${extraPath}${path.delimiter}${process.env.PATH || ''}` } : {}) },
+        env: (() => { const e = { ...process.env, ...(server.env || {}) }; if (extraPath) prependEnvPath(e, extraPath, path.delimiter); return e })(),
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })

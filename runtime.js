@@ -196,3 +196,19 @@ function collectSkills(fsLike, rootDir, fallbackName, pathLike) {
 }
 
 module.exports.collectSkills = collectSkills
+
+/**
+ * Prepend a directory to the PATH entry of a plain env object,
+ * case-insensitively. On Windows the real key is usually "Path"; blindly
+ * assigning "PATH" onto a spread of process.env creates a DUPLICATE key,
+ * and the child process can end up with an effective PATH containing only
+ * the prepended directory — every external tool (git!) silently vanishes
+ * from plugins spawned under the dsh server. (The magic `process.env`
+ * object is case-insensitive; a spread of it is NOT.)
+ */
+function prependEnvPath(env, dir, delimiter) {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH'
+  env[key] = env[key] ? `${dir}${delimiter}${env[key]}` : dir
+  return env
+}
+module.exports.prependEnvPath = prependEnvPath

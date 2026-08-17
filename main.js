@@ -603,6 +603,38 @@ function applyBootErrorFix(errText) {
         fixed = true
       }
     }
+    // duplicate loader entry id: a seeded preset bundle's insert collides
+    // with an entry the user's config already carries (e.g. a skin they
+    // installed via the skin center before it became a preset). Withdraw
+    // OUR bundle and keep the seeded marker so it never re-seeds — the
+    // user's own entry keeps the feature alive, resolving against the
+    // carried package in the runtime closure.
+    const dupIds = [...errText.matchAll(/duplicate loader entry id: ([^\s'"]+)/g)].map((m) => m[1])
+    if (dupIds.length > 0) {
+      let presets = {}
+      try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')) } catch { /* minimal */ }
+      const pkgPath = path.join(profileDir, 'package.json')
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+      const bundles = (pkg.dsh && pkg.dsh.profile && pkg.dsh.profile.bundles) || []
+      let wrote = false
+      for (const name of Object.keys(presets)) {
+        if (!bundles.includes(name)) continue
+        let patchText = ''
+        try {
+          const pj = JSON.parse(fs.readFileSync(path.join(runtimeNm, ...name.split('/'), 'package.json'), 'utf8'))
+          const rel = pj.dsh && pj.dsh.bundle && pj.dsh.bundle.patch
+          if (rel) patchText = fs.readFileSync(path.join(runtimeNm, ...name.split('/'), rel), 'utf8')
+        } catch { continue }
+        if (dupIds.some((id) => new RegExp(`id:\\s*["']?${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']?\\s*$`, 'm').test(patchText))) {
+          pkg.dsh.profile.bundles = pkg.dsh.profile.bundles.filter((x) => x !== name)
+          if (pkg.dependencies) delete pkg.dependencies[name]
+          console.log(`boot heal: withdrew preset bundle ${name} (duplicate entry id with user config)`)
+          wrote = true
+          fixed = true
+        }
+      }
+      if (wrote) fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
+    }
     // unresolvable profile bundle: dsh names it verbatim
     const bundleNames = [...errText.matchAll(/cannot resolve profile bundle "([^"]+)"/g)].map((m) => m[1])
     if (bundleNames.length > 0) {
@@ -1203,8 +1235,8 @@ app.whenReady().then(async () => {
         break
       } catch (err) {
         // Self-heal known profile damage from the error text and retry.
-        if (attempt < 3 && applyBootErrorFix(String((err && err.message) || err))) {
-          console.log(`boot self-heal applied, retrying (attempt ${attempt + 1}/3)`)
+        if (attempt < 6 && applyBootErrorFix(String((err && err.message) || err))) {
+          console.log(`boot self-heal applied, retrying (attempt ${attempt + 1}/6)`)
           continue
         }
         throw err

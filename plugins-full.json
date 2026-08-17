@@ -3,20 +3,6 @@
     "@linxin666/dsh-client-ui-task-board",
     "@linxin666/dsh-client-ui-git-graph",
     "@linxin666/dsh-client-ui-aionui-panel",
-    "@linxin666/dsh-pet",
-    "@linxin666/dsh-skins",
     "@linxin666/dsh-ssh"
-  ],
-  "carry": [
-    "@linxin666/dsh-client-ui-skin-blue-fantasy",
-    "@linxin666/dsh-client-ui-skin-dragon-heir",
-    "@linxin666/dsh-client-ui-skin-harbor",
-    "@linxin666/dsh-client-ui-skin-miku",
-    "@linxin666/dsh-client-ui-skin-minecraft",
-    "@linxin666/dsh-client-ui-skin-qq98",
-    "@linxin666/dsh-client-ui-skin-ths",
-    "@linxin666/dsh-client-ui-skin-trading",
-    "@linxin666/dsh-client-ui-skin-whale-song",
-    "@linxin666/dsh-client-ui-skin-xp"
   ]
 }

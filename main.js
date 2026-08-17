@@ -566,6 +566,7 @@ function writeStubPackage(localNm, name) {
  * don't enumerate); the error message is authoritative. Returns true if
  * something was repaired — the caller then retries the boot.
  */
+const repairedOverlays = new Set()
 function applyBootErrorFix(errText) {
   try {
     let fixed = false
@@ -636,6 +637,51 @@ function applyBootErrorFix(errText) {
         }
       }
       if (wrote) fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
+    }
+    // Unparseable overlay/config file ("dsh: failed to parse overlay
+    // <path>: YAMLException: …" — e.g. a YAML row corrupted by a plugin's
+    // config writer). dsh refuses to boot outright on these; quarantine
+    // the file (rename keeps the content for manual salvage). If it was
+    // the profile patch we manage MCP config in, regenerate the managed
+    // block from the desktop's own store so MCP settings survive.
+    const dshHome = path.join(app.getPath('home'), '.dsh')
+    for (const m of errText.matchAll(/failed to parse \w+ (.+?\.ya?ml)\b/g)) {
+      const file = m[1]
+      if (!file.startsWith(dshHome)) continue // never touch files outside user dsh data
+      if (!fs.existsSync(file)) continue
+      // Gentle first attempt, once per file per run: the most common
+      // corruption is the default flow empty list `[]` coexisting with
+      // block entries appended later by plugin config writers (invalid
+      // YAML; our own MCP writer handles this, third-party ones don't).
+      // Dropping the standalone `[]` line often makes the file valid
+      // again and preserves the user's entries. Keep a backup either way.
+      if (!repairedOverlays.has(file)) {
+        repairedOverlays.add(file)
+        try {
+          const text = fs.readFileSync(file, 'utf8')
+          const lines = text.split(/\r?\n/)
+          const meaningful = lines.filter((l) => l.trim() !== '' && !l.trim().startsWith('#'))
+          if (meaningful.some((l) => l.trim() === '[]') && meaningful.length > 1) {
+            fs.copyFileSync(file, `${file}.bak-${Date.now()}`)
+            fs.writeFileSync(file, lines.filter((l) => l.trim() !== '[]').join('\n'))
+            console.log(`boot heal: removed stray [] line from ${file} (backup kept)`)
+            fixed = true
+            continue
+          }
+        } catch { /* fall through to quarantine */ }
+      }
+      const quarantined = `${file}.broken-${Date.now()}`
+      try {
+        fs.renameSync(file, quarantined)
+        console.log(`boot heal: quarantined unparseable config ${file} -> ${quarantined}`)
+        fixed = true
+        if (path.basename(file) === 'cordis.patch.yml' && path.dirname(file) === path.join(dshHome, 'profiles', 'web')) {
+          try {
+            applyMcpToProfile(readMcpServers())
+            console.log('boot heal: regenerated MCP managed block from the desktop store')
+          } catch (err) { console.error('MCP block regeneration failed:', err) }
+        }
+      } catch (err) { console.error(`quarantine of ${file} failed:`, err) }
     }
     // unresolvable profile bundle: dsh names it verbatim
     const bundleNames = [...errText.matchAll(/cannot resolve profile bundle "([^"]+)"/g)].map((m) => m[1])

@@ -645,8 +645,13 @@ function applyBootErrorFix(errText) {
     // the profile patch we manage MCP config in, regenerate the managed
     // block from the desktop's own store so MCP settings survive.
     const dshHome = path.join(app.getPath('home'), '.dsh')
-    for (const m of errText.matchAll(/failed to parse \w+ (.+?\.ya?ml)\b/g)) {
-      const file = m[1]
+    const badConfigFiles = new Set()
+    // YAML syntax errors: "dsh: failed to parse <label> <path>: YAMLException…"
+    for (const m of errText.matchAll(/failed to parse \w+ (.+?\.ya?ml)\b/g)) badConfigFiles.add(m[1])
+    // wrong top-level type (a map, or an empty file parsing to null):
+    // "dsh: <label> <path> must be a top-level YAML array of loader patch entries"
+    for (const m of errText.matchAll(/dsh: \w+ (.+?\.ya?ml) must be a top-level YAML array/g)) badConfigFiles.add(m[1])
+    for (const file of badConfigFiles) {
       if (!file.startsWith(dshHome)) continue // never touch files outside user dsh data
       if (!fs.existsSync(file)) continue
       // Gentle first attempt, once per file per run: the most common

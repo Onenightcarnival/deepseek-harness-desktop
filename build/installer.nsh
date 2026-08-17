@@ -67,6 +67,12 @@ Var customPid
     ${if} $R0 == 0
       IntOp $R1 $R1 + 1
       ${if} $R1 > 8
+        # Diagnostics before giving up: dump what still lives in $INSTDIR
+        # to the desktop, so "cannot be closed" reports become actionable.
+        ${if} $IsPowerShellAvailable == 0
+          nsExec::Exec `"$PowerShellPath" -C "Get-Date | Out-File -Encoding utf8 -Append '$DESKTOP\dsh-install-debug.txt'; Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | Select-Object ProcessId,Name,Path | Format-List | Out-File -Encoding utf8 -Append '$DESKTOP\dsh-install-debug.txt'"`
+          Pop $0
+        ${endIf}
         MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY customKillLoop
         Quit
       ${endIf}

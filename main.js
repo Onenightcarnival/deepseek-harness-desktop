@@ -631,7 +631,11 @@ function applyBootErrorFix(errText) {
         if (dupIds.some((id) => new RegExp(`id:\\s*["']?${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']?\\s*$`, 'm').test(patchText))) {
           pkg.dsh.profile.bundles = pkg.dsh.profile.bundles.filter((x) => x !== name)
           if (pkg.dependencies) delete pkg.dependencies[name]
-          console.log(`boot heal: withdrew preset bundle ${name} (duplicate entry id with user config)`)
+          // exclude for THIS app version only: the colliding user entry is
+          // often dropped later by dsh's own config rewrites, and the next
+          // installed version retries automatically
+          addPresetExclusion(name)
+          console.log(`boot heal: excluded preset ${name} for this version (duplicate entry id with user config)`)
           wrote = true
           fixed = true
         }
@@ -703,12 +707,12 @@ function applyBootErrorFix(errText) {
         }
       }
       if (fixed) fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
-      // let a future fuller install re-seed it
+      // keep the managed list consistent (sync would repair it anyway)
       try {
-        const markerPath = path.join(app.getPath('userData'), 'seeded-presets.json')
-        const seeded = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
-        fs.writeFileSync(markerPath, JSON.stringify(seeded.filter((n) => !bundleNames.includes(n)), null, 2))
-      } catch { /* no marker */ }
+        const managedPath = path.join(app.getPath('userData'), 'managed-presets.json')
+        const managed = JSON.parse(fs.readFileSync(managedPath, 'utf8'))
+        fs.writeFileSync(managedPath, JSON.stringify(managed.filter((n) => !bundleNames.includes(n)), null, 2))
+      } catch { /* no list */ }
     }
     return fixed
   } catch (err) {
@@ -717,32 +721,97 @@ function applyBootErrorFix(errText) {
   }
 }
 
-function seedPresetPlugins() {
+/** Per-app-version duplicate-id exclusions: a preset whose entry id
+ * collides with an entry already in the user's config is excluded from
+ * the sync for THIS app version only — every new install retries once,
+ * so a collision that has since disappeared (dsh rewrites its config
+ * files liberally) heals itself instead of being lost forever. */
+function presetExclusionsPath() { return path.join(app.getPath('userData'), 'preset-exclusions.json') }
+function readPresetExclusions() {
   try {
-    // Runs in EVERY flavor: the minimal build must be able to withdraw
-    // seeds a previously installed full build left in the profile, or an
-    // overwrite install full→minimal crashes boot with "cannot resolve
-    // profile bundle".
-    let presets = {}
-    try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')).seed || {} } catch { /* minimal flavor */ }
-    const markerPath = path.join(app.getPath('userData'), 'seeded-presets.json')
-    let seeded = []
-    try { seeded = JSON.parse(fs.readFileSync(markerPath, 'utf8')) } catch { /* first run */ }
-    if (Object.keys(presets).length === 0 && seeded.length === 0) return
-    const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
+    const j = JSON.parse(fs.readFileSync(presetExclusionsPath(), 'utf8'))
+    if (j.version === app.getVersion() && Array.isArray(j.names)) return j.names
+  } catch { /* none for this version */ }
+  return []
+}
+function addPresetExclusion(name) {
+  const names = readPresetExclusions()
+  if (!names.includes(name)) names.push(name)
+  fs.writeFileSync(presetExclusionsPath(), JSON.stringify({ version: app.getVersion(), names }, null, 2))
+}
 
+/**
+ * Manual escape hatch: clear this version's duplicate-id exclusions and
+ * stale preset stubs, then relaunch — the boot sync re-applies every
+ * preset the build ships. Useful when a collision was resolved by hand
+ * and the user does not want to wait for the next app version's retry.
+ */
+async function restorePresetPlugins() {
+  let presets = {}
+  try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')).seed || {} } catch { /* minimal */ }
+  const names = Object.keys(presets)
+  if (names.length === 0) {
+    await dialog.showMessageBox({
+      type: 'info', title: 'DeepSeek Harness',
+      message: '当前版本没有预置插件', detail: '此安装包为精简版；预置插件随 full 版分发。', buttons: ['好'],
+    })
+    return
+  }
+  const { response } = await dialog.showMessageBox({
+    type: 'question', title: 'DeepSeek Harness',
+    message: '重新同步本版本的预置插件？',
+    detail: `将确保以下插件全部挂载：\n${names.join('\n')}\n\n需要重启应用。`,
+    buttons: ['同步并重启', '取消'], defaultId: 0, cancelId: 1,
+  })
+  if (response !== 0) return
+  try {
+    fs.rmSync(presetExclusionsPath(), { force: true })
+    const localNm = path.join(app.getPath('home'), '.dsh', 'profiles', 'web', 'node_modules')
+    for (const name of names) {
+      const dir = path.join(localNm, ...name.split('/'))
+      if (fs.existsSync(path.join(dir, '.dsh-desktop-stub'))) fs.rmSync(dir, { recursive: true, force: true })
+    }
+  } catch (err) {
+    console.error('preset resync failed:', err)
+  }
+  app.relaunch()
+  app.quit()
+}
+
+/**
+ * DECLARATIVE preset sync, runs before every server boot in every flavor:
+ * the preset portion of the user profile is derived data owned by the
+ * installed build — make it EXACTLY match preset-plugins.json (minus
+ * this version's duplicate-id exclusions and anything the active runtime
+ * cannot resolve). No history bookkeeping: userData/managed-presets.json
+ * only records what we currently manage, so a flavor switch or trimmed
+ * manifest knows which entries are ours to remove; user-installed plugins
+ * are never touched. Consequence (by design): removing a preset via the
+ * GUI does not stick — it is re-synced on next launch; use the minimal
+ * build to opt out of presets.
+ */
+function syncPresetPlugins() {
+  try {
+    let manifest = {}
+    try { manifest = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')).seed || {} } catch { /* minimal flavor */ }
+    const managedPath = path.join(app.getPath('userData'), 'managed-presets.json')
+    let managed = []
+    try { managed = JSON.parse(fs.readFileSync(managedPath, 'utf8')) } catch {
+      // migrate from the old seeding marker, then retire it
+      try {
+        managed = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'seeded-presets.json'), 'utf8'))
+        fs.rmSync(path.join(app.getPath('userData'), 'seeded-presets.json'), { force: true })
+      } catch { /* fresh */ }
+    }
+    if (Object.keys(manifest).length === 0 && managed.length === 0) return
+    const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
     const localNm = path.join(profileDir, 'node_modules')
     const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
-    // Resolvable by the ACTIVE runtime = user's own profile install, or the
-    // runtime's app closure (what heals into profiles/node_modules).
-    // pkgIntactAt, not pkgUsableAt: meta bundle packages have no JS entry.
     const resolvable = (name) => pkgIntactAt(localNm, name) || pkgIntactAt(runtimeNm, name)
 
-    // A stale leftover of the package in the profile's OWN node_modules
-    // (remnants of `dsh plugin remove` can keep package.json/LICENSE while
-    // losing the code) shadows the healed fallback and crashes boot —
-    // clear it. A real install (entry file present) wins over the preset.
-    for (const name of new Set([...Object.keys(presets), ...seeded])) {
+    // Broken leftovers of preset packages in the profile's own
+    // node_modules shadow the healed closure and crash boot — clear them.
+    for (const name of new Set([...Object.keys(manifest), ...managed])) {
       const localDir = path.join(localNm, ...name.split('/'))
       try {
         if (fs.existsSync(localDir) && !pkgIntactAt(localNm, name)) {
@@ -752,8 +821,15 @@ function seedPresetPlugins() {
       } catch { /* best-effort */ }
     }
 
+    const exclusions = readPresetExclusions()
+    const desired = Object.keys(manifest).filter((n) => !exclusions.includes(n) && resolvable(n))
+    for (const name of Object.keys(manifest)) {
+      if (exclusions.includes(name)) console.log(`preset ${name} excluded for this version (entry-id conflict)`)
+      else if (!resolvable(name)) console.log(`preset ${name} not resolvable by active runtime; skipped`)
+    }
+
     const pkgPath = path.join(profileDir, 'package.json')
-    let pkg = fs.existsSync(pkgPath)
+    const pkg = fs.existsSync(pkgPath)
       ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
       : { name: 'dsh-profile-web', private: true, dependencies: {}, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } } }
     pkg.dependencies ??= {}
@@ -762,46 +838,35 @@ function seedPresetPlugins() {
     pkg.dsh.profile.bundles ??= []
     let changed = false
 
-    // Withdraw seeds that no longer resolve (flavor switched away, or a
-    // pre-preset core upgrade). Only names WE seeded are touched — a
-    // user's own broken config is not ours to edit. Dropping the marker
-    // lets a later full install re-seed cleanly.
-    for (const name of [...seeded]) {
-      // keep only what this build still WANTS seeded and what still
-      // resolves; a marker name missing from the current seed manifest was
-      // seeded by an older build whose decision this build revokes (e.g.
-      // skins demoted from seed to carry-only)
-      if (resolvable(name) && presets[name] !== undefined) continue
-      const b = pkg.dsh.profile.bundles
-      if (b.includes(name) || pkg.dependencies[name]) {
-        pkg.dsh.profile.bundles = b.filter((x) => x !== name)
+    // Remove what we manage but no longer want (flavor switch, trimmed
+    // manifest, unresolvable, excluded).
+    for (const name of managed) {
+      if (desired.includes(name)) continue
+      if (pkg.dsh.profile.bundles.includes(name) || pkg.dependencies[name]) {
+        pkg.dsh.profile.bundles = pkg.dsh.profile.bundles.filter((x) => x !== name)
         delete pkg.dependencies[name]
-        console.log(`withdrew preset ${name}: not resolvable by the active runtime`)
+        console.log(`preset sync: removed ${name}`)
         changed = true
       }
-      seeded = seeded.filter((x) => x !== name)
     }
-
-    // Seed presets this runtime can actually serve, once per package: the
-    // marker keeps us from re-adding a bundle the user deliberately
-    // removed via GUI/CLI.
-    for (const name of Object.keys(presets)) {
-      if (seeded.includes(name)) continue
-      if (!resolvable(name)) { console.log(`preset ${name} not resolvable by active runtime; skip seeding`); continue }
-      pkg.dependencies[name] ??= presets[name]
-      if (!pkg.dsh.profile.bundles.includes(name)) pkg.dsh.profile.bundles.push(name)
-      seeded.push(name)
-      console.log(`seeded preset plugin into web profile: ${name}`)
-      changed = true
+    // Ensure everything we want is present. ??= keeps a version the user
+    // pinned themselves via a real profile install.
+    for (const name of desired) {
+      if (!pkg.dsh.profile.bundles.includes(name) || !pkg.dependencies[name]) {
+        pkg.dependencies[name] ??= manifest[name]
+        if (!pkg.dsh.profile.bundles.includes(name)) pkg.dsh.profile.bundles.push(name)
+        console.log(`preset sync: applied ${name}`)
+        changed = true
+      }
     }
 
     if (changed) {
       fs.mkdirSync(profileDir, { recursive: true })
       fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
     }
-    fs.writeFileSync(markerPath, JSON.stringify(seeded, null, 2))
+    fs.writeFileSync(managedPath, JSON.stringify(desired, null, 2))
   } catch (err) {
-    console.error('preset plugin seeding failed (non-fatal):', err)
+    console.error('preset sync failed (non-fatal):', err)
   }
 }
 
@@ -812,7 +877,7 @@ function startServer() {
       reject(new Error(`bundled dsh not found at ${entry}`))
       return
     }
-    seedPresetPlugins()
+    syncPresetPlugins()
     healUnresolvableEntries()
 
     const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
@@ -939,6 +1004,8 @@ function buildMenu() {
       submenu: [
         { label: '配置中心…（插件 / MCP / 技能）', click: () => { openPluginManager() } },
         { label: '打开命令行窗口', click: () => { openCliTerminal() } },
+        { type: 'separator' },
+        { label: '重新同步预置插件…', click: () => { restorePresetPlugins() } },
       ],
     },
     {

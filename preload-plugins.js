@@ -13,5 +13,8 @@ contextBridge.exposeInMainWorld('pluginApi', {
   skillsOpen: () => ipcRenderer.invoke('skills:open'),
   skillsDelete: (name) => ipcRenderer.invoke('skills:delete', name),
   skillsInstallZip: () => ipcRenderer.invoke('skills:installZip'),
+  proxyGet: () => ipcRenderer.invoke('proxy:get'),
+  proxySave: (config) => ipcRenderer.invoke('proxy:save', config),
+  proxyTest: (config) => ipcRenderer.invoke('proxy:test', config),
   openLog: () => ipcRenderer.invoke('app:openLog'),
 })

@@ -212,3 +212,30 @@ function prependEnvPath(env, dir, delimiter) {
   return env
 }
 module.exports.prependEnvPath = prependEnvPath
+
+/**
+ * Build the child-process env entries for an HTTP proxy config
+ * ({enabled, url, bypass}). Standard env vars in both cases so every HTTP
+ * stack in the tree picks them up (pnpm/npm natively; Node's built-in
+ * fetch/undici via NODE_USE_ENV_PROXY, supported by the embedded Node 24).
+ * Loopback addresses are ALWAYS on the bypass list — the app UI, the dsh
+ * web server and local MCP servers must never be routed through a proxy.
+ * Returns {} when disabled/blank.
+ */
+function buildProxyEnv(config) {
+  const c = config || {}
+  const url = typeof c.url === 'string' ? c.url.trim() : ''
+  if (!c.enabled || !url) return {}
+  const bypass = new Set(['127.0.0.1', 'localhost', '::1'])
+  for (const part of String(c.bypass || '').split(/[,\s]+/)) {
+    if (part.trim()) bypass.add(part.trim())
+  }
+  const noProxy = [...bypass].join(',')
+  return {
+    HTTP_PROXY: url, http_proxy: url,
+    HTTPS_PROXY: url, https_proxy: url,
+    NO_PROXY: noProxy, no_proxy: noProxy,
+    NODE_USE_ENV_PROXY: '1',
+  }
+}
+module.exports.buildProxyEnv = buildProxyEnv

@@ -96,6 +96,7 @@
     <button data-pane="plugins" class="active"><span class="icon">◫</span>插件</button>
     <button data-pane="mcp"><span class="icon">⇄</span>MCP 服务器</button>
     <button data-pane="skills"><span class="icon">✦</span>技能</button>
+    <button data-pane="proxy"><span class="icon">⇌</span>代理</button>
   </nav>
 
   <div id="content">
@@ -162,6 +163,31 @@
     </div>
     <div class="card" id="skills-list">加载中…</div>
     <div class="msg" id="skills-msg"></div>
+  </div>
+
+  <!-- ============ 代理 ============ -->
+  <div class="pane single" id="pane-proxy">
+    <h2>HTTP 代理</h2>
+    <p class="sub">对 dsh 服务及其发起的一切网络请求生效（模型 API、插件安装、内核升级、MCP 连接）。本机地址（127.0.0.1 / localhost）始终直连。修改后需重启应用生效。</p>
+    <div class="row" style="margin-bottom:14px">
+      <label class="toggle" title="启用/停用代理">
+        <input type="checkbox" id="p-enabled"><span class="knob"></span>
+      </label>
+      <span style="margin-left:8px">启用代理</span>
+    </div>
+    <div class="field"><label>代理地址（http:// 开头，本地代理工具常见为 http://127.0.0.1:7890）</label>
+      <input id="p-url" placeholder="http://127.0.0.1:7890" spellcheck="false"></div>
+    <div class="field"><label>不走代理的地址（逗号分隔，可留空；本机地址已默认包含）</label>
+      <input id="p-bypass" placeholder="*.example.internal, 10.0.0.0/8" spellcheck="false"></div>
+    <div class="row" style="margin-top:16px">
+      <span class="spacer"></span>
+      <button id="p-test">测试连通</button>
+      <button class="primary" id="p-save">保存</button>
+    </div>
+    <div class="msg" id="proxy-msg"></div>
+    <div class="row" style="margin-top:10px; display:none" id="restart-proxy">
+      <span class="spacer"></span><button class="primary" onclick="pluginApi.restart()">重启应用生效</button>
+    </div>
   </div>
 
   </div>
@@ -406,6 +432,34 @@
     refreshSkills()
   }
   $('s-open').onclick = () => pluginApi.skillsOpen()
+
+  // ================= 代理 =================
+  function proxyMsg(text, cls) { const m = $('proxy-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
+  function readProxyForm() {
+    return { enabled: $('p-enabled').checked, url: $('p-url').value.trim(), bypass: $('p-bypass').value.trim() }
+  }
+  pluginApi.proxyGet().then((c) => {
+    $('p-enabled').checked = !!c.enabled
+    $('p-url').value = c.url || ''
+    $('p-bypass').value = c.bypass || ''
+  })
+  $('p-save').onclick = async () => {
+    const c = readProxyForm()
+    if (c.enabled && !/^https?:\/\//.test(c.url)) { proxyMsg('代理地址需以 http:// 或 https:// 开头', 'err'); return }
+    const res = await pluginApi.proxySave(c)
+    if (!res.ok) { proxyMsg('保存失败：' + res.error, 'err'); return }
+    proxyMsg('已保存', 'ok')
+    $('restart-proxy').style.display = 'flex'
+  }
+  $('p-test').onclick = async () => {
+    const c = readProxyForm()
+    if (!/^https?:\/\//.test(c.url)) { proxyMsg('先填写有效代理地址再测试', 'err'); return }
+    $('p-test').disabled = true
+    proxyMsg('测试中…')
+    const res = await pluginApi.proxyTest(c)
+    proxyMsg((res.ok ? '✓ ' : '✗ ') + res.detail, res.ok ? 'ok' : 'err')
+    $('p-test').disabled = false
+  }
 
   // ---- init ----
   refreshPlugins()

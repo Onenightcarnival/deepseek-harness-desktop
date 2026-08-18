@@ -11,7 +11,7 @@ const { app, BrowserWindow, dialog, shell, Menu, ipcMain } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
-const { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath } = require('./runtime.js')
+const { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath, buildProxyEnv } = require('./runtime.js')
 
 const READY_RE = /dsh web: (http:\/\/127\.0\.0\.1:\d+)/
 const STARTUP_TIMEOUT_MS = 90_000
@@ -187,7 +187,7 @@ function installCoreRuntime(version) {
     } catch { /* minimal flavor */ }
     const child = spawn(process.execPath, [pnpmCjs, 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
       cwd: dir,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      env: applyProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -257,6 +257,17 @@ function desktopPatchArgs() {
 // that file and dsh-mcp-client hot-swaps on config change, so saving in the
 // GUI takes effect within seconds — no app restart. Only the fenced block is
 // ever touched; the user's own entries are preserved.
+
+/** HTTP proxy config store ({enabled, url, bypass}) + env injection. */
+function proxyStorePath() { return path.join(app.getPath('userData'), 'proxy.json') }
+function readProxyConfig() {
+  try { return { enabled: false, url: '', bypass: '', ...JSON.parse(fs.readFileSync(proxyStorePath(), 'utf8')) } }
+  catch { return { enabled: false, url: '', bypass: '' } }
+}
+/** Merge the proxy env (if enabled) into a child env object. */
+function applyProxyEnv(env) {
+  return Object.assign(env, buildProxyEnv(readProxyConfig()))
+}
 
 function mcpStorePath() { return path.join(app.getPath('userData'), 'mcp-servers.json') }
 function profilePatchPath() { return path.join(app.getPath('home'), '.dsh', 'profiles', 'web', 'cordis.patch.yml') }
@@ -890,6 +901,7 @@ function startServer() {
       // case-insensitive: on Windows the spread key is "Path" — writing
       // "PATH" would leave the child with PATH = binDir only (git vanishes)
       prependEnvPath(env, binDir, path.delimiter)
+      applyProxyEnv(env)
     } catch { /* CLI launchers are best-effort */ }
 
     serverProc = spawn(process.execPath, ['--expose-internals', entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--port', '0'], {
@@ -1029,7 +1041,7 @@ function runDshCli(args) {
   return new Promise((resolve) => {
     const binDir = writeCliLaunchers()
     const child = spawn(process.execPath, ['--expose-internals', dshEntry(), ...args], {
-      env: prependEnvPath({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, binDir, path.delimiter),
+      env: applyProxyEnv(prependEnvPath({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, binDir, path.delimiter)),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -1185,7 +1197,7 @@ async function testMcpServer(server, extraPath) {
     let child
     try {
       child = spawn(server.command, server.args || [], {
-        env: (() => { const e = { ...process.env, ...(server.env || {}) }; if (extraPath) prependEnvPath(e, extraPath, path.delimiter); return e })(),
+        env: (() => { const e = { ...process.env, ...(server.env || {}) }; if (extraPath) prependEnvPath(e, extraPath, path.delimiter); applyProxyEnv(e); return e })(),
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
@@ -1257,6 +1269,56 @@ function extractZip(zipPath, destDir) {
   if (r.error) throw r.error
   if (r.status !== 0) throw new Error(`解压失败 (exit ${r.status})：${String(r.stderr || '').slice(0, 300)}`)
 }
+
+// ---- proxy config ----
+ipcMain.handle('proxy:get', async () => readProxyConfig())
+ipcMain.handle('proxy:save', async (_event, config) => {
+  if (!config || typeof config !== 'object') return { ok: false, error: '数据格式无效' }
+  const enabled = !!config.enabled
+  const url = String(config.url || '').trim()
+  const bypass = String(config.bypass || '').trim()
+  if (enabled) {
+    if (!/^https?:\/\/\S+$/.test(url) || url.length > 500) return { ok: false, error: '代理地址需以 http:// 或 https:// 开头（暂不支持 socks）' }
+  }
+  if (bypass.length > 2000 || /[\r\n\0]/.test(bypass)) return { ok: false, error: '例外列表格式无效' }
+  try {
+    fs.writeFileSync(proxyStorePath(), JSON.stringify({ enabled, url, bypass }, null, 2))
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) }
+  }
+})
+/**
+ * End-to-end proxy probe: spawn a node child with EXACTLY the env the dsh
+ * server would get and fetch a well-known endpoint through it. Tests the
+ * real mechanism (env vars + NODE_USE_ENV_PROXY), not a simulation.
+ */
+ipcMain.handle('proxy:test', async (_event, config) => {
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...buildProxyEnv({ ...config, enabled: true }) }
+  const script = `
+    const t0 = Date.now()
+    fetch('https://registry.npmjs.org/-/ping', { signal: AbortSignal.timeout(8000) })
+      .then((r) => { console.log(JSON.stringify({ ok: r.ok, status: r.status, ms: Date.now() - t0 })); process.exit(0) })
+      .catch((err) => { console.log(JSON.stringify({ ok: false, error: String(err && err.cause && err.cause.message || err.message || err) })); process.exit(0) })
+  `
+  return await new Promise((resolve) => {
+    const child = spawn(process.execPath, ['-e', script], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    let out = ''
+    child.stdout.on('data', (c) => { out += c.toString() })
+    const timer = setTimeout(() => { try { child.kill() } catch { /* gone */ } }, 10_000)
+    child.on('exit', () => {
+      clearTimeout(timer)
+      try {
+        const r = JSON.parse(out.trim())
+        if (r.ok) resolve({ ok: true, detail: `代理连通（npm registry，${r.ms}ms）` })
+        else resolve({ ok: false, detail: `连接失败：${r.error || `HTTP ${r.status}`}` })
+      } catch {
+        resolve({ ok: false, detail: '测试进程异常退出' })
+      }
+    })
+    child.on('error', (err) => { clearTimeout(timer); resolve({ ok: false, detail: String(err) }) })
+  })
+})
 
 ipcMain.handle('skills:installZip', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(pluginWindow || mainWindow, {

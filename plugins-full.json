@@ -1,7 +1,6 @@
 {
   "packages": [
     "@linxin666/dsh-client-ui-task-board",
-    "@linxin666/dsh-client-ui-git-graph",
     "dsh-better-sidebar",
     "@linxin666/dsh-ssh"
   ]

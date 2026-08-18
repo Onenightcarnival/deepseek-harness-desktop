@@ -94,8 +94,9 @@ jobs:
 
             每个平台两种安装包：
             - 常规版：只含官方 dsh，插件自装。
-            - 文件名带 `-full`：额外预置四个生产力插件——任务看板、Git 图谱、
-              SSH 远程连接（dsh-web-ui）与侧边栏增强 dsh-better-sidebar。
+            - 文件名带 `-full`：额外预置三个生产力插件——任务看板、SSH 远程
+              连接（dsh-web-ui）与 dsh-better-sidebar 工作台（文件管理、
+              终端、Git 面板等）。
 
             安装包未做代码签名：
             - Windows 首次运行如弹出 SmartScreen，点「更多信息 → 仍要运行」。

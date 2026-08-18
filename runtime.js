@@ -214,18 +214,28 @@ function prependEnvPath(env, dir, delimiter) {
 module.exports.prependEnvPath = prependEnvPath
 
 /**
- * Build the child-process env entries for an HTTP proxy config
- * ({enabled, url, bypass}). Standard env vars in both cases so every HTTP
- * stack in the tree picks them up (pnpm/npm natively; Node's built-in
- * fetch/undici via NODE_USE_ENV_PROXY, supported by the embedded Node 24).
- * Loopback addresses are ALWAYS on the bypass list — the app UI, the dsh
- * web server and local MCP servers must never be routed through a proxy.
- * Returns {} when disabled/blank.
+ * Build the child-process env entries for a proxy config
+ * ({mode: 'none'|'manual', host, port, bypass, auth, login, password}).
+ * Standard env vars in both cases so every HTTP stack in the tree picks
+ * them up (pnpm/npm natively; Node's built-in fetch/undici via
+ * NODE_USE_ENV_PROXY, supported by the embedded Node 24). Credentials are
+ * URL-encoded into the proxy URL. Loopback addresses are ALWAYS on the
+ * bypass list — the app UI, the dsh web server and local MCP servers must
+ * never be routed through a proxy. Returns {} when mode is not manual or
+ * host/port are blank.
  */
 function buildProxyEnv(config) {
   const c = config || {}
-  const url = typeof c.url === 'string' ? c.url.trim() : ''
-  if (!c.enabled || !url) return {}
+  const host = typeof c.host === 'string' ? c.host.trim() : ''
+  const port = String(c.port ?? '').trim()
+  if (c.mode !== 'manual' || !host || !port) return {}
+  let cred = ''
+  if (c.auth && c.login) {
+    cred = encodeURIComponent(String(c.login))
+    if (c.password) cred += ':' + encodeURIComponent(String(c.password))
+    cred += '@'
+  }
+  const url = `http://${cred}${host}:${port}`
   const bypass = new Set(['127.0.0.1', 'localhost', '::1'])
   for (const part of String(c.bypass || '').split(/[,\s]+/)) {
     if (part.trim()) bypass.add(part.trim())

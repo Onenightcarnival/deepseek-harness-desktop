@@ -88,6 +88,9 @@
          height: 170px; overflow: auto; white-space: pre-wrap;
          font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #9a9aa4; }
   .spacer { flex: 1; }
+  .radio-row { display: flex; align-items: center; gap: 7px; padding: 4px 0; cursor: pointer; color: #e8e8ec; font-size: 13px; }
+  .radio-row input { width: auto; }
+  .dim { opacity: .45; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -169,16 +172,35 @@
   <div class="pane single" id="pane-proxy">
     <h2>HTTP 代理</h2>
     <p class="sub">对 dsh 服务及其发起的一切网络请求生效（模型 API、插件安装、内核升级、MCP 连接）。本机地址（127.0.0.1 / localhost）始终直连。修改后需重启应用生效。</p>
-    <div class="row" style="margin-bottom:14px">
-      <label class="toggle" title="启用/停用代理">
-        <input type="checkbox" id="p-enabled"><span class="knob"></span>
-      </label>
-      <span style="margin-left:8px">启用代理</span>
+    <div class="field">
+      <label class="radio-row"><input type="radio" name="p-mode" id="p-mode-none" value="none"> 不使用代理</label>
+      <label class="radio-row"><input type="radio" name="p-mode" id="p-mode-manual" value="manual"> 手动配置</label>
     </div>
-    <div class="field"><label>代理地址（http:// 开头，本地代理工具常见为 http://127.0.0.1:7890）</label>
-      <input id="p-url" placeholder="http://127.0.0.1:7890" spellcheck="false"></div>
-    <div class="field"><label>不走代理的地址（逗号分隔，可留空；本机地址已默认包含）</label>
-      <input id="p-bypass" placeholder="*.example.internal, 10.0.0.0/8" spellcheck="false"></div>
+    <div id="p-manual">
+      <div class="row" style="align-items:flex-end; gap:10px">
+        <div class="field" style="flex:1"><label>主机名</label>
+          <input id="p-host" placeholder="127.0.0.1" spellcheck="false"></div>
+        <div class="field" style="flex:0 0 110px"><label>端口</label>
+          <input id="p-port" placeholder="7890" spellcheck="false"></div>
+      </div>
+      <div class="field"><label>不代理的主机（逗号分隔，可留空；本机地址已默认包含）</label>
+        <input id="p-bypass" placeholder="*.example.internal, 10.0.0.0/8" spellcheck="false"></div>
+      <div class="field">
+        <label class="radio-row"><input type="checkbox" id="p-auth"> 代理身份验证</label>
+      </div>
+      <div id="p-auth-fields" style="padding-left:22px">
+        <div class="row" style="align-items:flex-end; gap:10px">
+          <div class="field" style="flex:1"><label>用户名</label>
+            <input id="p-login" spellcheck="false" autocomplete="off"></div>
+          <div class="field" style="flex:1"><label>密码</label>
+            <input id="p-password" type="password" autocomplete="off"></div>
+        </div>
+        <div class="field">
+          <label class="radio-row"><input type="checkbox" id="p-remember" checked> 记住密码</label>
+          <div class="meta" style="margin-top:4px">不勾选时密码仅保存在本次运行中，应用重启后需重新输入（密码以明文存储在本机用户数据目录，请知悉）。</div>
+        </div>
+      </div>
+    </div>
     <div class="row" style="margin-top:16px">
       <span class="spacer"></span>
       <button id="p-test">测试连通</button>
@@ -435,17 +457,41 @@
 
   // ================= 代理 =================
   function proxyMsg(text, cls) { const m = $('proxy-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
+  function proxyDim() {
+    $('p-manual').classList.toggle('dim', !$('p-mode-manual').checked)
+    $('p-auth-fields').classList.toggle('dim', !$('p-auth').checked)
+  }
   function readProxyForm() {
-    return { enabled: $('p-enabled').checked, url: $('p-url').value.trim(), bypass: $('p-bypass').value.trim() }
+    return {
+      mode: $('p-mode-manual').checked ? 'manual' : 'none',
+      host: $('p-host').value.trim(), port: $('p-port').value.trim(),
+      bypass: $('p-bypass').value.trim(),
+      auth: $('p-auth').checked, login: $('p-login').value, password: $('p-password').value,
+      remember: $('p-remember').checked,
+    }
   }
   pluginApi.proxyGet().then((c) => {
-    $('p-enabled').checked = !!c.enabled
-    $('p-url').value = c.url || ''
+    ;($('p-mode-' + (c.mode === 'manual' ? 'manual' : 'none'))).checked = true
+    $('p-host').value = c.host || ''
+    $('p-port').value = c.port || ''
     $('p-bypass').value = c.bypass || ''
+    $('p-auth').checked = !!c.auth
+    $('p-login').value = c.login || ''
+    $('p-password').value = c.password || ''
+    $('p-remember').checked = c.remember !== false
+    proxyDim()
   })
+  for (const id of ['p-mode-none', 'p-mode-manual', 'p-auth']) $(id).onchange = proxyDim
+  function validateProxyForm(c) {
+    if (c.mode !== 'manual') return null
+    if (!/^[\w.-]+$/.test(c.host)) return '主机名无效'
+    if (!/^\d{1,5}$/.test(c.port) || +c.port < 1 || +c.port > 65535) return '端口需为 1-65535'
+    return null
+  }
   $('p-save').onclick = async () => {
     const c = readProxyForm()
-    if (c.enabled && !/^https?:\/\//.test(c.url)) { proxyMsg('代理地址需以 http:// 或 https:// 开头', 'err'); return }
+    const err = validateProxyForm(c)
+    if (err) { proxyMsg(err, 'err'); return }
     const res = await pluginApi.proxySave(c)
     if (!res.ok) { proxyMsg('保存失败：' + res.error, 'err'); return }
     proxyMsg('已保存', 'ok')
@@ -453,7 +499,8 @@
   }
   $('p-test').onclick = async () => {
     const c = readProxyForm()
-    if (!/^https?:\/\//.test(c.url)) { proxyMsg('先填写有效代理地址再测试', 'err'); return }
+    const err = validateProxyForm({ ...c, mode: 'manual' })
+    if (err) { proxyMsg('先填写有效的主机名和端口再测试', 'err'); return }
     $('p-test').disabled = true
     proxyMsg('测试中…')
     const res = await pluginApi.proxyTest(c)

@@ -17,8 +17,10 @@ runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目�
                     zip 技能包内容识别（collectSkills）—— 刻意抽出来以便普通 node 直接单测
 plugins.html        配置中心窗口（左侧导航四页：插件 / MCP 服务器 / 技能 / 代理；MCP 为
                     主从布局，表单仅暴露 streamable-http——validateMcpServer 与
-                    buildMcpBlock 仍接受 stdio 以兼容旧存量条目。代理页写
-                    userData/proxy.json，经 runtime.js 的 buildProxyEnv（含单测）注入
+                    buildMcpBlock 仍接受 stdio 以兼容旧存量条目。代理页为 PyCharm 式
+                    （模式单选/主机+端口/例外/认证，密码仅在勾选记住时落盘，否则
+                    只存本次运行内存），写 userData/proxy.json（旧 {enabled,url}
+                    形态自动迁移），经 runtime.js 的 buildProxyEnv（含单测）注入
                     标准 HTTP(S)_PROXY/NO_PROXY + NODE_USE_ENV_PROXY 到所有子进程
                     spawn 点；本机地址强制在 NO_PROXY 里，否则界面与本地 MCP 会被
                     代理劫持——已实测外网走 CONNECT、localhost 直连）

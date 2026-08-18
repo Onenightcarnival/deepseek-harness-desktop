@@ -258,13 +258,33 @@ function desktopPatchArgs() {
 // GUI takes effect within seconds — no app restart. Only the fenced block is
 // ever touched; the user's own entries are preserved.
 
-/** HTTP proxy config store ({enabled, url, bypass}) + env injection. */
+/**
+ * Proxy config store, PyCharm-shaped:
+ * {mode: 'none'|'manual', host, port, bypass, auth, login, remember,
+ *  password?} — password is persisted ONLY when remember is true;
+ * otherwise it lives in sessionProxyPassword for this run and must be
+ * re-entered after a restart.
+ */
 function proxyStorePath() { return path.join(app.getPath('userData'), 'proxy.json') }
+let sessionProxyPassword = ''
+const PROXY_DEFAULTS = { mode: 'none', host: '', port: '', bypass: '', auth: false, login: '', remember: true, password: '' }
 function readProxyConfig() {
-  try { return { enabled: false, url: '', bypass: '', ...JSON.parse(fs.readFileSync(proxyStorePath(), 'utf8')) } }
-  catch { return { enabled: false, url: '', bypass: '' } }
+  let c = {}
+  try { c = JSON.parse(fs.readFileSync(proxyStorePath(), 'utf8')) } catch { /* none yet */ }
+  // migrate the earlier {enabled, url} shape once
+  if (c.url !== undefined && c.host === undefined) {
+    try {
+      const u = new URL(c.url)
+      c = { mode: c.enabled ? 'manual' : 'none', host: u.hostname, port: u.port || '80', bypass: c.bypass || '',
+            auth: !!u.username, login: decodeURIComponent(u.username || ''), remember: true, password: decodeURIComponent(u.password || '') }
+    } catch { c = {} }
+    try { fs.writeFileSync(proxyStorePath(), JSON.stringify(c, null, 2)) } catch { /* keep going */ }
+  }
+  const merged = { ...PROXY_DEFAULTS, ...c }
+  if (merged.auth && !merged.remember && !merged.password) merged.password = sessionProxyPassword
+  return merged
 }
-/** Merge the proxy env (if enabled) into a child env object. */
+/** Merge the proxy env (if manual mode) into a child env object. */
 function applyProxyEnv(env) {
   return Object.assign(env, buildProxyEnv(readProxyConfig()))
 }
@@ -1274,15 +1294,27 @@ function extractZip(zipPath, destDir) {
 ipcMain.handle('proxy:get', async () => readProxyConfig())
 ipcMain.handle('proxy:save', async (_event, config) => {
   if (!config || typeof config !== 'object') return { ok: false, error: '数据格式无效' }
-  const enabled = !!config.enabled
-  const url = String(config.url || '').trim()
-  const bypass = String(config.bypass || '').trim()
-  if (enabled) {
-    if (!/^https?:\/\/\S+$/.test(url) || url.length > 500) return { ok: false, error: '代理地址需以 http:// 或 https:// 开头（暂不支持 socks）' }
+  const c = {
+    mode: config.mode === 'manual' ? 'manual' : 'none',
+    host: String(config.host || '').trim(),
+    port: String(config.port || '').trim(),
+    bypass: String(config.bypass || '').trim(),
+    auth: !!config.auth,
+    login: String(config.login || ''),
+    remember: !!config.remember,
+    password: String(config.password || ''),
   }
-  if (bypass.length > 2000 || /[\r\n\0]/.test(bypass)) return { ok: false, error: '例外列表格式无效' }
+  if (c.mode === 'manual') {
+    if (!/^[\w.-]+$/.test(c.host) || c.host.length > 255) return { ok: false, error: '主机名无效' }
+    if (!/^\d{1,5}$/.test(c.port) || Number(c.port) < 1 || Number(c.port) > 65535) return { ok: false, error: '端口需为 1-65535' }
+  }
+  if (c.bypass.length > 2000 || /[\r\n\0]/.test(c.bypass)) return { ok: false, error: '例外列表格式无效' }
+  if (c.login.length > 200 || c.password.length > 200) return { ok: false, error: '用户名或密码过长' }
   try {
-    fs.writeFileSync(proxyStorePath(), JSON.stringify({ enabled, url, bypass }, null, 2))
+    // password persists only with "remember"; otherwise session-only
+    sessionProxyPassword = c.auth && !c.remember ? c.password : ''
+    const stored = { ...c, password: c.auth && c.remember ? c.password : '' }
+    fs.writeFileSync(proxyStorePath(), JSON.stringify(stored, null, 2))
     return { ok: true }
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) }
@@ -1294,7 +1326,7 @@ ipcMain.handle('proxy:save', async (_event, config) => {
  * real mechanism (env vars + NODE_USE_ENV_PROXY), not a simulation.
  */
 ipcMain.handle('proxy:test', async (_event, config) => {
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...buildProxyEnv({ ...config, enabled: true }) }
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...buildProxyEnv({ ...config, mode: 'manual' }) }
   const script = `
     const t0 = Date.now()
     fetch('https://registry.npmjs.org/-/ping', { signal: AbortSignal.timeout(8000) })

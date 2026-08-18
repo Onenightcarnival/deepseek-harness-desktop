@@ -25,8 +25,8 @@ stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 st
 afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh
 desktop-patch.yml   随包分发的插件组合覆盖层（默认空）
 plugins.json        要预置进安装包的插件 npm 包列表（默认空 = minimal flavor）
-plugins-full.json   full flavor 的预置清单：packages（任务看板/Git 图谱/右侧面板/SSH
-                    四件生产力套件，播种激活）；另支持 carry 组（只装进闭包可解析、
+plugins-full.json   full flavor 的预置清单：packages（任务看板/Git 图谱/better-sidebar/
+                    SSH 四件生产力套件，播种激活）；另支持 carry 组（只装进闭包可解析、
                     不激活，当前为空）。stage 按 DSH_FLAVOR 选清单并把精确版本写进
                     运行时 preset-plugins.json（{seed, carry}），main.js 每次启动按
                     seed 组做声明式同步（syncPresetPlugins）

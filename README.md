@@ -48,8 +48,9 @@ GitHub Release。**版本号以标签为准**：CI 会把 `vX.Y.Z` 写进
 
 每个平台出两种安装包（CI matrix 的 flavor 维度）：**常规版**只含官方
 dsh；文件名带 **`-full`** 的版本额外预置
-[dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) 的四个
-生产力插件：任务看板、Git 图谱、右侧预览面板、SSH 远程连接，
+四个生产力插件：任务看板、Git 图谱、SSH 远程连接
+（[dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui)）与侧边栏
+增强 [dsh-better-sidebar](https://www.npmjs.com/package/dsh-better-sidebar)，
 每次启动自动同步进用户配置层——预置插件视为版本自带能力，
 在配置中心移除后下次启动会同步回来；不想要预置请使用常规版。
 皮肤和宠物类插件暂不预置（上游尚不稳定），需要的用户可自行安装。两种版本共享 `~/.dsh`

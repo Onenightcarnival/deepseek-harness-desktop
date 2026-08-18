@@ -2,7 +2,7 @@
   "packages": [
     "@linxin666/dsh-client-ui-task-board",
     "@linxin666/dsh-client-ui-git-graph",
-    "@linxin666/dsh-client-ui-aionui-panel",
+    "dsh-better-sidebar",
     "@linxin666/dsh-ssh"
   ]
 }

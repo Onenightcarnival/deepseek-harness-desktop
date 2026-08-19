@@ -241,11 +241,20 @@ function buildProxyEnv(config) {
     if (part.trim()) bypass.add(part.trim())
   }
   const noProxy = [...bypass].join(',')
-  return {
+  const env = {
     HTTP_PROXY: url, http_proxy: url,
     HTTPS_PROXY: url, https_proxy: url,
     NO_PROXY: noProxy, no_proxy: noProxy,
     NODE_USE_ENV_PROXY: '1',
+    // TLS-intercepting proxies (corporate MITM) re-sign traffic with their
+    // own CA; Node's bundled CA store rejects it ("self signed certificate
+    // in certificate chain"). The OS trust store usually has the corp CA,
+    // so opt Node into it whenever a manual proxy is on (supported by the
+    // embedded Node 24; harmless otherwise).
+    NODE_USE_SYSTEM_CA: '1',
   }
+  if (typeof c.caPath === 'string' && c.caPath.trim()) env.NODE_EXTRA_CA_CERTS = c.caPath.trim()
+  if (c.insecure) env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+  return env
 }
 module.exports.buildProxyEnv = buildProxyEnv

@@ -16,5 +16,6 @@ contextBridge.exposeInMainWorld('pluginApi', {
   proxyGet: () => ipcRenderer.invoke('proxy:get'),
   proxySave: (config) => ipcRenderer.invoke('proxy:save', config),
   proxyTest: (config) => ipcRenderer.invoke('proxy:test', config),
+  proxyPickCa: () => ipcRenderer.invoke('proxy:pickCa'),
   openLog: () => ipcRenderer.invoke('app:openLog'),
 })

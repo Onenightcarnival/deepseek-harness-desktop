@@ -267,7 +267,7 @@ function desktopPatchArgs() {
  */
 function proxyStorePath() { return path.join(app.getPath('userData'), 'proxy.json') }
 let sessionProxyPassword = ''
-const PROXY_DEFAULTS = { mode: 'none', host: '', port: '', bypass: '', auth: false, login: '', remember: true, password: '' }
+const PROXY_DEFAULTS = { mode: 'none', host: '', port: '', bypass: '', auth: false, login: '', remember: true, password: '', caPath: '', insecure: false }
 function readProxyConfig() {
   let c = {}
   try { c = JSON.parse(fs.readFileSync(proxyStorePath(), 'utf8')) } catch { /* none yet */ }
@@ -1303,6 +1303,8 @@ ipcMain.handle('proxy:save', async (_event, config) => {
     login: String(config.login || ''),
     remember: !!config.remember,
     password: String(config.password || ''),
+    caPath: String(config.caPath || '').trim(),
+    insecure: !!config.insecure,
   }
   if (c.mode === 'manual') {
     if (!/^[\w.-]+$/.test(c.host) || c.host.length > 255) return { ok: false, error: '主机名无效' }
@@ -1310,6 +1312,7 @@ ipcMain.handle('proxy:save', async (_event, config) => {
   }
   if (c.bypass.length > 2000 || /[\r\n\0]/.test(c.bypass)) return { ok: false, error: '例外列表格式无效' }
   if (c.login.length > 200 || c.password.length > 200) return { ok: false, error: '用户名或密码过长' }
+  if (c.caPath && !fs.existsSync(c.caPath)) return { ok: false, error: 'CA 证书文件不存在' }
   try {
     // password persists only with "remember"; otherwise session-only
     sessionProxyPassword = c.auth && !c.remember ? c.password : ''
@@ -1325,6 +1328,15 @@ ipcMain.handle('proxy:save', async (_event, config) => {
  * server would get and fetch a well-known endpoint through it. Tests the
  * real mechanism (env vars + NODE_USE_ENV_PROXY), not a simulation.
  */
+ipcMain.handle('proxy:pickCa', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(pluginWindow || mainWindow, {
+    title: '选择代理的 CA 证书（PEM 格式）',
+    properties: ['openFile'],
+    filters: [{ name: '证书文件', extensions: ['pem', 'crt', 'cer'] }],
+  })
+  if (canceled || filePaths.length === 0) return { canceled: true }
+  return { canceled: false, path: filePaths[0] }
+})
 ipcMain.handle('proxy:test', async (_event, config) => {
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...buildProxyEnv({ ...config, mode: 'manual' }) }
   const script = `

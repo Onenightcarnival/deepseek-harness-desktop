@@ -200,6 +200,11 @@
           <div class="meta" style="margin-top:4px">不勾选时密码仅保存在本次运行中，应用重启后需重新输入（密码以明文存储在本机用户数据目录，请知悉）。</div>
         </div>
       </div>
+      <div class="field" style="margin-top:4px"><label>自定义 CA 证书（可选，PEM；公司代理做 TLS 拦截时导入其根证书。系统证书库已默认信任）</label>
+        <div class="row"><input id="p-ca" placeholder="留空 = 仅系统证书库" spellcheck="false"><button id="p-ca-pick" style="flex:none">选择…</button></div></div>
+      <div class="field">
+        <label class="radio-row"><input type="checkbox" id="p-insecure"> 不校验 TLS 证书（不安全，仅当无法获得代理 CA 证书时临时使用）</label>
+      </div>
     </div>
     <div class="row" style="margin-top:16px">
       <span class="spacer"></span>
@@ -468,6 +473,7 @@
       bypass: $('p-bypass').value.trim(),
       auth: $('p-auth').checked, login: $('p-login').value, password: $('p-password').value,
       remember: $('p-remember').checked,
+      caPath: $('p-ca').value.trim(), insecure: $('p-insecure').checked,
     }
   }
   pluginApi.proxyGet().then((c) => {
@@ -479,8 +485,14 @@
     $('p-login').value = c.login || ''
     $('p-password').value = c.password || ''
     $('p-remember').checked = c.remember !== false
+    $('p-ca').value = c.caPath || ''
+    $('p-insecure').checked = !!c.insecure
     proxyDim()
   })
+  $('p-ca-pick').onclick = async () => {
+    const r = await pluginApi.proxyPickCa()
+    if (!r.canceled && r.path) $('p-ca').value = r.path
+  }
   for (const id of ['p-mode-none', 'p-mode-manual', 'p-auth']) $(id).onchange = proxyDim
   function validateProxyForm(c) {
     if (c.mode !== 'manual') return null

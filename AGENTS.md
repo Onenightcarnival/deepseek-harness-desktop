@@ -23,7 +23,11 @@ plugins.html        配置中心窗口（左侧导航四页：插件 / MCP 服�
                     形态自动迁移），经 runtime.js 的 buildProxyEnv（含单测）注入
                     标准 HTTP(S)_PROXY/NO_PROXY + NODE_USE_ENV_PROXY 到所有子进程
                     spawn 点；本机地址强制在 NO_PROXY 里，否则界面与本地 MCP 会被
-                    代理劫持——已实测外网走 CONNECT、localhost 直连）
+                    代理劫持——已实测外网走 CONNECT、localhost 直连。TLS 拦截型代理
+                    （self signed certificate in chain）：手动代理开启时自动带
+                    NODE_USE_SYSTEM_CA=1（信任系统证书库），可选 NODE_EXTRA_CA_CERTS
+                    （导入 CA 文件）与 NODE_TLS_REJECT_UNAUTHORIZED=0（明示不安全的
+                    兜底），三条链路均对自签 TLS 服务实测过）
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动等待页
 stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 staging/<platform>-<arch>/dsh，

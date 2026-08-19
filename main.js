@@ -7,11 +7,13 @@
  */
 'use strict'
 
-const { app, BrowserWindow, dialog, shell, Menu, ipcMain, session } = require('electron')
+const { app, BrowserWindow, dialog, shell, Menu, ipcMain, session, net: electronNet } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
-const { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath, buildProxyEnv } = require('./runtime.js')
+const { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath,
+  applyProxyEnv, PROXY_ENV_KEYS } = require('./runtime.js')
+const { createForwarder, routeFor } = require('./proxy-forward.js')
 
 const READY_RE = /dsh web: (http:\/\/127\.0\.0\.1:\d+)/
 const STARTUP_TIMEOUT_MS = 90_000
@@ -27,7 +29,7 @@ const UPDATE_REPO = (() => {
 async function checkAppUpdates(interactive) {
   if (!UPDATE_REPO) return
   try {
-    const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+    const res = await electronNet.fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
       headers: { accept: 'application/vnd.github+json', 'user-agent': 'dsh-desktop' },
     })
     if (!res.ok) throw new Error(`GitHub API ${res.status}`)
@@ -109,7 +111,7 @@ let coreUpgradeBusy = false
 async function checkCoreUpdates(interactive) {
   if (coreUpgradeBusy) return
   try {
-    const res = await fetch('https://registry.npmjs.org/@deepseek-ai/dsh/latest', {
+    const res = await electronNet.fetch('https://registry.npmjs.org/@deepseek-ai/dsh/latest', {
       headers: { accept: 'application/json', 'user-agent': 'dsh-desktop' },
     })
     if (!res.ok) throw new Error(`npm registry ${res.status}`)
@@ -167,7 +169,6 @@ async function checkCoreUpdates(interactive) {
 
 /** Install @deepseek-ai/dsh@version into userData/runtimes/<version> with the bundled pnpm. */
 async function installCoreRuntime(version) {
-  const proxyEnv = await proxyEnvAsync()
   return new Promise((resolve, reject) => {
     const dir = path.join(runtimesDir(), version)
     fs.rmSync(dir, { recursive: true, force: true })
@@ -188,7 +189,7 @@ async function installCoreRuntime(version) {
     } catch { /* minimal flavor */ }
     const child = spawn(process.execPath, [pnpmCjs, 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
       cwd: dir,
-      env: Object.assign({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, proxyEnv),
+      env: withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -286,16 +287,18 @@ function readProxyConfig() {
   return merged
 }
 /**
- * Resolve the OS proxy via Chromium (PAC-aware, cross-platform). Returns
- * {host, port} or null for direct connections.
+ * Resolve the OS proxy for ONE url via Chromium — PAC-aware, honours the
+ * Windows exception list, cross-platform. Returns {host, port} or null
+ * (= direct). Called per request by the forwarder and never cached: that
+ * per-URL answer is the whole point (intranet direct, internet proxied).
  */
-async function resolveSystemProxy() {
+async function resolveSystemProxy(url) {
   try {
     // A dedicated in-memory session: defaultSession gets setProxy() applied
     // from our own config, which would make its resolveProxy() self-referential.
     // This partition keeps Chromium's default behaviour (= OS settings, PAC).
     const probe = session.fromPartition('proxy-probe')
-    const s = await probe.resolveProxy('https://registry.npmjs.org/')
+    const s = await probe.resolveProxy(url || 'https://registry.npmjs.org/')
     const m = /(?:PROXY|HTTPS)\s+([^;\s:]+):(\d+)/.exec(s || '')
     return m ? { host: m[1], port: m[2] } : null
   } catch { return null }
@@ -303,10 +306,10 @@ async function resolveSystemProxy() {
 /**
  * Mirror the proxy config onto Electron's own (Chromium) network layer so
  * shell-window traffic — external resources loaded by pages, update checks
- * that go through Chromium — follows the same setting. Note this does NOT
- * cover the dsh child process (a plain Node process with its own network
- * stack); that one is covered by the injected env vars. Loopback is always
- * bypassed implicitly by Chromium, so the local web UI is unaffected.
+ * that go through Chromium — follows the same setting. The dsh child process
+ * and everything it spawns are plain Node processes with their own network
+ * stack; those go through the forwarder below. Loopback is always bypassed
+ * implicitly by Chromium, so the local web UI is unaffected.
  */
 async function applyChromiumProxy(config) {
   const c = config || PROXY_DEFAULTS
@@ -325,18 +328,30 @@ async function applyChromiumProxy(config) {
     }
   } catch { /* window traffic falls back to whatever was set before */ }
 }
-/** Env entries for an explicit config (mode none/system/manual). */
-async function proxyEnvForConfig(c) {
-  if (!c || c.mode === 'none') return {}
-  if (c.mode === 'system') {
-    const sys = await resolveSystemProxy()
-    if (!sys) return {}
-    return buildProxyEnv({ ...c, mode: 'manual', host: sys.host, port: sys.port, auth: false })
-  }
-  return buildProxyEnv(c)
+
+/**
+ * The in-process forwarding proxy every child process is pointed at. Started
+ * once at boot; the routing decision is read from the stored config per
+ * request, so saving a new config needs no respawn.
+ */
+let forwarder = null
+async function startForwarder() {
+  if (forwarder) return forwarder
+  forwarder = await createForwarder({
+    getConfig: readProxyConfig,
+    resolveSystem: resolveSystemProxy,
+    onError: (err) => console.error('proxy forwarder:', String((err && err.message) || err)),
+  })
+  if (!forwarder.port) console.error('proxy forwarder could not listen — children fall back to direct connections')
+  return forwarder
 }
-/** Env entries for the stored config. */
-async function proxyEnvAsync() { return proxyEnvForConfig(readProxyConfig()) }
+/**
+ * Give a child env OUR proxy environment: inherited HTTP_PROXY & friends are
+ * stripped, then the forwarder endpoint is written in. Mutates and returns env.
+ */
+function withProxyEnv(env) {
+  return applyProxyEnv(env, forwarder ? forwarder.port : 0, readProxyConfig())
+}
 
 function mcpStorePath() { return path.join(app.getPath('userData'), 'mcp-servers.json') }
 function profilePatchPath() { return path.join(app.getPath('home'), '.dsh', 'profiles', 'web', 'cordis.patch.yml') }
@@ -432,6 +447,21 @@ function pickerPatchArgs() {
   return ['--patch', p]
 }
 
+function proxyShimLines(win) {
+  // The shims must not inherit the machine's HTTP_PROXY either — a CLI that
+  // routes differently from the GUI is exactly the confusion this whole
+  // design removes. The forwarder endpoint is only valid while the app runs
+  // (the shims are rewritten on every launch); with the app closed the shim
+  // still at least clears the inherited vars.
+  const lines = []
+  for (const key of PROXY_ENV_KEYS) {
+    for (const k of [key, key.toLowerCase()]) lines.push(win ? `set "${k}="` : `unset ${k}`)
+  }
+  const env = applyProxyEnv({}, forwarder ? forwarder.port : 0, readProxyConfig())
+  for (const [k, v] of Object.entries(env)) lines.push(win ? `set "${k}=${v}"` : `export ${k}="${v}"`)
+  return lines
+}
+
 /**
  * Write `dsh` and `pnpm` command-line launchers into userData/bin. Both run
  * on Electron's embedded Node (ELECTRON_RUN_AS_NODE), so `dsh plugin add`
@@ -447,24 +477,26 @@ function writeCliLaunchers() {
   const pnpmCjs = path.join(bundledDshDir(), 'tools', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
   const exe = process.execPath
   if (process.platform === 'win32') {
+    const winProxy = proxyShimLines(true).join('\r\n') + '\r\n'
     fs.writeFileSync(path.join(binDir, 'dsh.cmd'),
-      `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n"${exe}" --expose-internals "${entry}" %*\r\n`)
+      `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n${winProxy}"${exe}" --expose-internals "${entry}" %*\r\n`)
     // `node` shim: dependency install scripts (`node xxx.js`) need a node on
     // PATH; machines without Node.js get Electron's embedded one.
     fs.writeFileSync(path.join(binDir, 'node.cmd'),
-      `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${exe}" %*\r\n`)
+      `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n${winProxy}"${exe}" %*\r\n`)
     if (fs.existsSync(pnpmCjs)) {
       fs.writeFileSync(path.join(binDir, 'pnpm.cmd'),
-        `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n"${exe}" "${pnpmCjs}" %*\r\n`)
+        `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n${winProxy}"${exe}" "${pnpmCjs}" %*\r\n`)
     }
   } else {
+    const shProxy = proxyShimLines(false).join('\n') + '\n'
     fs.writeFileSync(path.join(binDir, 'dsh'),
-      `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\nexec "${exe}" --expose-internals "${entry}" "$@"\n`, { mode: 0o755 })
+      `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\n${shProxy}exec "${exe}" --expose-internals "${entry}" "$@"\n`, { mode: 0o755 })
     fs.writeFileSync(path.join(binDir, 'node'),
-      `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec "${exe}" "$@"\n`, { mode: 0o755 })
+      `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\n${shProxy}exec "${exe}" "$@"\n`, { mode: 0o755 })
     if (fs.existsSync(pnpmCjs)) {
       fs.writeFileSync(path.join(binDir, 'pnpm'),
-        `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\nexec "${exe}" "${pnpmCjs}" "$@"\n`, { mode: 0o755 })
+        `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\n${shProxy}exec "${exe}" "${pnpmCjs}" "$@"\n`, { mode: 0o755 })
     }
   }
   return binDir
@@ -489,6 +521,7 @@ function openCliTerminal() {
       'chcp 65001 >nul',
       'title DeepSeek Harness CLI',
       `set "PATH=${binDir};%PATH%"`,
+      ...proxyShimLines(true),
       'echo dsh 命令行已就绪：可直接使用 dsh / pnpm 命令',
       'echo 例如：dsh plugin --profile web add ^<插件包^>',
       'cmd /K',
@@ -506,6 +539,7 @@ function openCliTerminal() {
     fs.writeFileSync(cmdFile, [
       '#!/bin/sh',
       `export PATH="${binDir}:$PATH"`,
+      ...proxyShimLines(false),
       'clear',
       'echo "dsh 命令行已就绪：可直接使用 dsh / pnpm 命令"',
       'echo "例如：dsh plugin --profile web add <插件包>"',
@@ -951,7 +985,6 @@ function syncPresetPlugins() {
 }
 
 async function startServer() {
-  const proxyEnv = await proxyEnvAsync()
   return new Promise((resolve, reject) => {
     const entry = dshEntry()
     if (!fs.existsSync(entry)) {
@@ -972,7 +1005,7 @@ async function startServer() {
       // "PATH" would leave the child with PATH = binDir only (git vanishes)
       prependEnvPath(env, binDir, path.delimiter)
     } catch { /* CLI launchers are best-effort */ }
-    Object.assign(env, proxyEnv)
+    withProxyEnv(env)
 
     serverProc = spawn(process.execPath, ['--expose-internals', entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--port', '0'], {
       env,
@@ -1111,11 +1144,10 @@ function buildMenu() {
 
 /** Run the bundled dsh CLI (plugin management) and capture its output. */
 async function runDshCli(args) {
-  const proxyEnv = await proxyEnvAsync()
   return new Promise((resolve) => {
     const binDir = writeCliLaunchers()
     const child = spawn(process.execPath, ['--expose-internals', dshEntry(), ...args], {
-      env: Object.assign(prependEnvPath({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, binDir, path.delimiter), proxyEnv),
+      env: prependEnvPath(withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }), binDir, path.delimiter),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -1237,10 +1269,9 @@ ipcMain.handle('plugins:restart', async () => {
  * Returns { ok, detail } — never throws.
  */
 async function testMcpServer(server, extraPath) {
-  const mcpProxyEnv = await proxyEnvAsync()
   if (server.transport === 'streamable-http') {
     try {
-      const res = await fetch(server.url, {
+      const res = await electronNet.fetch(server.url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -1272,7 +1303,7 @@ async function testMcpServer(server, extraPath) {
     let child
     try {
       child = spawn(server.command, server.args || [], {
-        env: (() => { const e = { ...process.env, ...(server.env || {}) }; if (extraPath) prependEnvPath(e, extraPath, path.delimiter); Object.assign(e, mcpProxyEnv); return e })(),
+        env: (() => { const e = withProxyEnv({ ...process.env }); Object.assign(e, server.env || {}); if (extraPath) prependEnvPath(e, extraPath, path.delimiter); return e })(),
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
@@ -1379,11 +1410,6 @@ ipcMain.handle('proxy:save', async (_event, config) => {
     return { ok: false, error: String(err && err.message || err) }
   }
 })
-/**
- * End-to-end proxy probe: spawn a node child with EXACTLY the env the dsh
- * server would get and fetch a well-known endpoint through it. Tests the
- * real mechanism (env vars + NODE_USE_ENV_PROXY), not a simulation.
- */
 ipcMain.handle('proxy:pickCa', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(pluginWindow || mainWindow, {
     title: '选择代理的 CA 证书（PEM 格式）',
@@ -1393,40 +1419,52 @@ ipcMain.handle('proxy:pickCa', async () => {
   if (canceled || filePaths.length === 0) return { canceled: true }
   return { canceled: false, path: filePaths[0] }
 })
-ipcMain.handle('proxy:test', async (_event, config) => {
-  let label = ''
-  let testCfg = { ...config }
-  if (config && config.mode === 'system') {
-    const sys = await resolveSystemProxy()
-    if (sys) { testCfg = { ...config, mode: 'manual', host: sys.host, port: sys.port, auth: false }; label = `系统代理 ${sys.host}:${sys.port}，` }
-    else { testCfg = { mode: 'none' }; label = '系统未配置代理（直连），' }
-  } else {
-    testCfg = { ...config, mode: 'manual' }
-  }
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...(await proxyEnvForConfig(testCfg)) }
-  const script = `
-    const t0 = Date.now()
-    fetch('https://registry.npmjs.org/-/ping', { signal: AbortSignal.timeout(8000) })
-      .then((r) => { console.log(JSON.stringify({ ok: r.ok, status: r.status, ms: Date.now() - t0 })); process.exit(0) })
-      .catch((err) => { console.log(JSON.stringify({ ok: false, error: String(err && err.cause && err.cause.message || err.message || err) })); process.exit(0) })
-  `
-  return await new Promise((resolve) => {
-    const child = spawn(process.execPath, ['-e', script], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
-    let out = ''
-    child.stdout.on('data', (c) => { out += c.toString() })
-    const timer = setTimeout(() => { try { child.kill() } catch { /* gone */ } }, 10_000)
-    child.on('exit', () => {
-      clearTimeout(timer)
-      try {
-        const r = JSON.parse(out.trim())
-        if (r.ok) resolve({ ok: true, detail: `${label}连通（npm registry，${r.ms}ms）` })
-        else resolve({ ok: false, detail: `${label}连接失败：${r.error || `HTTP ${r.status}`}` })
-      } catch {
-        resolve({ ok: false, detail: '测试进程异常退出' })
-      }
+/**
+ * End-to-end proxy probe: start a throwaway forwarder driven by the config
+ * currently in the form (not the saved one), then spawn a node child with
+ * EXACTLY the env the dsh server gets and fetch the target through it. Tests
+ * the real mechanism, not a simulation. The target is editable so an intranet
+ * address can be checked alongside an internet one — the two must both work.
+ */
+ipcMain.handle('proxy:test', async (_event, config, url) => {
+  const target = String(url || '').trim() || 'https://registry.npmjs.org/-/ping'
+  let u
+  try { u = new URL(target) } catch { return { ok: false, detail: '测试地址无效（需以 http:// 或 https:// 开头）' } }
+  if (!/^https?:$/.test(u.protocol)) return { ok: false, detail: '测试地址需以 http:// 或 https:// 开头' }
+  const cfg = { ...(config || {}) }
+  const probe = await createForwarder({ getConfig: () => cfg, resolveSystem: resolveSystemProxy })
+  if (!probe.port) return { ok: false, detail: '本地转发代理无法监听端口' }
+  try {
+    const port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80)
+    const route = await routeFor(cfg, resolveSystemProxy, u.hostname, port, u.protocol.slice(0, -1))
+    const label = route ? `${u.hostname} → 代理 ${route.host}:${route.port}，` : `${u.hostname} → 直连，`
+    const env = applyProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, probe.port, cfg)
+    const script = `
+      const t0 = Date.now()
+      fetch(${JSON.stringify(target)}, { signal: AbortSignal.timeout(8000) })
+        .then((r) => { console.log(JSON.stringify({ ok: r.ok, status: r.status, ms: Date.now() - t0 })); process.exit(0) })
+        .catch((err) => { console.log(JSON.stringify({ ok: false, error: String(err && err.cause && err.cause.message || err.message || err) })); process.exit(0) })
+    `
+    return await new Promise((resolve) => {
+      const child = spawn(process.execPath, ['-e', script], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+      let out = ''
+      child.stdout.on('data', (c) => { out += c.toString() })
+      const timer = setTimeout(() => { try { child.kill() } catch { /* gone */ } }, 10_000)
+      child.on('exit', () => {
+        clearTimeout(timer)
+        try {
+          const r = JSON.parse(out.trim())
+          if (r.ok) resolve({ ok: true, detail: `${label}连通（HTTP ${r.status}，${r.ms}ms）` })
+          else resolve({ ok: false, detail: `${label}失败：${r.error || `HTTP ${r.status}`}` })
+        } catch {
+          resolve({ ok: false, detail: '测试进程异常退出' })
+        }
+      })
+      child.on('error', (err) => { clearTimeout(timer); resolve({ ok: false, detail: String(err) }) })
     })
-    child.on('error', (err) => { clearTimeout(timer); resolve({ ok: false, detail: String(err) }) })
-  })
+  } finally {
+    probe.close()
+  }
 })
 
 ipcMain.handle('skills:installZip', async () => {
@@ -1578,6 +1616,7 @@ app.on('login', (event, _webContents, _details, authInfo, callback) => {
 app.whenReady().then(async () => {
   resolveActiveRuntime()
   applyChromiumProxy(readProxyConfig())
+  await startForwarder()
   buildMenu()
   createWindow()
   try {

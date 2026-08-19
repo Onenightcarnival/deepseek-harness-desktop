@@ -25,6 +25,7 @@
     "files": [
       "main.js",
       "runtime.js",
+      "proxy-forward.js",
       "splash.html",
       "plugins.html",
       "preload-plugins.js",

@@ -214,47 +214,110 @@ function prependEnvPath(env, dir, delimiter) {
 module.exports.prependEnvPath = prependEnvPath
 
 /**
- * Build the child-process env entries for a proxy config
- * ({mode: 'none'|'manual', host, port, bypass, auth, login, password}).
- * Standard env vars in both cases so every HTTP stack in the tree picks
- * them up (pnpm/npm natively; Node's built-in fetch/undici via
- * NODE_USE_ENV_PROXY, supported by the embedded Node 24). Credentials are
- * URL-encoded into the proxy URL. Loopback addresses are ALWAYS on the
- * bypass list — the app UI, the dsh web server and local MCP servers must
- * never be routed through a proxy. Returns {} when mode is not manual or
- * host/port are blank.
+ * Proxy env vars this app takes FULL ownership of. The app's own setting
+ * decides a child's proxy environment completely: whatever the OS/IT put in
+ * the user environment is removed first, so "不使用代理" really means
+ * httpx's trust_env=False and not "inherit whatever happened to be there".
+ * Corporate Windows images routinely ship a machine-wide HTTP_PROXY that
+ * has no exception list — inheriting it is exactly what breaks intranet
+ * access. TLS vars are deliberately NOT here: dropping a user's own
+ * NODE_EXTRA_CA_CERTS would break their certificates.
  */
-function buildProxyEnv(config) {
-  const c = config || {}
-  const host = typeof c.host === 'string' ? c.host.trim() : ''
-  const port = String(c.port ?? '').trim()
-  if (c.mode !== 'manual' || !host || !port) return {}
-  let cred = ''
-  if (c.auth && c.login) {
-    cred = encodeURIComponent(String(c.login))
-    if (c.password) cred += ':' + encodeURIComponent(String(c.password))
-    cred += '@'
+const PROXY_ENV_KEYS = [
+  'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'FTP_PROXY', 'NO_PROXY',
+  'NODE_USE_ENV_PROXY',
+  'NPM_CONFIG_PROXY', 'NPM_CONFIG_HTTPS_PROXY', 'NPM_CONFIG_NOPROXY',
+  'GLOBAL_AGENT_HTTP_PROXY', 'GLOBAL_AGENT_HTTPS_PROXY', 'GLOBAL_AGENT_NO_PROXY',
+]
+module.exports.PROXY_ENV_KEYS = PROXY_ENV_KEYS
+
+/**
+ * Delete every proxy var from a plain env object, CASE-INSENSITIVELY: on
+ * Windows the real key of a `{...process.env}` spread is often `Http_Proxy`,
+ * and `delete env.HTTP_PROXY` would leave it in place (same trap as
+ * prependEnvPath above).
+ */
+function scrubProxyEnv(env) {
+  for (const key of Object.keys(env)) {
+    if (PROXY_ENV_KEYS.includes(key.toUpperCase())) delete env[key]
   }
-  const url = `http://${cred}${host}:${port}`
-  const bypass = new Set(['127.0.0.1', 'localhost', '::1'])
-  for (const part of String(c.bypass || '').split(/[,\s]+/)) {
-    if (part.trim()) bypass.add(part.trim())
-  }
-  const noProxy = [...bypass].join(',')
-  const env = {
-    HTTP_PROXY: url, http_proxy: url,
-    HTTPS_PROXY: url, https_proxy: url,
-    NO_PROXY: noProxy, no_proxy: noProxy,
-    NODE_USE_ENV_PROXY: '1',
-    // TLS-intercepting proxies (corporate MITM) re-sign traffic with their
-    // own CA; Node's bundled CA store rejects it ("self signed certificate
-    // in certificate chain"). The OS trust store usually has the corp CA,
-    // so opt Node into it whenever a manual proxy is on (supported by the
-    // embedded Node 24; harmless otherwise).
-    NODE_USE_SYSTEM_CA: '1',
-  }
-  if (typeof c.caPath === 'string' && c.caPath.trim()) env.NODE_EXTRA_CA_CERTS = c.caPath.trim()
-  if (c.insecure) env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
   return env
 }
-module.exports.buildProxyEnv = buildProxyEnv
+module.exports.scrubProxyEnv = scrubProxyEnv
+
+const LOOPBACK = ['127.0.0.1', 'localhost', '::1']
+module.exports.LOOPBACK = LOOPBACK
+
+/** Bypass patterns for a config: loopback is ALWAYS bypassed. */
+function bypassPatterns(config) {
+  const out = [...LOOPBACK]
+  for (const part of String((config && config.bypass) || '').split(/[,;\s]+/)) {
+    if (part.trim()) out.push(part.trim())
+  }
+  return out
+}
+module.exports.bypassPatterns = bypassPatterns
+
+/**
+ * Does `host` match one of the bypass patterns? Supported forms:
+ *   corp.com (exact) | *.corp.com or .corp.com (suffix) | 10.* (prefix) |
+ *   <local> (any name without a dot — Windows' "bypass proxy server for
+ *   local addresses") | * (everything).
+ * Matching happens in ONE place (the forwarder) instead of being handed to
+ * NO_PROXY, whose wildcard semantics differ between undici, npm and git.
+ */
+function isBypassed(host, patterns) {
+  const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '')
+  if (!h) return false
+  for (const raw of patterns || []) {
+    const p = String(raw).toLowerCase().trim()
+    if (!p) continue
+    if (p === '*') return true
+    if (p === '<local>') { if (!h.includes('.')) return true; continue }
+    if (p.startsWith('*.') || p.startsWith('.')) {
+      const suffix = p.startsWith('*') ? p.slice(1) : p
+      if (h === suffix.slice(1) || h.endsWith(suffix)) return true
+      continue
+    }
+    if (p.endsWith('*')) { if (h.startsWith(p.slice(0, -1))) return true; continue }
+    if (h === p) return true
+  }
+  return false
+}
+module.exports.isBypassed = isBypassed
+
+/**
+ * Point a child env at the in-process forwarding proxy (proxy-forward.js),
+ * after scrubbing whatever proxy vars it inherited. `port` 0 means the
+ * forwarder is unavailable — the env is then merely clean (= direct).
+ * Note the child always gets the SAME static endpoint whatever the mode is;
+ * routing (direct / upstream / per-URL PAC) is decided inside the forwarder,
+ * which is why a config change does not need the env to be rebuilt.
+ */
+function applyProxyEnv(env, port, config) {
+  scrubProxyEnv(env)
+  const c = config || {}
+  if (port) {
+    const url = `http://127.0.0.1:${port}`
+    const noProxy = LOOPBACK.join(',')
+    Object.assign(env, {
+      HTTP_PROXY: url, http_proxy: url,
+      HTTPS_PROXY: url, https_proxy: url,
+      NO_PROXY: noProxy, no_proxy: noProxy,
+      // npm/pnpm read ~/.npmrc too, where corporate images also write a
+      // proxy=; an explicit env entry is the only way to override it.
+      npm_config_proxy: url, npm_config_https_proxy: url, npm_config_noproxy: noProxy,
+      NODE_USE_ENV_PROXY: '1',
+    })
+  }
+  if (c.mode !== 'none') {
+    // TLS-intercepting proxies (corporate MITM) re-sign traffic with their
+    // own CA; Node's bundled CA store rejects it ("self signed certificate
+    // in certificate chain"). The OS trust store usually has the corp CA.
+    env.NODE_USE_SYSTEM_CA = '1'
+    if (typeof c.caPath === 'string' && c.caPath.trim()) env.NODE_EXTRA_CA_CERTS = c.caPath.trim()
+    if (c.insecure) env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+  }
+  return env
+}
+module.exports.applyProxyEnv = applyProxyEnv

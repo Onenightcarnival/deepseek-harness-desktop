@@ -171,7 +171,7 @@
   <!-- ============ 代理 ============ -->
   <div class="pane single" id="pane-proxy">
     <h2>HTTP 代理</h2>
-    <p class="sub">对 dsh 服务及其发起的一切网络请求生效（模型 API、插件安装、内核升级、MCP 连接）。本机地址（127.0.0.1 / localhost）始终直连。保存后自动重启 dsh 服务即时生效（窗口会短暂回到加载页）。</p>
+    <p class="sub">对 dsh 服务及其发起的一切网络请求生效（模型 API、插件安装、内核升级、MCP 连接）。本机地址（127.0.0.1 / localhost）始终直连。「不使用代理」会清除系统预设的 HTTP_PROXY 等变量，强制全程直连；「使用系统代理」按目标地址逐个询问系统设置（支持 PAC 与例外列表），内网直连、外网走代理。保存后自动重启 dsh 服务即时生效（窗口会短暂回到加载页）。</p>
     <div class="field">
       <label class="radio-row"><input type="radio" name="p-mode" id="p-mode-none" value="none"> 不使用代理</label>
       <label class="radio-row"><input type="radio" name="p-mode" id="p-mode-system" value="system"> 使用系统代理</label>
@@ -184,8 +184,6 @@
         <div class="field" style="flex:0 0 110px"><label>端口</label>
           <input id="p-port" placeholder="7890" spellcheck="false"></div>
       </div>
-      <div class="field"><label>不代理的主机（逗号分隔，可留空；本机地址已默认包含）</label>
-        <input id="p-bypass" placeholder="*.example.internal, 10.0.0.0/8" spellcheck="false"></div>
       <div class="field">
         <label class="radio-row"><input type="checkbox" id="p-auth"> 代理身份验证</label>
       </div>
@@ -202,6 +200,11 @@
         </div>
       </div>
     </div>
+    <div id="p-bypass-box">
+      <div class="field"><label>不代理的主机（逗号分隔，可留空；本机地址已默认包含）</label>
+        <input id="p-bypass" placeholder="*.example.internal, 10.*, &lt;local&gt;" spellcheck="false">
+        <div class="meta" style="margin-top:4px">支持 corp.com、*.corp.com、10.*、&lt;local&gt;（不含点的主机名）。系统代理模式下这里的条目叠加在系统例外列表之上。</div></div>
+    </div>
     <div id="p-tls">
       <div class="field" style="margin-top:4px"><label>自定义 CA 证书（可选，PEM；代理做 TLS 拦截时导入其根证书。系统证书库已默认信任）</label>
         <div class="row"><input id="p-ca" placeholder="留空 = 仅系统证书库" spellcheck="false"><button id="p-ca-pick" style="flex:none">选择…</button></div></div>
@@ -211,6 +214,7 @@
     </div>
     <div class="row" style="margin-top:16px">
       <span class="spacer"></span>
+      <input id="p-test-url" placeholder="https://registry.npmjs.org/-/ping" spellcheck="false" style="flex:1 1 260px">
       <button id="p-test">测试连通</button>
       <button class="primary" id="p-save">保存</button>
     </div>
@@ -464,6 +468,7 @@
   function proxyMsg(text, cls) { const m = $('proxy-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
   function proxyDim() {
     $('p-manual').classList.toggle('dim', !$('p-mode-manual').checked)
+    $('p-bypass-box').classList.toggle('dim', $('p-mode-none').checked)
     $('p-tls').classList.toggle('dim', $('p-mode-none').checked)
     $('p-auth-fields').classList.toggle('dim', !$('p-auth').checked)
   }
@@ -478,7 +483,7 @@
     }
   }
   pluginApi.proxyGet().then((c) => {
-    ;($('p-mode-' + (c.mode === 'manual' ? 'manual' : 'none'))).checked = true
+    ;($('p-mode-' + (c.mode === 'manual' || c.mode === 'system' ? c.mode : 'none'))).checked = true
     $('p-host').value = c.host || ''
     $('p-port').value = c.port || ''
     $('p-bypass').value = c.bypass || ''
@@ -516,13 +521,13 @@
   }
   $('p-test').onclick = async () => {
     const c = readProxyForm()
-    if (c.mode !== 'system') {
-      const err = validateProxyForm({ ...c, mode: 'manual' })
+    if (c.mode === 'manual') {
+      const err = validateProxyForm(c)
       if (err) { proxyMsg('先填写有效的主机名和端口再测试', 'err'); return }
     }
     $('p-test').disabled = true
     proxyMsg('测试中…')
-    const res = await pluginApi.proxyTest(c)
+    const res = await pluginApi.proxyTest(c, $('p-test-url').value.trim())
     proxyMsg((res.ok ? '✓ ' : '✗ ') + res.detail, res.ok ? 'ok' : 'err')
     $('p-test').disabled = false
   }

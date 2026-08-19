@@ -14,30 +14,16 @@ main.js             主进程全部逻辑：服务拉起/守护、菜单、更�
                     （dsh/pnpm/node 三个 shim）、配置中心 IPC（插件/MCP/技能）
 runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目录选择（升级版优先+损坏回退）、
                     engines 粗校验、cordis patch 托管区块编辑（upsertManagedBlock/buildMcpBlock）、
-                    zip 技能包内容识别（collectSkills）—— 刻意抽出来以便普通 node 直接单测
+                    zip 技能包内容识别（collectSkills）、代理环境变量清场与注入
+                    （PROXY_ENV_KEYS/scrubProxyEnv/applyProxyEnv）与例外列表匹配
+                    （bypassPatterns/isBypassed）—— 刻意抽出来以便普通 node 直接单测
+proxy-forward.js    进程内转发代理（无 Electron 依赖，resolveSystem 由 main.js 注入）：
+                    createForwarder 起 127.0.0.1 随机端口，处理 CONNECT 隧道与明文
+                    HTTP，每条连接现问 routeFor 决定直连/上游代理。所有子进程只拿到
+                    这一个固定端点，路由策略留在主进程
 plugins.html        配置中心窗口（左侧导航四页：插件 / MCP 服务器 / 技能 / 代理；MCP 为
                     主从布局，表单仅暴露 streamable-http——validateMcpServer 与
-                    buildMcpBlock 仍接受 stdio 以兼容旧存量条目。代理页为 PyCharm 式
-                    （不使用代理/使用系统代理/手动配置，主机+端口/例外/认证，密码仅在
-                    勾选记住时落盘，否则只存本次运行内存），写 userData/proxy.json
-                    （旧 {enabled,url} 形态自动迁移），经 runtime.js 的 buildProxyEnv
-                    （含单测）注入标准 HTTP(S)_PROXY/NO_PROXY + NODE_USE_ENV_PROXY 到
-                    所有子进程 spawn 点（各 spawn 点经 proxyEnvAsync 异步取环境）；
-                    系统代理模式经 Chromium 的 session.resolveProxy 解析 OS 设置
-                    （PAC 也支持），用独立 proxy-probe 分区会话探测——defaultSession
-                    被 applyChromiumProxy 按本配置 setProxy 过，拿它探测会自指。
-                    保存即生效：proxy:save 落盘后前端调 server:restart IPC 原地重启
-                    dsh 服务（restartDshServer：killServer→splash→bootServerWithHeal
-                    →loadURL；restartingServer 标志 + 每进程 thisProc 退出守卫防止
-                    误弹"服务已退出"对话框），无需重启应用。壳窗口自身流量另经
-                    applyChromiumProxy 镜像到 Chromium 层，认证由 app.on('login')
-                    补全；dsh 子进程不走 Chromium 网络栈，只认注入的环境变量。
-                    本机地址强制在 NO_PROXY 里，否则界面与本地 MCP 会被
-                    代理劫持——已实测外网走 CONNECT、localhost 直连。TLS 拦截型代理
-                    （self signed certificate in chain）：手动代理开启时自动带
-                    NODE_USE_SYSTEM_CA=1（信任系统证书库），可选 NODE_EXTRA_CA_CERTS
-                    （导入 CA 文件）与 NODE_TLS_REJECT_UNAUTHORIZED=0（明示不安全的
-                    兜底），三条链路均对自签 TLS 服务实测过）
+                    buildMcpBlock 仍接受 stdio 以兼容旧存量条目。代理页见下）
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动等待页
 stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 staging/<platform>-<arch>/dsh，
@@ -55,6 +41,31 @@ build/              图标 + installer.nsh（NSIS customCheckAppRunning 覆盖�
                     树杀应用进程 + 按路径扫尾，见坑清单）；.github/workflows/release.yml  CI 构建与发版
 ```
 
+## 代理是怎么走的（跨 4 个文件，改之前先读这段）
+
+**唯一决策点是 `proxy-forward.js` 的进程内转发代理**，不是环境变量。主进程
+启动时（`app.whenReady` 里，早于任何 spawn）起一个监听 127.0.0.1 随机端口的
+转发器，所有子进程只拿到一组固定环境：`HTTP(S)_PROXY=http://127.0.0.1:<port>`、
+`NO_PROXY=127.0.0.1,localhost,::1`、`npm_config_proxy`（覆盖 `~/.npmrc` 里公司
+镜像写死的 proxy=）、`NODE_USE_ENV_PROXY=1`——**注入前先按 `PROXY_ENV_KEYS`
+大小写不敏感地清掉继承来的代理变量**。三种模式的区别全在转发器内部按连接
+决策（`routeFor`）：none 一律直连；manual 命中例外列表直连、否则 CONNECT
+上游并在这里注入 `Proxy-Authorization`；system 用 Chromium 的
+`session.resolveProxy(目标URL)` **逐个 URL** 问操作系统（PAC 与例外列表都算数）。
+
+由此得到的性质：配置一改立刻对已经跑着的子进程生效（决策是现读的，
+`proxy:save` 仍会重启 dsh 服务，是为了让 TLS 相关变量跟着变）；密码不进任何
+子进程的环境；例外列表只有一套语义（`isBypassed`，见下面的坑）。
+
+配置存 `userData/proxy.json`（旧 `{enabled,url}` 形态自动迁移），密码仅在勾选
+"记住"时落盘，否则只在本次运行的内存里。
+
+壳窗口自身流量不走转发器：Chromium 由 `applyChromiumProxy` 按同一份配置
+`setProxy`（system 模式直接用 Chromium 原生的 `mode: 'system'`），代理认证由
+`app.on('login')` 补全。主进程自己发的 HTTP（更新检查、MCP 的 http 探测）用
+`electronNet.fetch` 走 Chromium，因此同样跟随配置——普通 `fetch` 在主进程里
+两边都不跟随，别用。
+
 ## Agent 工作环境与验证手段
 
 **你（agent）大概率在无 GUI 的 Linux 环境里工作，而这个项目的绝大部分改动恰好都能在这种环境里验证。** 打不出来的只有两样：真实的 win/mac 安装包（CI 的 `release.yml` 负责，手动触发 workflow_dispatch 只出产物不发版，推 `v*` 标签才发 Release）和"肉眼看 GUI"（交给用户装包验证）。
@@ -71,6 +82,13 @@ DSH_FLAVOR=full node stage-dsh.mjs                    # full flavor：验证预�
 node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
   web --patch desktop-patch.yml --dump-config         # 验证 patch 覆盖层能正确并入组合树
 ```
+
+代理相关的改动**整条链路都能在无头环境里实跑**，不需要 Electron：`runtime.js`
+的纯函数直接 require 断言；`proxy-forward.js` 只需要注入一个假的 `resolveSystem`
+就能端到端测——起一个 origin server、一个记录请求的上游代理桩、一个 TLS
+origin，然后断言"外网目标进了桩、loopback 与内网名字没进桩、CONNECT 隧道
+能跑通 TLS、上游不可达时回 502"。system 模式的逐 URL 路由正是靠假
+`resolveSystem` 才能在没有公司网络的机器上验证。
 
 要完整无头启动 dsh 服务（验证到 `curl <ready-url>` 返回 200）需先给 linux 补 node-pty：`npm pack node-pty@<版本>` 解包后 `npx node-gyp rebuild --nodedir=<本地 node 目录>`，把 `pty.node` 放进 staging 的 `node-pty/prebuilds/linux-x64/`。MCP patch 生成器、allowBuilds 输出解析这类纯逻辑，从 `main.js` 里按函数名正则抽出源码 `eval` 后即可断言（`runtime.js` 的做法是更好的归宿——新增纯逻辑优先放进无 Electron 依赖的模块）。
 
@@ -93,6 +111,10 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - **electron-builder 的 FIND_PROCESS 会误报，绝不能用它作为拦截安装的门条件**。PowerShell 可用时它根本不按进程名查，而是"任何路径在 $INSTDIR 下的进程"都算命中：wine 的 powershell 桩对一切命令返回 0（恒判定"在运行"），用户装到宽泛的自定义目录时该目录下无关进程同样命中。旧版宏在误报时重试后弹 "app cannot be closed" 并 Quit——安装器和（更糟的）静默运行的旧版卸载器都会因此退出非零，覆盖安装死在 installUtil 的卸载重试上，弹的还是同一句误导文案（appCannotBeClosed 有三个来源：进程检查/解包失败/旧卸载器非零退出）。现行设计（build/installer.nsh）：清扫无条件执行、按已知进程名收窄（taskkill 树杀 + 无过滤按名杀 + 限定 OpenConsole/winpty-agent/应用 exe 的路径扫），几轮后无论检测结果如何**直接放行**（真锁文件由解包阶段自带的重试兜底），放行前把安装目录下存活进程落盘到桌面 dsh-install-debug.txt；customInit 预跑旧版卸载器，非零退出时删注册表键+清旧载荷绕过它（在野的旧安装都带会误报自杀的卸载器）。
 - **NSIS 安装器可以在 Linux 上全流程实跑验证**：需要 `apt install wine64` + `WINEARCH=win64 WINEPREFIX=<新目录> wineboot -i`（默认 prefix 是 win32，装 64 位包会弹 "64-bit Windows is required"），跑安装器要挂 Xvfb 当显示。wine 的 powershell 桩天然制造 FIND_PROCESS 误报，正好用来复现该类故障；把 prefix 里 WindowsPowerShell/v1.0/powershell.exe 移走可切换到 tasklist 分支。定位安装器中止点用 preInit/customInit/customInstall 钩子写标记文件二分。
 - **Windows 上开新控制台窗口不能用 `spawn('cmd.exe', …, { detached: true })`**：libuv 把 detached 映射为 `DETACHED_PROCESS`，cmd 不会分配控制台，表现为"点了没反应"。写 `.cmd` 批处理文件再 `shell.openPath`（ShellExecute）才可靠出窗口；批处理按控制台代码页解析，含中文需文件存 UTF-8 且首行后紧跟 `chcp 65001`。
+- **代理配置必须"清场后重写"，不能只做叠加**。公司 Windows 镜像常预置一个没有例外列表的机器级 `HTTP_PROXY`，`{...process.env}` 原样继承就等于把内网流量也发给代理（正是 Python 那边必须 `httpx(trust_env=False)` 的原因）。所以"不使用代理"要主动删变量而不是"什么都不加"，且**删除必须大小写不敏感**——Windows 上展开出的真实键常是 `Http_Proxy`，`delete env.HTTP_PROXY` 删不掉（与 `prependEnvPath` 同一个坑）。`~/.npmrc` 里的 `proxy=` 不在环境变量里，只能靠显式 `npm_config_proxy` 压过去。
+- **系统代理不是一个 URL，是一个按 URL 逐次求值的函数**。把 `resolveProxy` 对某一个地址（旧代码用 npm registry）的结果当成全局 `HTTP_PROXY` 写死，就丢掉了 PAC 与 Windows 例外列表，内网必挂——这是"选了系统代理反而连不上内网"的根因。要么逐 URL 问（现在转发器的做法），要么老老实实把 OS 例外列表也读进来，没有第三条路。
+- **`NO_PROXY` 的通配符语义各家不一样**（undici / npm / git / Python 对 `*.corp.com`、`10.*`、CIDR 的解释都不同），所以例外匹配收在 `isBypassed` 一处、`NO_PROXY` 只留 loopback。往子进程发复杂 `NO_PROXY` 一定会在某个栈上失灵。
+- **CLI 启动器里的转发器端口只在应用运行期间有效**（每次启动重写 shim）。应用关掉后再用 `userData/bin` 里的 `dsh`/`pnpm`，代理变量指向的端口已经没人监听——shim 里的清场部分仍然有效，代理部分不再有效。
 - **升级 Electron 版本前**确认其内置 Node 满足 dsh 的 engines（当前 `^22.19 || >=24`）；`runtime.js` 的 `satisfiesNode` 在应用内内核升级前也做同样检查，升级失败有自动隔离回退（`.broken-` 目录后缀）。
 
 ## 维护本文档与 README

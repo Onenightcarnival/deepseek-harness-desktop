@@ -1032,6 +1032,12 @@ async function startServer() {
       prependEnvPath(env, binDir, path.delimiter)
     } catch { /* CLI launchers are best-effort */ }
     withProxyEnv(env)
+    // Ask win-spawn-shim.js to give the server an invisible host console:
+    // the Windows sandbox spawns pwsh via CreateProcessAsUserW with no
+    // console flag (hidden-console children die under the restricted
+    // token), so without a console to inherit every sandboxed command
+    // flashes a visible one. Server only — CLI runs own a real terminal.
+    env.DSH_DESKTOP_CONSOLE_HOST = '1'
 
     serverProc = spawn(process.execPath, ['--expose-internals', ...nodePreloadArgs(), entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--port', '0'], {
       env,

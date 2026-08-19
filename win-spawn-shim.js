@@ -73,8 +73,84 @@ function patchChildProcess(cp) {
   return cp
 }
 
-if (process.platform === 'win32') {
-  try { patchChildProcess(require('child_process')) } catch { /* never break the host process */ }
+/**
+ * The second, sneakier console-flash source: dsh's Windows SANDBOX launches
+ * pwsh via raw CreateProcessAsUserW (koffi FFI), bypassing child_process
+ * entirely — and it deliberately passes no console flag, because a
+ * CREATE_NO_WINDOW child dies with STATUS_DLL_INIT_FAILED under the
+ * restricted token; the child is expected to SHARE THE HOST CONSOLE. Run
+ * from a terminal that console exists and nothing is visible; under the GUI
+ * shell there is no console, so Windows allocates a fresh VISIBLE one per
+ * pwsh call.
+ *
+ * Fix: give this process an invisible console to share. AllocConsole would
+ * flash (and may open a Windows Terminal tab), so instead: spawn a tiny cmd
+ * helper with CREATE_NO_WINDOW — its console never has a window — attach to
+ * it with AttachConsole, then kill the helper (a console lives while any
+ * process is attached). koffi is resolved out of the dsh runtime's own tree;
+ * everything is best-effort — on any failure behavior is simply today's.
+ * Gated on DSH_DESKTOP_CONSOLE_HOST=1 (main.js sets it for the dsh server
+ * only) and skipped when a console already exists (CLI usage in a real
+ * terminal — never touch the user's console).
+ */
+function setupHiddenConsole(deps = {}) {
+  const env = deps.env || process.env
+  const platform = deps.platform || process.platform
+  if (platform !== 'win32' || env.DSH_DESKTOP_CONSOLE_HOST !== '1') return false
+  try {
+    const loadKoffi = deps.loadKoffi || (() => {
+      const path = require('path')
+      const fs = require('fs')
+      const entry = process.argv[1]
+      const bases = entry ? [path.dirname(entry)] : []
+      // npm-installed (bundled) runtimes have koffi at top level; pnpm-installed
+      // (upgraded) ones hide it under .pnpm — resolve from a package that
+      // depends on it.
+      try {
+        const acl = require.resolve('@deepseek-ai/dsh-sandbox-windows-acl/package.json', { paths: bases })
+        bases.push(path.dirname(fs.realpathSync(acl)))
+      } catch { /* not present in this runtime */ }
+      for (const base of bases) {
+        try { return require(require.resolve('koffi', { paths: [base] })) } catch { /* next */ }
+      }
+      return null
+    })
+    const koffi = loadKoffi()
+    if (!koffi) return false
+    const kernel32 = koffi.load('kernel32.dll')
+    const GetConsoleCP = kernel32.func('uint32_t __stdcall GetConsoleCP()')
+    const AttachConsole = kernel32.func('int __stdcall AttachConsole(uint32_t dwProcessId)')
+    if (GetConsoleCP() !== 0) return false // already have a console — hands off
+    const spawnHelper = deps.spawnHelper || (() => require('child_process').spawn(
+      env.ComSpec || 'cmd.exe', ['/d', '/q', '/c', 'pause'],
+      // stdin is a pipe we never write: `pause` blocks forever, keeping the
+      // console alive until we have attached. CREATE_NO_WINDOW via windowsHide.
+      { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true }
+    ))
+    const helper = spawnHelper()
+    if (!helper || !helper.pid) return false
+    if (helper.on) helper.on('error', () => { /* swallowed — cosmetic feature */ })
+    const setInt = deps.setInterval || setInterval
+    const clearInt = deps.clearInterval || clearInterval
+    let tries = 0
+    const timer = setInt(() => {
+      tries++
+      let attached = false
+      try { attached = AttachConsole(helper.pid) !== 0 || GetConsoleCP() !== 0 } catch { /* retry */ }
+      if (attached || tries >= 40) { // give up after ~4s
+        clearInt(timer)
+        try { helper.kill() } catch { /* already gone */ }
+      }
+    }, 100)
+    if (timer && timer.unref) timer.unref()
+    if (helper.unref) helper.unref()
+    return true
+  } catch { return false /* never break the host process */ }
 }
 
-module.exports = { patchChildProcess, withHide }
+if (process.platform === 'win32') {
+  try { patchChildProcess(require('child_process')) } catch { /* never break the host process */ }
+  setupHiddenConsole()
+}
+
+module.exports = { patchChildProcess, withHide, setupHiddenConsole }

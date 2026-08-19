@@ -26,6 +26,7 @@
       "main.js",
       "runtime.js",
       "proxy-forward.js",
+      "win-spawn-shim.js",
       "splash.html",
       "plugins.html",
       "preload-plugins.js",

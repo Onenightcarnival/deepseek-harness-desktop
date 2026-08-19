@@ -103,6 +103,30 @@ function dshEntry() {
 }
 
 /**
+ * Preload args for every Node child we spawn: --require win-spawn-shim.js,
+ * which defaults windowsHide for the whole child process so dsh's own
+ * pwsh/cmd/git spawns stop flashing console windows (GUI-subsystem parent =
+ * each unhidden console child gets a visible console host). The shim ships
+ * inside the asar, which plain Node children cannot read — copy it to
+ * userData once per boot. No-op off Windows, but injected everywhere so the
+ * Linux smoke run exercises the loading path.
+ */
+let spawnShimPath = null
+function nodePreloadArgs() {
+  if (spawnShimPath === null) {
+    try {
+      const dest = path.join(app.getPath('userData'), 'win-spawn-shim.js')
+      fs.writeFileSync(dest, fs.readFileSync(path.join(__dirname, 'win-spawn-shim.js')))
+      spawnShimPath = dest
+    } catch (err) {
+      console.error('spawn shim unavailable:', String((err && err.message) || err))
+      spawnShimPath = '' // don't retry every call
+    }
+  }
+  return spawnShimPath ? ['--require', spawnShimPath] : []
+}
+
+/**
  * Check npm for a newer @deepseek-ai/dsh core than the active runtime, and
  * offer an in-place upgrade (installed with the bundled pnpm into
  * userData/runtimes/<version>; a relaunch activates it).
@@ -187,7 +211,7 @@ async function installCoreRuntime(version) {
         for (const [name, v] of Object.entries(group || {})) presetSpecs.push(`${name}@${v}`)
       }
     } catch { /* minimal flavor */ }
-    const child = spawn(process.execPath, [pnpmCjs, 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
+    const child = spawn(process.execPath, [...nodePreloadArgs(), pnpmCjs, 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
       cwd: dir,
       env: withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1009,7 +1033,7 @@ async function startServer() {
     } catch { /* CLI launchers are best-effort */ }
     withProxyEnv(env)
 
-    serverProc = spawn(process.execPath, ['--expose-internals', entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--port', '0'], {
+    serverProc = spawn(process.execPath, ['--expose-internals', ...nodePreloadArgs(), entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--port', '0'], {
       env,
       cwd: app.getPath('home'),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1148,7 +1172,7 @@ function buildMenu() {
 async function runDshCli(args) {
   return new Promise((resolve) => {
     const binDir = writeCliLaunchers()
-    const child = spawn(process.execPath, ['--expose-internals', dshEntry(), ...args], {
+    const child = spawn(process.execPath, ['--expose-internals', ...nodePreloadArgs(), dshEntry(), ...args], {
       env: prependEnvPath(withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }), binDir, path.delimiter),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

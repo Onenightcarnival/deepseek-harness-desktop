@@ -57,6 +57,12 @@ build/              图标 + installer.nsh（NSIS customCheckAppRunning 覆盖�
 `proxy:save` 仍会重启 dsh 服务，是为了让 TLS 相关变量跟着变）；密码不进任何
 子进程的环境；例外列表只有一套语义（`isBypassed`，见下面的坑）。
 
+**CLI shim 是持久化文件，转发器端口不是**：`userData/bin/` 的 dsh/pnpm/node
+shim 里写入的 `HTTP_PROXY=http://127.0.0.1:<port>` 只在应用运行期间有效。
+应用退出时 `will-quit` 会把 shim 重写成"只清场不注入"（= 直连），下次启动再
+写回新端口——否则应用关着的时候在自己终端里跑 `dsh` 会全部网络失败（死端口，
+连"不使用代理"模式也中招）。崩溃退出来不及重写，残留到下次启动自愈。
+
 配置存 `userData/proxy.json`（旧 `{enabled,url}` 形态自动迁移），密码仅在勾选
 "记住"时落盘，否则只在本次运行的内存里。
 

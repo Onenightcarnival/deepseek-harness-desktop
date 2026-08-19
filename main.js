@@ -316,7 +316,9 @@ async function applyChromiumProxy(config) {
   try {
     if (c.mode === 'manual' && String(c.host || '').trim() && String(c.port ?? '').trim()) {
       const bypass = ['127.0.0.1', 'localhost', '::1']
-      for (const part of String(c.bypass || '').split(/[,\s]+/)) { if (part.trim()) bypass.push(part.trim()) }
+      // same separators as runtime.js bypassPatterns, so the shell window
+      // and the forwarder read one list the same way
+      for (const part of String(c.bypass || '').split(/[,;\s]+/)) { if (part.trim()) bypass.push(part.trim()) }
       await session.defaultSession.setProxy({
         proxyRules: `http://${String(c.host).trim()}:${String(c.port).trim()}`,
         proxyBypassRules: bypass.join(','),
@@ -1667,4 +1669,14 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', stopServer)
+app.on('will-quit', () => {
+  // The forwarder dies with the app, but the CLI shims are persistent files:
+  // leaving HTTP_PROXY=http://127.0.0.1:<port> in them would break ALL
+  // network access for `dsh`/`pnpm` run from the user's own terminal while
+  // the app is closed (dead port — even in 不使用代理 mode). Rewrite them
+  // scrub-only (= direct) on the way out; the next app launch writes the
+  // fresh port back in. A crash skips this — that staleness heals on next
+  // launch and is documented in AGENTS.md.
+  try { forwarder = null; writeCliLaunchers() } catch { /* best effort */ }
+})
 process.on('exit', stopServer)

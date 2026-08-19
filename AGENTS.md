@@ -18,11 +18,21 @@ runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目�
 plugins.html        配置中心窗口（左侧导航四页：插件 / MCP 服务器 / 技能 / 代理；MCP 为
                     主从布局，表单仅暴露 streamable-http——validateMcpServer 与
                     buildMcpBlock 仍接受 stdio 以兼容旧存量条目。代理页为 PyCharm 式
-                    （模式单选/主机+端口/例外/认证，密码仅在勾选记住时落盘，否则
-                    只存本次运行内存），写 userData/proxy.json（旧 {enabled,url}
-                    形态自动迁移），经 runtime.js 的 buildProxyEnv（含单测）注入
-                    标准 HTTP(S)_PROXY/NO_PROXY + NODE_USE_ENV_PROXY 到所有子进程
-                    spawn 点；本机地址强制在 NO_PROXY 里，否则界面与本地 MCP 会被
+                    （不使用代理/使用系统代理/手动配置，主机+端口/例外/认证，密码仅在
+                    勾选记住时落盘，否则只存本次运行内存），写 userData/proxy.json
+                    （旧 {enabled,url} 形态自动迁移），经 runtime.js 的 buildProxyEnv
+                    （含单测）注入标准 HTTP(S)_PROXY/NO_PROXY + NODE_USE_ENV_PROXY 到
+                    所有子进程 spawn 点（各 spawn 点经 proxyEnvAsync 异步取环境）；
+                    系统代理模式经 Chromium 的 session.resolveProxy 解析 OS 设置
+                    （PAC 也支持），用独立 proxy-probe 分区会话探测——defaultSession
+                    被 applyChromiumProxy 按本配置 setProxy 过，拿它探测会自指。
+                    保存即生效：proxy:save 落盘后前端调 server:restart IPC 原地重启
+                    dsh 服务（restartDshServer：killServer→splash→bootServerWithHeal
+                    →loadURL；restartingServer 标志 + 每进程 thisProc 退出守卫防止
+                    误弹"服务已退出"对话框），无需重启应用。壳窗口自身流量另经
+                    applyChromiumProxy 镜像到 Chromium 层，认证由 app.on('login')
+                    补全；dsh 子进程不走 Chromium 网络栈，只认注入的环境变量。
+                    本机地址强制在 NO_PROXY 里，否则界面与本地 MCP 会被
                     代理劫持——已实测外网走 CONNECT、localhost 直连。TLS 拦截型代理
                     （self signed certificate in chain）：手动代理开启时自动带
                     NODE_USE_SYSTEM_CA=1（信任系统证书库），可选 NODE_EXTRA_CA_CERTS

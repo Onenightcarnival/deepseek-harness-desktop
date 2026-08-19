@@ -7,7 +7,7 @@
  */
 'use strict'
 
-const { app, BrowserWindow, dialog, shell, Menu, ipcMain } = require('electron')
+const { app, BrowserWindow, dialog, shell, Menu, ipcMain, session } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
@@ -166,7 +166,8 @@ async function checkCoreUpdates(interactive) {
 }
 
 /** Install @deepseek-ai/dsh@version into userData/runtimes/<version> with the bundled pnpm. */
-function installCoreRuntime(version) {
+async function installCoreRuntime(version) {
+  const proxyEnv = await proxyEnvAsync()
   return new Promise((resolve, reject) => {
     const dir = path.join(runtimesDir(), version)
     fs.rmSync(dir, { recursive: true, force: true })
@@ -187,7 +188,7 @@ function installCoreRuntime(version) {
     } catch { /* minimal flavor */ }
     const child = spawn(process.execPath, [pnpmCjs, 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
       cwd: dir,
-      env: applyProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }),
+      env: Object.assign({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, proxyEnv),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -260,7 +261,7 @@ function desktopPatchArgs() {
 
 /**
  * Proxy config store, PyCharm-shaped:
- * {mode: 'none'|'manual', host, port, bypass, auth, login, remember,
+ * {mode: 'none'|'system'|'manual', host, port, bypass, auth, login, remember,
  *  password?} — password is persisted ONLY when remember is true;
  * otherwise it lives in sessionProxyPassword for this run and must be
  * re-entered after a restart.
@@ -284,10 +285,58 @@ function readProxyConfig() {
   if (merged.auth && !merged.remember && !merged.password) merged.password = sessionProxyPassword
   return merged
 }
-/** Merge the proxy env (if manual mode) into a child env object. */
-function applyProxyEnv(env) {
-  return Object.assign(env, buildProxyEnv(readProxyConfig()))
+/**
+ * Resolve the OS proxy via Chromium (PAC-aware, cross-platform). Returns
+ * {host, port} or null for direct connections.
+ */
+async function resolveSystemProxy() {
+  try {
+    // A dedicated in-memory session: defaultSession gets setProxy() applied
+    // from our own config, which would make its resolveProxy() self-referential.
+    // This partition keeps Chromium's default behaviour (= OS settings, PAC).
+    const probe = session.fromPartition('proxy-probe')
+    const s = await probe.resolveProxy('https://registry.npmjs.org/')
+    const m = /(?:PROXY|HTTPS)\s+([^;\s:]+):(\d+)/.exec(s || '')
+    return m ? { host: m[1], port: m[2] } : null
+  } catch { return null }
 }
+/**
+ * Mirror the proxy config onto Electron's own (Chromium) network layer so
+ * shell-window traffic — external resources loaded by pages, update checks
+ * that go through Chromium — follows the same setting. Note this does NOT
+ * cover the dsh child process (a plain Node process with its own network
+ * stack); that one is covered by the injected env vars. Loopback is always
+ * bypassed implicitly by Chromium, so the local web UI is unaffected.
+ */
+async function applyChromiumProxy(config) {
+  const c = config || PROXY_DEFAULTS
+  try {
+    if (c.mode === 'manual' && String(c.host || '').trim() && String(c.port ?? '').trim()) {
+      const bypass = ['127.0.0.1', 'localhost', '::1']
+      for (const part of String(c.bypass || '').split(/[,\s]+/)) { if (part.trim()) bypass.push(part.trim()) }
+      await session.defaultSession.setProxy({
+        proxyRules: `http://${String(c.host).trim()}:${String(c.port).trim()}`,
+        proxyBypassRules: bypass.join(','),
+      })
+    } else if (c.mode === 'none') {
+      await session.defaultSession.setProxy({ mode: 'direct' })
+    } else {
+      await session.defaultSession.setProxy({ mode: 'system' })
+    }
+  } catch { /* window traffic falls back to whatever was set before */ }
+}
+/** Env entries for an explicit config (mode none/system/manual). */
+async function proxyEnvForConfig(c) {
+  if (!c || c.mode === 'none') return {}
+  if (c.mode === 'system') {
+    const sys = await resolveSystemProxy()
+    if (!sys) return {}
+    return buildProxyEnv({ ...c, mode: 'manual', host: sys.host, port: sys.port, auth: false })
+  }
+  return buildProxyEnv(c)
+}
+/** Env entries for the stored config. */
+async function proxyEnvAsync() { return proxyEnvForConfig(readProxyConfig()) }
 
 function mcpStorePath() { return path.join(app.getPath('userData'), 'mcp-servers.json') }
 function profilePatchPath() { return path.join(app.getPath('home'), '.dsh', 'profiles', 'web', 'cordis.patch.yml') }
@@ -901,7 +950,8 @@ function syncPresetPlugins() {
   }
 }
 
-function startServer() {
+async function startServer() {
+  const proxyEnv = await proxyEnvAsync()
   return new Promise((resolve, reject) => {
     const entry = dshEntry()
     if (!fs.existsSync(entry)) {
@@ -921,8 +971,8 @@ function startServer() {
       // case-insensitive: on Windows the spread key is "Path" — writing
       // "PATH" would leave the child with PATH = binDir only (git vanishes)
       prependEnvPath(env, binDir, path.delimiter)
-      applyProxyEnv(env)
     } catch { /* CLI launchers are best-effort */ }
+    Object.assign(env, proxyEnv)
 
     serverProc = spawn(process.execPath, ['--expose-internals', entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--port', '0'], {
       env,
@@ -959,13 +1009,16 @@ function startServer() {
     serverProc.stdout.on('data', onChunk)
     serverProc.stderr.on('data', onChunk)
 
+    const thisProc = serverProc
     serverProc.on('exit', (code) => {
-      serverProc = null
+      // a late exit of an already-replaced process must not clobber the
+      // current one or trigger the death dialog
+      if (serverProc === thisProc) serverProc = null
       if (!settled) {
         settled = true
         clearTimeout(timer)
         reject(new Error(`dsh server exited early (code ${code}).\nOutput:\n${tail.slice(-2000)}`))
-      } else if (!quitting) {
+      } else if (!quitting && !restartingServer && serverProc === null) {
         // Server died while the app is open.
         if (mainWindow && !mainWindow.isDestroyed()) {
           dialog.showMessageBox(mainWindow, {
@@ -1057,11 +1110,12 @@ function buildMenu() {
 }
 
 /** Run the bundled dsh CLI (plugin management) and capture its output. */
-function runDshCli(args) {
+async function runDshCli(args) {
+  const proxyEnv = await proxyEnvAsync()
   return new Promise((resolve) => {
     const binDir = writeCliLaunchers()
     const child = spawn(process.execPath, ['--expose-internals', dshEntry(), ...args], {
-      env: applyProxyEnv(prependEnvPath({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, binDir, path.delimiter)),
+      env: Object.assign(prependEnvPath({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, binDir, path.delimiter), proxyEnv),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -1183,6 +1237,7 @@ ipcMain.handle('plugins:restart', async () => {
  * Returns { ok, detail } — never throws.
  */
 async function testMcpServer(server, extraPath) {
+  const mcpProxyEnv = await proxyEnvAsync()
   if (server.transport === 'streamable-http') {
     try {
       const res = await fetch(server.url, {
@@ -1217,7 +1272,7 @@ async function testMcpServer(server, extraPath) {
     let child
     try {
       child = spawn(server.command, server.args || [], {
-        env: (() => { const e = { ...process.env, ...(server.env || {}) }; if (extraPath) prependEnvPath(e, extraPath, path.delimiter); applyProxyEnv(e); return e })(),
+        env: (() => { const e = { ...process.env, ...(server.env || {}) }; if (extraPath) prependEnvPath(e, extraPath, path.delimiter); Object.assign(e, mcpProxyEnv); return e })(),
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
@@ -1295,7 +1350,7 @@ ipcMain.handle('proxy:get', async () => readProxyConfig())
 ipcMain.handle('proxy:save', async (_event, config) => {
   if (!config || typeof config !== 'object') return { ok: false, error: '数据格式无效' }
   const c = {
-    mode: config.mode === 'manual' ? 'manual' : 'none',
+    mode: config.mode === 'manual' ? 'manual' : config.mode === 'system' ? 'system' : 'none',
     host: String(config.host || '').trim(),
     port: String(config.port || '').trim(),
     bypass: String(config.bypass || '').trim(),
@@ -1318,6 +1373,7 @@ ipcMain.handle('proxy:save', async (_event, config) => {
     sessionProxyPassword = c.auth && !c.remember ? c.password : ''
     const stored = { ...c, password: c.auth && c.remember ? c.password : '' }
     fs.writeFileSync(proxyStorePath(), JSON.stringify(stored, null, 2))
+    applyChromiumProxy(c) // mirror onto the shell window's network layer
     return { ok: true }
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) }
@@ -1338,7 +1394,16 @@ ipcMain.handle('proxy:pickCa', async () => {
   return { canceled: false, path: filePaths[0] }
 })
 ipcMain.handle('proxy:test', async (_event, config) => {
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...buildProxyEnv({ ...config, mode: 'manual' }) }
+  let label = ''
+  let testCfg = { ...config }
+  if (config && config.mode === 'system') {
+    const sys = await resolveSystemProxy()
+    if (sys) { testCfg = { ...config, mode: 'manual', host: sys.host, port: sys.port, auth: false }; label = `系统代理 ${sys.host}:${sys.port}，` }
+    else { testCfg = { mode: 'none' }; label = '系统未配置代理（直连），' }
+  } else {
+    testCfg = { ...config, mode: 'manual' }
+  }
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...(await proxyEnvForConfig(testCfg)) }
   const script = `
     const t0 = Date.now()
     fetch('https://registry.npmjs.org/-/ping', { signal: AbortSignal.timeout(8000) })
@@ -1354,8 +1419,8 @@ ipcMain.handle('proxy:test', async (_event, config) => {
       clearTimeout(timer)
       try {
         const r = JSON.parse(out.trim())
-        if (r.ok) resolve({ ok: true, detail: `代理连通（npm registry，${r.ms}ms）` })
-        else resolve({ ok: false, detail: `连接失败：${r.error || `HTTP ${r.status}`}` })
+        if (r.ok) resolve({ ok: true, detail: `${label}连通（npm registry，${r.ms}ms）` })
+        else resolve({ ok: false, detail: `${label}连接失败：${r.error || `HTTP ${r.status}`}` })
       } catch {
         resolve({ ok: false, detail: '测试进程异常退出' })
       }
@@ -1438,8 +1503,8 @@ ipcMain.handle('skills:delete', async (_event, name) => {
   }
 })
 
-function stopServer() {
-  quitting = true
+/** Kill the dsh server without marking the app as quitting (for restarts). */
+function killServer() {
   if (serverProc) {
     try {
       if (process.platform === 'win32') {
@@ -1454,26 +1519,69 @@ function stopServer() {
     serverProc = null
   }
 }
+function stopServer() {
+  quitting = true
+  killServer()
+}
+
+/** Boot the server with the reactive self-heal retry loop. */
+async function bootServerWithHeal() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await startServer()
+    } catch (err) {
+      if (attempt < 6 && applyBootErrorFix(String((err && err.message) || err))) {
+        console.log(`boot self-heal applied, retrying (attempt ${attempt + 1}/6)`)
+        continue
+      }
+      throw err
+    }
+  }
+}
+
+/**
+ * Restart the dsh server in place (no app relaunch): used when a config
+ * change (proxy) must reach the server's environment. The window shows the
+ * splash while the new server boots, then reloads the web UI.
+ */
+let restartingServer = false
+async function restartDshServer() {
+  if (restartingServer) return { ok: false, error: '正在重启中，请稍候' }
+  if (quitting) return { ok: false, error: '应用正在退出' }
+  restartingServer = true
+  try {
+    killServer()
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadFile(path.join(__dirname, 'splash.html'))
+    const url = await bootServerWithHeal()
+    if (mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(url)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err).slice(0, 500) }
+  } finally {
+    restartingServer = false
+  }
+}
+ipcMain.handle('server:restart', async () => restartDshServer())
+
+// Supply proxy credentials when Chromium's own network layer (shell window
+// traffic) hits an authenticating proxy. The dsh child process is separate:
+// its credentials travel inside the injected HTTP(S)_PROXY URL.
+app.on('login', (event, _webContents, _details, authInfo, callback) => {
+  if (!authInfo || !authInfo.isProxy) return
+  const c = readProxyConfig()
+  if (c.mode === 'manual' && c.auth && c.login) {
+    event.preventDefault()
+    callback(c.login, c.password || '')
+  }
+})
 
 app.whenReady().then(async () => {
   resolveActiveRuntime()
+  applyChromiumProxy(readProxyConfig())
   buildMenu()
   createWindow()
   try {
-    let url
-    for (let attempt = 1; ; attempt++) {
-      try {
-        url = await startServer()
-        break
-      } catch (err) {
-        // Self-heal known profile damage from the error text and retry.
-        if (attempt < 6 && applyBootErrorFix(String((err && err.message) || err))) {
-          console.log(`boot self-heal applied, retrying (attempt ${attempt + 1}/6)`)
-          continue
-        }
-        throw err
-      }
-    }
+    const url = await bootServerWithHeal()
     if (mainWindow && !mainWindow.isDestroyed()) {
       await mainWindow.loadURL(url)
     }

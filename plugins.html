@@ -171,9 +171,10 @@
   <!-- ============ 代理 ============ -->
   <div class="pane single" id="pane-proxy">
     <h2>HTTP 代理</h2>
-    <p class="sub">对 dsh 服务及其发起的一切网络请求生效（模型 API、插件安装、内核升级、MCP 连接）。本机地址（127.0.0.1 / localhost）始终直连。修改后需重启应用生效。</p>
+    <p class="sub">对 dsh 服务及其发起的一切网络请求生效（模型 API、插件安装、内核升级、MCP 连接）。本机地址（127.0.0.1 / localhost）始终直连。保存后自动重启 dsh 服务即时生效（窗口会短暂回到加载页）。</p>
     <div class="field">
       <label class="radio-row"><input type="radio" name="p-mode" id="p-mode-none" value="none"> 不使用代理</label>
+      <label class="radio-row"><input type="radio" name="p-mode" id="p-mode-system" value="system"> 使用系统代理</label>
       <label class="radio-row"><input type="radio" name="p-mode" id="p-mode-manual" value="manual"> 手动配置</label>
     </div>
     <div id="p-manual">
@@ -200,7 +201,9 @@
           <div class="meta" style="margin-top:4px">不勾选时密码仅保存在本次运行中，应用重启后需重新输入（密码以明文存储在本机用户数据目录，请知悉）。</div>
         </div>
       </div>
-      <div class="field" style="margin-top:4px"><label>自定义 CA 证书（可选，PEM；公司代理做 TLS 拦截时导入其根证书。系统证书库已默认信任）</label>
+    </div>
+    <div id="p-tls">
+      <div class="field" style="margin-top:4px"><label>自定义 CA 证书（可选，PEM；代理做 TLS 拦截时导入其根证书。系统证书库已默认信任）</label>
         <div class="row"><input id="p-ca" placeholder="留空 = 仅系统证书库" spellcheck="false"><button id="p-ca-pick" style="flex:none">选择…</button></div></div>
       <div class="field">
         <label class="radio-row"><input type="checkbox" id="p-insecure"> 不校验 TLS 证书（不安全，仅当无法获得代理 CA 证书时临时使用）</label>
@@ -212,9 +215,6 @@
       <button class="primary" id="p-save">保存</button>
     </div>
     <div class="msg" id="proxy-msg"></div>
-    <div class="row" style="margin-top:10px; display:none" id="restart-proxy">
-      <span class="spacer"></span><button class="primary" onclick="pluginApi.restart()">重启应用生效</button>
-    </div>
   </div>
 
   </div>
@@ -464,11 +464,12 @@
   function proxyMsg(text, cls) { const m = $('proxy-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
   function proxyDim() {
     $('p-manual').classList.toggle('dim', !$('p-mode-manual').checked)
+    $('p-tls').classList.toggle('dim', $('p-mode-none').checked)
     $('p-auth-fields').classList.toggle('dim', !$('p-auth').checked)
   }
   function readProxyForm() {
     return {
-      mode: $('p-mode-manual').checked ? 'manual' : 'none',
+      mode: $('p-mode-manual').checked ? 'manual' : $('p-mode-system').checked ? 'system' : 'none',
       host: $('p-host').value.trim(), port: $('p-port').value.trim(),
       bypass: $('p-bypass').value.trim(),
       auth: $('p-auth').checked, login: $('p-login').value, password: $('p-password').value,
@@ -493,7 +494,7 @@
     const r = await pluginApi.proxyPickCa()
     if (!r.canceled && r.path) $('p-ca').value = r.path
   }
-  for (const id of ['p-mode-none', 'p-mode-manual', 'p-auth']) $(id).onchange = proxyDim
+  for (const id of ['p-mode-none', 'p-mode-system', 'p-mode-manual', 'p-auth']) $(id).onchange = proxyDim
   function validateProxyForm(c) {
     if (c.mode !== 'manual') return null
     if (!/^[\w.-]+$/.test(c.host)) return '主机名无效'
@@ -504,15 +505,21 @@
     const c = readProxyForm()
     const err = validateProxyForm(c)
     if (err) { proxyMsg(err, 'err'); return }
+    $('p-save').disabled = true
     const res = await pluginApi.proxySave(c)
-    if (!res.ok) { proxyMsg('保存失败：' + res.error, 'err'); return }
-    proxyMsg('已保存', 'ok')
-    $('restart-proxy').style.display = 'flex'
+    if (!res.ok) { proxyMsg('保存失败：' + res.error, 'err'); $('p-save').disabled = false; return }
+    proxyMsg('已保存，正在重启 dsh 服务使其生效…')
+    const r = await pluginApi.serverRestart()
+    $('p-save').disabled = false
+    if (r.ok) proxyMsg('已保存并生效', 'ok')
+    else proxyMsg('已保存，但服务重启失败：' + r.error + '\n可通过重启应用生效。', 'err')
   }
   $('p-test').onclick = async () => {
     const c = readProxyForm()
-    const err = validateProxyForm({ ...c, mode: 'manual' })
-    if (err) { proxyMsg('先填写有效的主机名和端口再测试', 'err'); return }
+    if (c.mode !== 'system') {
+      const err = validateProxyForm({ ...c, mode: 'manual' })
+      if (err) { proxyMsg('先填写有效的主机名和端口再测试', 'err'); return }
+    }
     $('p-test').disabled = true
     proxyMsg('测试中…')
     const res = await pluginApi.proxyTest(c)

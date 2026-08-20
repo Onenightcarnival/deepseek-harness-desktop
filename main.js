@@ -12,6 +12,7 @@ const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath,
+  COMMON_SETTINGS, validateCommonSettings, buildSettingsBlock,
   applyProxyEnv, PROXY_ENV_KEYS } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
 
@@ -407,6 +408,23 @@ function profilePatchPath() { return path.join(app.getPath('home'), '.dsh', 'pro
 
 function readMcpServers() {
   try { return JSON.parse(fs.readFileSync(mcpStorePath(), 'utf8')) } catch { return [] }
+}
+
+// ---- common settings (curated built-in plugin config overrides) ----
+// Registry lives in runtime.js (COMMON_SETTINGS); values persist in
+// userData and are applied into the profile patch layer as a second
+// managed block ('settings') — same mechanism and hot-reload behavior as
+// the MCP block, and same regeneration on quarantine self-heal.
+function settingsStorePath() { return path.join(app.getPath('userData'), 'common-settings.json') }
+function readCommonSettings() {
+  try { return JSON.parse(fs.readFileSync(settingsStorePath(), 'utf8')) } catch { return {} }
+}
+function applySettingsToProfile(values) {
+  const file = profilePatchPath()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  let text = ''
+  try { text = fs.readFileSync(file, 'utf8') } catch { text = '[]\n' }
+  fs.writeFileSync(file, upsertManagedBlock(text, 'settings', buildSettingsBlock(values)))
 }
 
 /** Apply the GUI-managed MCP servers into the profile patch layer. */
@@ -859,8 +877,9 @@ function applyBootErrorFix(errText) {
         if (path.basename(file) === 'cordis.patch.yml' && path.dirname(file) === path.join(dshHome, 'profiles', 'web')) {
           try {
             applyMcpToProfile(readMcpServers())
-            console.log('boot heal: regenerated MCP managed block from the desktop store')
-          } catch (err) { console.error('MCP block regeneration failed:', err) }
+            applySettingsToProfile(readCommonSettings())
+            console.log('boot heal: regenerated MCP + settings managed blocks from the desktop store')
+          } catch (err) { console.error('managed block regeneration failed:', err) }
         }
       } catch (err) { console.error(`quarantine of ${file} failed:`, err) }
     }
@@ -1529,6 +1548,29 @@ ipcMain.handle('proxy:test', async (_event, config, url) => {
     })
   } finally {
     probe.close()
+  }
+})
+
+// ---- common settings ----
+ipcMain.handle('settings:get', async () => ({
+  options: COMMON_SETTINGS.map(({ key, label, hint, type, def }) => ({ key, label, hint, type, def })),
+  values: readCommonSettings(),
+}))
+ipcMain.handle('settings:save', async (_event, values) => {
+  const err = validateCommonSettings(values)
+  if (err) return { ok: false, error: err }
+  // keep only known keys with real overrides
+  const clean = {}
+  for (const opt of COMMON_SETTINGS) {
+    const v = values[opt.key]
+    if (v !== undefined && v !== null && v !== '') clean[opt.key] = v
+  }
+  try {
+    fs.writeFileSync(settingsStorePath(), JSON.stringify(clean, null, 2))
+    applySettingsToProfile(clean)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) }
   }
 })
 

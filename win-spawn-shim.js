@@ -142,7 +142,9 @@ function setupHiddenConsole(deps = {}) {
     try {
       if (AttachConsole(0xFFFFFFFF) !== 0) { // ATTACH_PARENT_PROCESS
         restoreStd()
-        log('attached to parent console')
+        // deliberately NOT logged: the sandbox runner's stderr is part of
+        // the tool output the model reads — success on the hot path must
+        // stay silent; failures are rare and worth the noise.
         return true
       }
     } catch { /* no parent console — fall through to the helper */ }

@@ -162,6 +162,57 @@ module.exports.upsertManagedBlock = upsertManagedBlock
 module.exports.buildMcpBlock = buildMcpBlock
 
 /**
+ * Curated "common settings" the config center exposes over built-in plugin
+ * config. Each option maps one GUI field onto one config key of one composed
+ * entry (`- id: <entryId>` + `config:` merges per-key in the user patch
+ * layer). Declarative on purpose: the GUI page renders from this registry,
+ * validation and YAML generation read it too — adding a setting is one line.
+ * `def` mirrors the upstream default purely for display; an empty value in
+ * the GUI removes the override so upstream defaults keep applying.
+ */
+const COMMON_SETTINGS = [
+  {
+    key: 'goalMaxRounds', entryId: 'goal', configKey: 'defaultMaxGoalRounds',
+    type: 'posInt', def: 256, label: 'goal 目标模式：轮数上限',
+    hint: '单个目标最多自动续跑的轮数（上游默认 256）。预算耗尽后目标停住不再续跑；创建目标时也可单独指定。留空恢复默认。',
+  },
+]
+module.exports.COMMON_SETTINGS = COMMON_SETTINGS
+
+/** Validate a {key: value} map against the registry; error string or null. */
+function validateCommonSettings(values) {
+  if (!values || typeof values !== 'object') return '数据格式无效'
+  const known = new Map(COMMON_SETTINGS.map((o) => [o.key, o]))
+  for (const [k, v] of Object.entries(values)) {
+    const opt = known.get(k)
+    if (!opt) return `未知设置项 ${k}`
+    if (v === undefined || v === null || v === '') continue // = no override
+    if (opt.type === 'posInt' && !(Number.isSafeInteger(v) && v >= 1)) return `「${opt.label}」需为正整数`
+  }
+  return null
+}
+module.exports.validateCommonSettings = validateCommonSettings
+
+/** Render overridden common settings as cordis patch entries (per entry id). */
+function buildSettingsBlock(values) {
+  const byEntry = new Map()
+  for (const opt of COMMON_SETTINGS) {
+    const v = values ? values[opt.key] : undefined
+    if (v === undefined || v === null || v === '') continue
+    if (!byEntry.has(opt.entryId)) byEntry.set(opt.entryId, [])
+    byEntry.get(opt.entryId).push([opt.configKey, v])
+  }
+  const lines = []
+  for (const [id, kvs] of byEntry) {
+    lines.push(`- id: ${id}`)
+    lines.push('  config:')
+    for (const [k, v] of kvs) lines.push(`    ${k}: ${JSON.stringify(v)}`)
+  }
+  return lines.join('\n')
+}
+module.exports.buildSettingsBlock = buildSettingsBlock
+
+/**
  * Locate skills inside an extracted archive directory. Recognized shapes:
  * the root itself is a skill (SKILL.md at top level, named by fallbackName);
  * top-level `<dir>/SKILL.md` bundles; top-level flat `<name>.md` files.

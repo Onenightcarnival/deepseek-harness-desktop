@@ -31,9 +31,17 @@ proxy-forward.js    进程内转发代理（无 Electron 依赖，resolveSystem 
                     createForwarder 起 127.0.0.1 随机端口，处理 CONNECT 隧道与明文
                     HTTP，每条连接现问 routeFor 决定直连/上游代理。所有子进程只拿到
                     这一个固定端点，路由策略留在主进程
-plugins.html        配置中心窗口（左侧导航四页：插件 / MCP 服务器 / 技能 / 代理；MCP 为
-                    主从布局，表单仅暴露 streamable-http——validateMcpServer 与
-                    buildMcpBlock 仍接受 stdio 以兼容旧存量条目。代理页见下）
+plugins.html        配置中心窗口（左侧导航五页：插件 / MCP 服务器 / 技能 / 常用设置 /
+                    代理；MCP 为主从布局，表单仅暴露 streamable-http——
+                    validateMcpServer 与 buildMcpBlock 仍接受 stdio 以兼容旧存量
+                    条目。常用设置页是内置插件配置的精选覆盖：注册表在 runtime.js
+                    的 COMMON_SETTINGS（key/entryId/configKey/type/默认值/文案），
+                    页面按注册表声明式渲染、validateCommonSettings 校验、
+                    buildSettingsBlock 生成 `- id: X` + `config:` 逐键覆盖条目，
+                    经 upsertManagedBlock 写进用户 patch 层第二个托管区块
+                    'settings'（与 MCP 块并存互不干扰，隔离自愈重建时一并再生）；
+                    值存 userData/common-settings.json。加一个配置项 = 在注册表
+                    加一行。代理页见下）
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动等待页
 stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 staging/<platform>-<arch>/dsh，

@@ -99,6 +99,7 @@
     <button data-pane="plugins" class="active"><span class="icon">◫</span>插件</button>
     <button data-pane="mcp"><span class="icon">⇄</span>MCP 服务器</button>
     <button data-pane="skills"><span class="icon">✦</span>技能</button>
+    <button data-pane="settings"><span class="icon">⚙</span>常用设置</button>
     <button data-pane="proxy"><span class="icon">⇌</span>代理</button>
   </nav>
 
@@ -166,6 +167,15 @@
     </div>
     <div class="card" id="skills-list">加载中…</div>
     <div class="msg" id="skills-msg"></div>
+  </div>
+
+  <!-- ============ 常用设置 ============ -->
+  <div class="pane single" id="pane-settings">
+    <h2>常用设置</h2>
+    <p class="sub">内置插件的常用配置项，写入你的用户配置层的托管区块（不碰手写内容），保存即生效；留空保存即恢复 dsh 默认值。这里没有的配置项可手动编辑 ~/.dsh/profiles/web/cordis.patch.yml（按条目 id 覆盖 config，语法见仓库 desktop-patch.yml 注释）。</p>
+    <div class="card" id="cs-fields">加载中…</div>
+    <div class="row" style="margin-top:16px"><span class="spacer"></span><button class="primary" id="cs-save">保存</button></div>
+    <div class="msg" id="cs-msg"></div>
   </div>
 
   <!-- ============ 代理 ============ -->
@@ -463,6 +473,56 @@
     refreshSkills()
   }
   $('s-open').onclick = () => pluginApi.skillsOpen()
+
+  // ================= 常用设置 =================
+  // 声明式渲染：字段清单来自主进程的 COMMON_SETTINGS 注册表，
+  // 新增配置项只需在 runtime.js 注册，一行都不用改这里。
+  let csOptions = []
+  function csMsg(text, cls) { const m = $('cs-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
+  async function loadCommonSettings() {
+    const { options, values } = await pluginApi.settingsGet()
+    csOptions = options
+    const box = $('cs-fields')
+    box.innerHTML = ''
+    for (const o of options) {
+      const field = document.createElement('div')
+      field.className = 'field'
+      const label = document.createElement('label')
+      label.textContent = o.label
+      const input = document.createElement('input')
+      input.id = 'cs-' + o.key
+      if (o.type === 'posInt') { input.type = 'number'; input.min = '1'; input.step = '1' }
+      input.placeholder = `默认 ${o.def}（留空恢复默认）`
+      input.spellcheck = false
+      const v = values[o.key]
+      input.value = v === undefined || v === null ? '' : String(v)
+      const hint = document.createElement('div')
+      hint.className = 'meta'
+      hint.style.marginTop = '4px'
+      hint.textContent = o.hint
+      field.append(label, input, hint)
+      box.appendChild(field)
+    }
+  }
+  loadCommonSettings().catch((e) => csMsg('加载失败：' + e, 'err'))
+  $('cs-save').onclick = async () => {
+    const values = {}
+    for (const o of csOptions) {
+      const raw = $('cs-' + o.key).value.trim()
+      if (raw === '') { values[o.key] = ''; continue }
+      if (o.type === 'posInt') {
+        const n = Number(raw)
+        if (!Number.isSafeInteger(n) || n < 1) { csMsg(`「${o.label}」需为正整数`, 'err'); return }
+        values[o.key] = n
+      } else {
+        values[o.key] = raw
+      }
+    }
+    $('cs-save').disabled = true
+    const res = await pluginApi.settingsSave(values)
+    csMsg(res.ok ? '✓ 已保存并生效' : '✗ ' + (res.error || '保存失败'), res.ok ? 'ok' : 'err')
+    $('cs-save').disabled = false
+  }
 
   // ================= 代理 =================
   function proxyMsg(text, cls) { const m = $('proxy-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }

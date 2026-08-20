@@ -97,6 +97,19 @@ function setupHiddenConsole(deps = {}) {
   const env = deps.env || process.env
   const platform = deps.platform || process.platform
   if (platform !== 'win32' || env.DSH_DESKTOP_CONSOLE_HOST !== '1') return false
+  // Per-process trace appended to userData/console-debug.log (path passed in
+  // env by main.js): pid + which step attached or which Win32 code failed —
+  // the one artifact that makes this remotely debuggable. Size-capped.
+  const dbg = deps.dbg || ((msg) => {
+    const file = env.DSH_DESKTOP_CONSOLE_DEBUG_FILE
+    if (!file) return
+    try {
+      const fs = require('fs')
+      try { if (fs.statSync(file).size > 256 * 1024) return } catch { /* new file */ }
+      const tag = require('path').basename(process.argv[1] || process.execPath)
+      fs.appendFileSync(file, `${new Date().toISOString()} pid=${process.pid} ppid=${process.ppid} ${tag}: ${msg}\n`)
+    } catch { /* best effort */ }
+  })
   try {
     const loadKoffi = deps.loadKoffi || (() => {
       const path = require('path')
@@ -115,17 +128,15 @@ function setupHiddenConsole(deps = {}) {
       }
       return null
     })
-    // Outcome lines land in dsh-server.log via the server's stderr — the
-    // only remote-debuggable signal for why sandboxed pwsh still flashes.
-    const log = deps.log || ((msg) => { try { process.stderr.write(`[dsh-desktop] hidden console host: ${msg}\n`) } catch { /* stderr gone */ } })
     const koffi = loadKoffi()
-    if (!koffi) { log('koffi unresolvable — sandboxed pwsh may flash a console'); return false }
+    if (!koffi) { dbg('koffi unresolvable'); return false }
     const kernel32 = koffi.load('kernel32.dll')
     const GetConsoleCP = kernel32.func('uint32_t __stdcall GetConsoleCP()')
     const AttachConsole = kernel32.func('int __stdcall AttachConsole(uint32_t dwProcessId)')
+    const GetLastError = kernel32.func('uint32_t __stdcall GetLastError()')
     const GetStdHandle = kernel32.func('void* __stdcall GetStdHandle(uint32_t nStdHandle)')
     const SetStdHandle = kernel32.func('int __stdcall SetStdHandle(uint32_t nStdHandle, void* hHandle)')
-    if (GetConsoleCP() !== 0) return false // already have a console — hands off
+    if (GetConsoleCP() !== 0) { dbg('already has a console — untouched'); return false }
     // Attaching rewrites the process's std-handle table to console handles.
     // The sandbox runner reads GetStdHandle FRESH to pass the caller's pipes
     // through to pwsh — restore the exact values or tool output would leak
@@ -134,47 +145,48 @@ function setupHiddenConsole(deps = {}) {
     const STD = [0xFFFFFFF6, 0xFFFFFFF5, 0xFFFFFFF4] // -10 stdin, -11 stdout, -12 stderr
     const saved = STD.map((h) => { try { return GetStdHandle(h) } catch { return null } })
     const restoreStd = () => { STD.forEach((h, i) => { try { if (saved[i] !== null) SetStdHandle(h, saved[i]) } catch { /* keep rest */ } }) }
-    // FAST PATH — synchronous, and the one that actually matters for the
-    // sandbox: pwsh is launched by a TRANSIENT runner (node runner.js -- pwsh…)
-    // that calls CreateProcessAsUserW immediately after load, so an async
-    // helper always loses the race. The runner's parent is the dsh server,
-    // which already carries the invisible console — inherit it in one call.
+    // Step 1 — synchronous parent attach: the sandbox launches pwsh from a
+    // TRANSIENT runner (node runner.js -- pwsh…) that calls
+    // CreateProcessAsUserW immediately after load; anything asynchronous
+    // loses that race. The runner's parent is the dsh server, which carries
+    // the invisible console.
     try {
       if (AttachConsole(0xFFFFFFFF) !== 0) { // ATTACH_PARENT_PROCESS
         restoreStd()
-        // deliberately NOT logged: the sandbox runner's stderr is part of
-        // the tool output the model reads — success on the hot path must
-        // stay silent; failures are rare and worth the noise.
+        dbg('attached to parent console')
         return true
       }
-    } catch { /* no parent console — fall through to the helper */ }
+      dbg(`parent attach failed (GetLastError=${GetLastError()})`)
+    } catch (e) { dbg('parent attach threw: ' + e) }
+    // Step 2 — helper console, ALSO synchronous now: spawn a CREATE_NO_WINDOW
+    // cmd (its console never has a window), then poll AttachConsole with a
+    // blocking sleep. Everything after this shim (including the sandbox
+    // spawn) must only run once the console exists — an unref'd timer left
+    // a window where pwsh was spawned console-less. Worst case blocks load
+    // for ~2s, then gives up to today's behavior.
     const spawnHelper = deps.spawnHelper || (() => require('child_process').spawn(
       env.ComSpec || 'cmd.exe', ['/d', '/q', '/c', 'pause'],
       // stdin is a pipe we never write: `pause` blocks forever, keeping the
       // console alive until we have attached. CREATE_NO_WINDOW via windowsHide.
       { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true }
     ))
+    const sleep = deps.sleep || ((ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) } catch { /* spin-free fallback: give up */ } })
     const helper = spawnHelper()
-    if (!helper || !helper.pid) return false
+    if (!helper || !helper.pid) { dbg('helper spawn failed'); return false }
     if (helper.on) helper.on('error', () => { /* swallowed — cosmetic feature */ })
-    const setInt = deps.setInterval || setInterval
-    const clearInt = deps.clearInterval || clearInterval
-    let tries = 0
-    const timer = setInt(() => {
-      tries++
-      let attached = false
-      try { attached = AttachConsole(helper.pid) !== 0 || GetConsoleCP() !== 0 } catch { /* retry */ }
-      if (attached || tries >= 40) { // give up after ~4s
-        clearInt(timer)
-        try { helper.kill() } catch { /* already gone */ }
-        if (attached) restoreStd()
-        log(attached ? 'attached via helper' : 'attach failed after 40 tries — sandboxed pwsh may flash a console')
-      }
-    }, 100)
-    if (timer && timer.unref) timer.unref()
-    if (helper.unref) helper.unref()
-    return true
-  } catch { return false /* never break the host process */ }
+    let attached = false
+    let lastErr = 0
+    for (let i = 0; i < 40 && !attached; i++) {
+      try {
+        attached = AttachConsole(helper.pid) !== 0 || GetConsoleCP() !== 0
+        if (!attached) lastErr = GetLastError()
+      } catch { /* retry */ }
+      if (!attached) sleep(50)
+    }
+    try { helper.kill() } catch { /* already gone */ }
+    if (attached) { restoreStd(); dbg('attached via helper') } else { dbg(`helper attach failed after 40 tries (GetLastError=${lastErr})`) }
+    return attached
+  } catch (e) { dbg('setup threw: ' + e); return false /* never break the host process */ }
 }
 
 if (process.platform === 'win32') {

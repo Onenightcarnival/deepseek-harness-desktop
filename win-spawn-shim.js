@@ -89,19 +89,21 @@ function patchChildProcess(cp) {
  * it with AttachConsole, then kill the helper (a console lives while any
  * process is attached). koffi is resolved out of the dsh runtime's own tree;
  * everything is best-effort — on any failure behavior is simply today's.
- * Gated on DSH_DESKTOP_CONSOLE_HOST=1 (main.js sets it for the dsh server
+ * Gated on DSHDESKTOP_CONSOLE_HOST=1 (main.js sets it for the dsh server
  * only) and skipped when a console already exists (CLI usage in a real
  * terminal — never touch the user's console).
  */
 function setupHiddenConsole(deps = {}) {
   const env = deps.env || process.env
   const platform = deps.platform || process.platform
-  if (platform !== 'win32' || env.DSH_DESKTOP_CONSOLE_HOST !== '1') return false
+  if (platform !== 'win32' || env.DSHDESKTOP_CONSOLE_HOST !== '1') return false
   // Per-process trace appended to userData/console-debug.log (path passed in
   // env by main.js): pid + which step attached or which Win32 code failed —
   // the one artifact that makes this remotely debuggable. Size-capped.
   const dbg = deps.dbg || ((msg) => {
-    const file = env.DSH_DESKTOP_CONSOLE_DEBUG_FILE
+    // fallback: the shim lives in userData, next to the file main.js
+    // truncates — env-independent so a scrubbed child env still traces
+    const file = env.DSHDESKTOP_CONSOLE_DEBUG_FILE || require('path').join(__dirname, 'console-debug.log')
     if (!file) return
     try {
       const fs = require('fs')

@@ -1089,13 +1089,13 @@ async function startServer() {
     // console flag (hidden-console children die under the restricted
     // token), so without a console to inherit every sandboxed command
     // flashes a visible one. Server only — CLI runs own a real terminal.
-    env.DSH_DESKTOP_CONSOLE_HOST = '1'
+    env.DSHDESKTOP_CONSOLE_HOST = '1'
     // Per-process console-attach trace (server + every runner) — the file
     // to send when sandboxed pwsh still flashes. Fresh per app launch.
     try {
       const dbgFile = path.join(app.getPath('userData'), 'console-debug.log')
       if (process.platform === 'win32') fs.writeFileSync(dbgFile, '')
-      env.DSH_DESKTOP_CONSOLE_DEBUG_FILE = dbgFile
+      env.DSHDESKTOP_CONSOLE_DEBUG_FILE = dbgFile
     } catch { /* diagnostics are best-effort */ }
 
     serverProc = spawn(process.execPath, ['--expose-internals', ...nodePreloadArgs(), entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--port', '0'], {

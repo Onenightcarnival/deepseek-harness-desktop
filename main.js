@@ -1098,7 +1098,15 @@ async function startServer() {
       env.DSHDESKTOP_CONSOLE_DEBUG_FILE = dbgFile
     } catch { /* diagnostics are best-effort */ }
 
-    serverProc = spawn(process.execPath, ['--expose-internals', ...nodePreloadArgs(), entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--port', '0'], {
+    // --no-open: rc8's dsh web hands the URL to the OS default browser by
+    // default; the desktop shell IS the browser — without this flag every
+    // launch would ALSO pop the user's default browser. (rc7 does not know
+    // the flag — this argv ships together with the rc8 lock.)
+    // ORDER MATTERS: the dsh launcher consumes only its own leading flags
+    // (--profile/--patch) and hands everything from the first unknown token
+    // onward to the app's commander — so --patch must come before app flags
+    // like --no-open/--port, or the web app rejects it as unknown.
+    serverProc = spawn(process.execPath, ['--expose-internals', ...nodePreloadArgs(), entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--no-open', '--port', '0'], {
       env,
       cwd: app.getPath('home'),
       stdio: ['ignore', 'pipe', 'pipe'],

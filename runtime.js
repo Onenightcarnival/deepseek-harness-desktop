@@ -163,10 +163,14 @@ module.exports.buildMcpBlock = buildMcpBlock
 
 /**
  * Curated "common settings" the config center exposes over built-in plugin
- * config. Each option maps one GUI field onto one config key of one composed
- * entry (`- id: <entryId>` + `config:` merges per-key in the user patch
- * layer). Declarative on purpose: the GUI page renders from this registry,
- * validation and YAML generation read it too — adding a setting is one line.
+ * config. Each option maps one GUI field onto config keys of composed
+ * entries (`- id: <entryId>` + `config:` merges per-key in the user patch
+ * layer) — either a single entryId/configKey pair, or `targets` when one
+ * user-facing value must land on several entries (e.g. the persistent-shell
+ * timeout writes both the bash and the pwsh entry). Declarative on purpose:
+ * the GUI page renders from this registry, validation and YAML generation
+ * read it too — adding a setting is one registry entry.
+ * Types: posInt (integer ≥1), ratio (0 < x < 1), bool (三态: 默认/开/关).
  * `def` mirrors the upstream default purely for display; an empty value in
  * the GUI removes the override so upstream defaults keep applying.
  */
@@ -176,8 +180,26 @@ const COMMON_SETTINGS = [
     type: 'posInt', def: 256, label: 'goal 目标模式：轮数上限',
     hint: '单个目标最多自动续跑的轮数（上游默认 256）。预算耗尽后目标停住不再续跑；创建目标时也可单独指定。留空恢复默认。',
   },
+  {
+    // the web profile ships this entry disabled — the switch toggles the
+    // entry's `disabled` field (kind: 'enable' = value true means enabled)
+    key: 'compactionEnabled', entryId: 'compaction-basic', kind: 'enable',
+    type: 'bool', def: false, label: '上下文自动压缩',
+    hint: '会话接近上下文上限时自动把较早内容压缩成摘要，腾出空间继续对话（rc8 起可用；web 端默认关闭）。开启后配合下面的触发阈值使用。',
+  },
+  {
+    key: 'compactionThreshold', entryId: 'compaction-basic', configKey: 'thresholdRatio',
+    type: 'ratio', def: 0.8, label: '压缩触发阈值（上下文占比）',
+    hint: '上下文用量达到该比例时触发自动压缩（上游默认 0.8）。仅在开启自动压缩后生效。',
+  },
 ]
 module.exports.COMMON_SETTINGS = COMMON_SETTINGS
+
+/** The entry/config pairs one option writes. */
+function settingTargets(opt) {
+  return Array.isArray(opt.targets) ? opt.targets : [{ entryId: opt.entryId, configKey: opt.configKey }]
+}
+module.exports.settingTargets = settingTargets
 
 /** Validate a {key: value} map against the registry; error string or null. */
 function validateCommonSettings(values) {
@@ -188,6 +210,8 @@ function validateCommonSettings(values) {
     if (!opt) return `未知设置项 ${k}`
     if (v === undefined || v === null || v === '') continue // = no override
     if (opt.type === 'posInt' && !(Number.isSafeInteger(v) && v >= 1)) return `「${opt.label}」需为正整数`
+    if (opt.type === 'ratio' && !(typeof v === 'number' && v > 0 && v < 1)) return `「${opt.label}」需为 0 到 1 之间的小数`
+    if (opt.type === 'bool' && typeof v !== 'boolean') return `「${opt.label}」取值无效`
   }
   return null
 }
@@ -196,17 +220,28 @@ module.exports.validateCommonSettings = validateCommonSettings
 /** Render overridden common settings as cordis patch entries (per entry id). */
 function buildSettingsBlock(values) {
   const byEntry = new Map()
+  const entryOf = (id) => {
+    if (!byEntry.has(id)) byEntry.set(id, { disabled: undefined, kvs: [] })
+    return byEntry.get(id)
+  }
   for (const opt of COMMON_SETTINGS) {
     const v = values ? values[opt.key] : undefined
     if (v === undefined || v === null || v === '') continue
-    if (!byEntry.has(opt.entryId)) byEntry.set(opt.entryId, [])
-    byEntry.get(opt.entryId).push([opt.configKey, v])
+    if (opt.kind === 'enable') {
+      // toggles the composed entry's `disabled` field: value true = enabled
+      entryOf(opt.entryId).disabled = !v
+      continue
+    }
+    for (const t of settingTargets(opt)) entryOf(t.entryId).kvs.push([t.configKey, v])
   }
   const lines = []
-  for (const [id, kvs] of byEntry) {
+  for (const [id, e] of byEntry) {
     lines.push(`- id: ${id}`)
-    lines.push('  config:')
-    for (const [k, v] of kvs) lines.push(`    ${k}: ${JSON.stringify(v)}`)
+    if (e.disabled !== undefined) lines.push(`  disabled: ${e.disabled}`)
+    if (e.kvs.length > 0) {
+      lines.push('  config:')
+      for (const [k, v] of e.kvs) lines.push(`    ${k}: ${JSON.stringify(v)}`)
+    }
   }
   return lines.join('\n')
 }

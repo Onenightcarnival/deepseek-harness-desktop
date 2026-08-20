@@ -489,13 +489,25 @@
       field.className = 'field'
       const label = document.createElement('label')
       label.textContent = o.label
-      const input = document.createElement('input')
-      input.id = 'cs-' + o.key
-      if (o.type === 'posInt') { input.type = 'number'; input.min = '1'; input.step = '1' }
-      input.placeholder = `默认 ${o.def}（留空恢复默认）`
-      input.spellcheck = false
+      let input
       const v = values[o.key]
-      input.value = v === undefined || v === null ? '' : String(v)
+      if (o.type === 'bool') {
+        input = document.createElement('select')
+        for (const [val, text] of [['', `默认（${o.def ? '开' : '关'}）`], ['on', '开'], ['off', '关']]) {
+          const opt = document.createElement('option')
+          opt.value = val; opt.textContent = text
+          input.appendChild(opt)
+        }
+        input.value = v === true ? 'on' : v === false ? 'off' : ''
+      } else {
+        input = document.createElement('input')
+        if (o.type === 'posInt') { input.type = 'number'; input.min = '1'; input.step = '1' }
+        if (o.type === 'ratio') { input.type = 'number'; input.min = '0.05'; input.max = '0.95'; input.step = '0.05' }
+        input.placeholder = `默认 ${o.def}（留空恢复默认）`
+        input.spellcheck = false
+        input.value = v === undefined || v === null ? '' : String(v)
+      }
+      input.id = 'cs-' + o.key
       const hint = document.createElement('div')
       hint.className = 'meta'
       hint.style.marginTop = '4px'
@@ -514,6 +526,12 @@
         const n = Number(raw)
         if (!Number.isSafeInteger(n) || n < 1) { csMsg(`「${o.label}」需为正整数`, 'err'); return }
         values[o.key] = n
+      } else if (o.type === 'ratio') {
+        const n = Number(raw)
+        if (!(n > 0 && n < 1)) { csMsg(`「${o.label}」需为 0 到 1 之间的小数`, 'err'); return }
+        values[o.key] = n
+      } else if (o.type === 'bool') {
+        values[o.key] = raw === 'on'
       } else {
         values[o.key] = raw
       }

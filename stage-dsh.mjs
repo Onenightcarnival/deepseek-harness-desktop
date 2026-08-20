@@ -9,10 +9,18 @@
  *   node stage-dsh.mjs win32 x64        # cross-stage (adds npm --os/--cpu)
  *
  * Env:
- *   DSH_VERSION  npm version/tag of @deepseek-ai/dsh (default: latest)
+ *   DSH_VERSION  npm version/tag of @deepseek-ai/dsh. Default: use the
+ *                committed lockfile (locks/<flavor>.package-lock.json) —
+ *                deterministic and fast. Setting a version that differs from
+ *                the locked one (or DSH_STAGE_LIVE=1) switches to live npm
+ *                resolution, which can be pathologically slow/OOM-prone when
+ *                the registry graph misbehaves — see AGENTS.md.
  *   DSH_FLAVOR   preset-plugin manifest to use: "minimal" (default) reads
  *                plugins.json, anything else reads plugins-<flavor>.json
  *                (e.g. full -> plugins-full.json); missing manifest = error
+ *
+ * `node stage-dsh.mjs --update-locks` runs a live resolution and writes the
+ * result back to locks/<flavor>.package-lock.json — the dsh-upgrade step.
  */
 import { execSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -20,8 +28,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const platform = process.argv[2] ?? process.platform
-const arch = process.argv[3] ?? process.arch
+const argv = process.argv.slice(2).filter((a) => !a.startsWith('--'))
+const updateLocks = process.argv.includes('--update-locks')
+const platform = argv[0] ?? process.platform
+const arch = argv[1] ?? process.arch
 const key = `${platform}-${arch}`
 const version = process.env.DSH_VERSION ?? 'latest'
 const dir = path.join(here, 'staging', key, 'dsh')
@@ -58,15 +68,58 @@ const cross = platform !== process.platform || arch !== process.arch
 const crossFlags = cross ? [`--os=${platform}`, `--cpu=${arch}`, '--force'] : []
 const baseFlags = ['--ignore-scripts', '--no-audit', '--no-fund']
 
-// Step 1: dsh itself.
-execSync(`npm ${['install', `@deepseek-ai/dsh@${version}`, ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit' })
+// ---- install: locked by default, live only when asked ----
+// Live npm resolution of the dsh graph can explode: arborist backtracks on
+// peer ranges and a registry-side release can turn a 30s install into an
+// OOM (observed on the mac CI runners AND on linux — >10min at 2GB heap).
+// So CI installs from a committed lockfile (npm ci: no resolution, integrity
+// checked, one lock covers every platform via os/cpu-conditional entries).
+// Live mode is for upgrading dsh: it gets a bigger heap and writes the new
+// lock back with --update-locks.
+const lockPath = path.join(here, 'locks', `${flavor}.package-lock.json`)
+const wantLive = updateLocks || process.env.DSH_STAGE_LIVE === '1'
+let useLock = false
+if (!wantLive && fs.existsSync(lockPath)) {
+  const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
+  const lockedDsh = lock.packages['node_modules/@deepseek-ai/dsh']?.version
+  if (version !== 'latest' && version !== lockedDsh) {
+    console.log(`DSH_VERSION=${version} != locked ${lockedDsh} — falling back to live resolution (slow); run --update-locks to re-pin`)
+  } else {
+    useLock = true
+    const rootDeps = lock.packages[''].dependencies ?? {}
+    const lockPlugins = Object.keys(rootDeps).filter((n) => n !== '@deepseek-ai/dsh').sort()
+    if (lockPlugins.join() !== [...extraPackages].sort().join()) {
+      throw new Error(`锁文件与插件清单不一致：lock=[${lockPlugins}] manifest=[${extraPackages}]；改过 ${path.basename(pluginsFile)} 后需要跑 node stage-dsh.mjs --update-locks 重新生成 ${path.basename(lockPath)}`)
+    }
+    console.log(`installing from lock ${path.basename(lockPath)} (dsh ${lockedDsh})`)
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true, dependencies: rootDeps }, null, 2))
+    fs.copyFileSync(lockPath, path.join(dir, 'package-lock.json'))
+    execSync(`npm ${['ci', ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit' })
+  }
+} else if (!wantLive) {
+  console.log(`no lockfile at ${lockPath} — live resolution (slow); run --update-locks to create it`)
+}
 
-// Step 2: preset plugin packages. NOTE: a plugin whose peer ranges target an
-// older dsh release than the bundled one makes this step extremely slow
-// (npm backtracks trying to satisfy stale peers) and would not work at
-// runtime anyway — pick plugin versions built for the bundled dsh release.
+if (!useLock) {
+  // bigger heap for arborist's backtracking; still no guarantee — prefer locks
+  const liveEnv = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=6144`.trim() }
+  // Step 1: dsh itself.
+  execSync(`npm ${['install', `@deepseek-ai/dsh@${version}`, ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit', env: liveEnv })
+  // Step 2: preset plugin packages. NOTE: a plugin whose peer ranges target an
+  // older dsh release than the bundled one makes this step extremely slow
+  // (npm backtracks trying to satisfy stale peers) and would not work at
+  // runtime anyway — pick plugin versions built for the bundled dsh release.
+  if (extraPackages.length > 0) {
+    execSync(`npm ${['install', ...extraPackages, ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit', env: liveEnv })
+  }
+  if (updateLocks) {
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true })
+    fs.copyFileSync(path.join(dir, 'package-lock.json'), lockPath)
+    console.log(`lock written: ${lockPath}`)
+  }
+}
+
 if (extraPackages.length > 0) {
-  execSync(`npm ${['install', ...extraPackages, ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit' })
 
   // Register the preset plugins as dependencies of the bundled dsh app.
   // At boot dsh symlinks its app's dependency closure into

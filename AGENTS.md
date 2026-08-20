@@ -90,6 +90,8 @@ node stage-dsh.mjs                                    # linux 上实跑 staging�
                                                       #   是预期的，脚本已按平台跳过该断言）
 DSH_FLAVOR=full node stage-dsh.mjs                    # full flavor：验证预置插件清单能装、
                                                       #   peer 与内置 dsh 匹配、preset-plugins.json 生成
+node stage-dsh.mjs --update-locks                     # 升级 dsh / 改预置清单后：实时解析并把
+                                                      #   locks/<flavor>.package-lock.json 写回（两个 flavor 各跑一次）
 node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
   web --patch desktop-patch.yml --dump-config         # 验证 patch 覆盖层能正确并入组合树
 ```
@@ -125,6 +127,7 @@ origin，然后断言"外网目标进了桩、loopback 与内网名字没进桩�
 - **代理配置必须"清场后重写"，不能只做叠加**。公司 Windows 镜像常预置一个没有例外列表的机器级 `HTTP_PROXY`，`{...process.env}` 原样继承就等于把内网流量也发给代理（正是 Python 那边必须 `httpx(trust_env=False)` 的原因）。所以"不使用代理"要主动删变量而不是"什么都不加"，且**删除必须大小写不敏感**——Windows 上展开出的真实键常是 `Http_Proxy`，`delete env.HTTP_PROXY` 删不掉（与 `prependEnvPath` 同一个坑）。`~/.npmrc` 里的 `proxy=` 不在环境变量里，只能靠显式 `npm_config_proxy` 压过去。
 - **系统代理不是一个 URL，是一个按 URL 逐次求值的函数**。把 `resolveProxy` 对某一个地址（旧代码用 npm registry）的结果当成全局 `HTTP_PROXY` 写死，就丢掉了 PAC 与 Windows 例外列表，内网必挂——这是"选了系统代理反而连不上内网"的根因。要么逐 URL 问（现在转发器的做法），要么老老实实把 OS 例外列表也读进来，没有第三条路。
 - **`NO_PROXY` 的通配符语义各家不一样**（undici / npm / git / Python 对 `*.corp.com`、`10.*`、CIDR 的解释都不同），所以例外匹配收在 `isBypassed` 一处、`NO_PROXY` 只留 loopback。往子进程发复杂 `NO_PROXY` 一定会在某个栈上失灵。
+- **staging 不做实时 npm 解析，装锁文件**。`npm install @deepseek-ai/dsh@latest` 的依赖图会让 arborist 的 peer 回溯偶发指数爆炸——注册表侧一次无关发版就能把 30 秒的安装变成 mac runner 上的 OOM（2GB 堆，SIGABRT；linux 上同样复现，10 分钟不出结果）。所以 stage-dsh.mjs 默认 `npm ci` 装 `locks/<flavor>.package-lock.json`（一份锁经 os/cpu 条件项覆盖全平台，带完整性校验，20-30 秒）；升级 dsh 或改预置清单后用 `--update-locks` 实时解析一次写回锁（该路径已带 6GB 堆，但不保证能算完——锁才是常态）。锁根依赖与插件清单不一致时 stage 直接报错提示重新生成。
 - **CLI 启动器里的转发器端口只在应用运行期间有效**（每次启动重写 shim）。应用关掉后再用 `userData/bin` 里的 `dsh`/`pnpm`，代理变量指向的端口已经没人监听——shim 里的清场部分仍然有效，代理部分不再有效。
 - **升级 Electron 版本前**确认其内置 Node 满足 dsh 的 engines（当前 `^22.19 || >=24`）；`runtime.js` 的 `satisfiesNode` 在应用内内核升级前也做同样检查，升级失败有自动隔离回退（`.broken-` 目录后缀）。
 

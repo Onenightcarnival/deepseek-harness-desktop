@@ -44,7 +44,13 @@ Windows/macOS runner 各自原生构建，产物连同 SHA256SUMS.txt 发布到
 GitHub Release。**版本号以标签为准**：CI 会把 `vX.Y.Z` 写进
 `package.json` 再构建，发版只需打标签，无需手动改文件（仓库里的
 `version` 字段仅作为手动触发构建时的默认值）。
-升级内置的 dsh 只需等 npm 出新版后重新打标签（或用 `DSH_VERSION` 锁定）。
+
+**内置 dsh 的版本以 `locks/` 下的锁文件为准**（构建用 `npm ci` 从锁
+安装：确定、快、跨平台一份锁通吃；实时解析 dsh 的依赖图在 npm 侧
+偶发指数级回溯，CI 上直接 OOM）。升级内置 dsh：本地跑
+`node stage-dsh.mjs --update-locks` 和
+`DSH_FLAVOR=full node stage-dsh.mjs --update-locks`
+重新生成两份锁，提交后打标签。改了预置插件清单同样要重新生成 full 锁。
 
 每个平台出两种安装包（CI matrix 的 flavor 维度）：**常规版**只含官方
 dsh；文件名带 **`-full`** 的版本额外预置

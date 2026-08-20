@@ -17,11 +17,16 @@ runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目�
                     zip 技能包内容识别（collectSkills）、代理环境变量清场与注入
                     （PROXY_ENV_KEYS/scrubProxyEnv/applyProxyEnv）与例外列表匹配
                     （bypassPatterns/isBypassed）—— 刻意抽出来以便普通 node 直接单测
-win-spawn-shim.js   经 --require 预载进每个 Node 子进程（dsh 服务/CLI/pnpm）：win32 上给
-                    child_process 六个入口默认补 windowsHide:true（含重建
-                    promisify.custom），治 GUI 进程的 pwsh/cmd/git 子进程闪黑窗；
-                    显式 windowsHide:false 保留，非 Windows 空操作。asar 里普通
-                    Node 读不到，启动时拷到 userData 再 --require（见坑清单）
+win-spawn-shim.js   预载进整棵 Node 子进程树（argv --require 只到直接子进程；另经
+                    NODE_OPTIONS 传给全部后代——pwsh 可能由孙进程 spawn，且 GUI
+                    子进程不继承父进程的控制台附着，每个无控制台的后代都要自己
+                    加载 shim）：win32 上给 child_process 六个入口默认补
+                    windowsHide:true（含重建 promisify.custom），治 pwsh/cmd/git
+                    闪黑窗；DSH_DESKTOP_CONSOLE_HOST=1 时再配隐形宿主控制台
+                    （setupHiddenConsole，治沙箱 CreateProcessAsUserW 路径，结果
+                    打 stderr 进 dsh-server.log）。显式 windowsHide:false 保留，
+                    非 Windows 空操作。asar 里普通 Node 读不到，启动时拷到
+                    userData 再注入（见坑清单）
 proxy-forward.js    进程内转发代理（无 Electron 依赖，resolveSystem 由 main.js 注入）：
                     createForwarder 起 127.0.0.1 随机端口，处理 CONNECT 隧道与明文
                     HTTP，每条连接现问 routeFor 决定直连/上游代理。所有子进程只拿到

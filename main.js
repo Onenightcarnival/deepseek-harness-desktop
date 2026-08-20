@@ -127,6 +127,23 @@ function nodePreloadArgs() {
 }
 
 /**
+ * Propagate the shim to EVERY descendant Node process via NODE_OPTIONS —
+ * argv --require only reaches the direct child, but pwsh can be spawned by
+ * a grandchild (background job runners, stdio MCP servers), which flashes a
+ * console the argv injection cannot see. NODE_OPTIONS is inherited down the
+ * whole tree; the path is quoted so the userData path's spaces survive.
+ * Appends after any user-set NODE_OPTIONS. Mutates and returns env.
+ */
+function withNodePreloadEnv(env) {
+  const args = nodePreloadArgs()
+  if (args.length === 2) {
+    const inject = `--require "${args[1]}"`
+    env.NODE_OPTIONS = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ${inject}` : inject
+  }
+  return env
+}
+
+/**
  * Check npm for a newer @deepseek-ai/dsh core than the active runtime, and
  * offer an in-place upgrade (installed with the bundled pnpm into
  * userData/runtimes/<version>; a relaunch activates it).
@@ -213,7 +230,7 @@ async function installCoreRuntime(version) {
     } catch { /* minimal flavor */ }
     const child = spawn(process.execPath, [...nodePreloadArgs(), pnpmCjs, 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
       cwd: dir,
-      env: withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }),
+      env: withNodePreloadEnv(withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' })),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -1032,6 +1049,7 @@ async function startServer() {
       prependEnvPath(env, binDir, path.delimiter)
     } catch { /* CLI launchers are best-effort */ }
     withProxyEnv(env)
+    withNodePreloadEnv(env)
     // Ask win-spawn-shim.js to give the server an invisible host console:
     // the Windows sandbox spawns pwsh via CreateProcessAsUserW with no
     // console flag (hidden-console children die under the restricted
@@ -1179,7 +1197,7 @@ async function runDshCli(args) {
   return new Promise((resolve) => {
     const binDir = writeCliLaunchers()
     const child = spawn(process.execPath, ['--expose-internals', ...nodePreloadArgs(), dshEntry(), ...args], {
-      env: prependEnvPath(withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }), binDir, path.delimiter),
+      env: prependEnvPath(withNodePreloadEnv(withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' })), binDir, path.delimiter),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })

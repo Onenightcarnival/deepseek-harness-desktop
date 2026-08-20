@@ -115,8 +115,11 @@ function setupHiddenConsole(deps = {}) {
       }
       return null
     })
+    // Outcome lines land in dsh-server.log via the server's stderr — the
+    // only remote-debuggable signal for why sandboxed pwsh still flashes.
+    const log = deps.log || ((msg) => { try { process.stderr.write(`[dsh-desktop] hidden console host: ${msg}\n`) } catch { /* stderr gone */ } })
     const koffi = loadKoffi()
-    if (!koffi) return false
+    if (!koffi) { log('koffi unresolvable — sandboxed pwsh may flash a console'); return false }
     const kernel32 = koffi.load('kernel32.dll')
     const GetConsoleCP = kernel32.func('uint32_t __stdcall GetConsoleCP()')
     const AttachConsole = kernel32.func('int __stdcall AttachConsole(uint32_t dwProcessId)')
@@ -140,6 +143,7 @@ function setupHiddenConsole(deps = {}) {
       if (attached || tries >= 40) { // give up after ~4s
         clearInt(timer)
         try { helper.kill() } catch { /* already gone */ }
+        log(attached ? 'attached' : 'attach failed after 40 tries — sandboxed pwsh may flash a console')
       }
     }, 100)
     if (timer && timer.unref) timer.unref()

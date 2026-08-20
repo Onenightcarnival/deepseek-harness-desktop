@@ -123,7 +123,29 @@ function setupHiddenConsole(deps = {}) {
     const kernel32 = koffi.load('kernel32.dll')
     const GetConsoleCP = kernel32.func('uint32_t __stdcall GetConsoleCP()')
     const AttachConsole = kernel32.func('int __stdcall AttachConsole(uint32_t dwProcessId)')
+    const GetStdHandle = kernel32.func('void* __stdcall GetStdHandle(uint32_t nStdHandle)')
+    const SetStdHandle = kernel32.func('int __stdcall SetStdHandle(uint32_t nStdHandle, void* hHandle)')
     if (GetConsoleCP() !== 0) return false // already have a console — hands off
+    // Attaching rewrites the process's std-handle table to console handles.
+    // The sandbox runner reads GetStdHandle FRESH to pass the caller's pipes
+    // through to pwsh — restore the exact values or tool output would leak
+    // into the invisible console. (Node's own stdio is unaffected: libuv
+    // cached its handles at startup.)
+    const STD = [0xFFFFFFF6, 0xFFFFFFF5, 0xFFFFFFF4] // -10 stdin, -11 stdout, -12 stderr
+    const saved = STD.map((h) => { try { return GetStdHandle(h) } catch { return null } })
+    const restoreStd = () => { STD.forEach((h, i) => { try { if (saved[i] !== null) SetStdHandle(h, saved[i]) } catch { /* keep rest */ } }) }
+    // FAST PATH — synchronous, and the one that actually matters for the
+    // sandbox: pwsh is launched by a TRANSIENT runner (node runner.js -- pwsh…)
+    // that calls CreateProcessAsUserW immediately after load, so an async
+    // helper always loses the race. The runner's parent is the dsh server,
+    // which already carries the invisible console — inherit it in one call.
+    try {
+      if (AttachConsole(0xFFFFFFFF) !== 0) { // ATTACH_PARENT_PROCESS
+        restoreStd()
+        log('attached to parent console')
+        return true
+      }
+    } catch { /* no parent console — fall through to the helper */ }
     const spawnHelper = deps.spawnHelper || (() => require('child_process').spawn(
       env.ComSpec || 'cmd.exe', ['/d', '/q', '/c', 'pause'],
       // stdin is a pipe we never write: `pause` blocks forever, keeping the
@@ -143,7 +165,8 @@ function setupHiddenConsole(deps = {}) {
       if (attached || tries >= 40) { // give up after ~4s
         clearInt(timer)
         try { helper.kill() } catch { /* already gone */ }
-        log(attached ? 'attached' : 'attach failed after 40 tries — sandboxed pwsh may flash a console')
+        if (attached) restoreStd()
+        log(attached ? 'attached via helper' : 'attach failed after 40 tries — sandboxed pwsh may flash a console')
       }
     }, 100)
     if (timer && timer.unref) timer.unref()

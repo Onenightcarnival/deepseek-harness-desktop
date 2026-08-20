@@ -137,7 +137,13 @@ function nodePreloadArgs() {
 function withNodePreloadEnv(env) {
   const args = nodePreloadArgs()
   if (args.length === 2) {
-    const inject = `--require "${args[1]}"`
+    // FORWARD slashes: inside NODE_OPTIONS quotes Node treats backslash as
+    // an escape character, so a native Windows path silently loses its
+    // separators ("…\DeepSeek Harness\win-spawn-shim.js" became
+    // "…Harnesswin-spawn-shim.js") and the fatal --require failure killed
+    // every Node child — the app would not start. Node accepts / in
+    // require paths on Windows; quotes keep the space intact.
+    const inject = `--require "${args[1].replace(/\\/g, '/')}"`
     env.NODE_OPTIONS = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ${inject}` : inject
   }
   return env
@@ -727,6 +733,15 @@ const repairedOverlays = new Set()
 function applyBootErrorFix(errText) {
   try {
     let fixed = false
+    // A broken shim injection is fatal to EVERY Node child (--require
+    // failure aborts the process before dsh runs). If the boot error blames
+    // the shim itself, disable the injection entirely and retry — losing
+    // console-hiding beats not starting at all.
+    if (/win-spawn-shim/i.test(errText) && spawnShimPath !== '') {
+      console.error('boot failed on win-spawn-shim injection — disabling it for this run')
+      spawnShimPath = '' // nodePreloadArgs/withNodePreloadEnv become no-ops
+      return true
+    }
     const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
     const localNm = path.join(profileDir, 'node_modules')
     const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')

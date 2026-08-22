@@ -235,7 +235,7 @@ async function installCoreRuntime(version) {
         for (const [name, v] of Object.entries(group || {})) presetSpecs.push(`${name}@${v}`)
       }
     } catch { /* minimal flavor */ }
-    const child = spawn(process.execPath, [...nodePreloadArgs(), pnpmCjs, 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
+    const child = spawn(process.execPath, [...nodePreloadArgs(), pnpmCjs, '--config.minimum-release-age=0', 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
       cwd: dir,
       env: withNodePreloadEnv(withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' })),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -552,8 +552,16 @@ function writeCliLaunchers() {
     fs.writeFileSync(path.join(binDir, 'node.cmd'),
       `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n${winProxy}"${exe}" %*\r\n`)
     if (fs.existsSync(pnpmCjs)) {
+      // --config.minimum-release-age=0: the bundled pnpm defaults this
+      // supply-chain gate to 24h; the dsh ecosystem ships daily rc releases,
+      // so a fresh plugin/runtime is ALWAYS "too young" — and pnpm's remove
+      // path crashes outright on the resulting violations
+      // (ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED, no handler wired).
+      // env/npmrc channels are ignored for this key (verified) — the CLI
+      // flag before the subcommand is the one channel that works, and dsh
+      // resolves pnpm via PATH, i.e. through this shim.
       fs.writeFileSync(path.join(binDir, 'pnpm.cmd'),
-        `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n${winProxy}"${exe}" "${pnpmCjs}" %*\r\n`)
+        `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n${winProxy}"${exe}" "${pnpmCjs}" --config.minimum-release-age=0 %*\r\n`)
     }
   } else {
     const shProxy = proxyShimLines(false).join('\n') + '\n'
@@ -562,8 +570,9 @@ function writeCliLaunchers() {
     fs.writeFileSync(path.join(binDir, 'node'),
       `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\n${shProxy}exec "${exe}" "$@"\n`, { mode: 0o755 })
     if (fs.existsSync(pnpmCjs)) {
+      // see the .cmd twin above for why --config.minimum-release-age=0
       fs.writeFileSync(path.join(binDir, 'pnpm'),
-        `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\n${shProxy}exec "${exe}" "${pnpmCjs}" "$@"\n`, { mode: 0o755 })
+        `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\n${shProxy}exec "${exe}" "${pnpmCjs}" --config.minimum-release-age=0 "$@"\n`, { mode: 0o755 })
     }
   }
   return binDir
@@ -748,6 +757,7 @@ function writeStubPackage(localNm, name) {
  * something was repaired — the caller then retries the boot.
  */
 const repairedOverlays = new Set()
+const repairedCredentials = new Set()
 function applyBootErrorFix(errText) {
   try {
     let fixed = false
@@ -759,6 +769,33 @@ function applyBootErrorFix(errText) {
       console.error('boot failed on win-spawn-shim injection — disabling it for this run')
       spawnShimPath = '' // nodePreloadArgs/withNodePreloadEnv become no-ops
       return true
+    }
+    // A NEWER dsh forward-migrates ~/.dsh/.credentials.yaml (its `version`
+    // became a number); this core's parser then refuses to boot: `the value
+    // for "version" in <path> must be a string`. Step 1: quote the number in
+    // place (cheap; keeps logins if this parser accepts the schema). If boot
+    // still fails on the same file, step 2 quarantines it — the user
+    // re-logs-in instead of owning an app that will not start. The retry
+    // loop drives both steps in order.
+    const credM = /the value for "version" in ([^\n]+?) must be a string/.exec(errText)
+    if (credM && credM[1].includes('.credentials')) {
+      const file = credM[1].trim()
+      try {
+        if (!repairedCredentials.has(file)) {
+          repairedCredentials.add(file)
+          const raw = fs.readFileSync(file, 'utf8')
+          const coerced = raw.replace(/^(\s*version:\s*)([0-9]+(?:\.[0-9]+)*)\s*$/m, '$1"$2"')
+          if (coerced !== raw) {
+            fs.writeFileSync(`${file}.bak`, raw)
+            fs.writeFileSync(file, coerced)
+            console.log(`boot heal: quoted numeric version in ${file} (backup .bak)`)
+            return true
+          }
+        }
+        fs.renameSync(file, `${file}.broken-${Date.now()}`)
+        console.log(`boot heal: quarantined ${file} — 凭据需重新登录`)
+        return true
+      } catch (err2) { console.error('credentials heal failed:', err2) }
     }
     const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
     const localNm = path.join(profileDir, 'node_modules')

@@ -161,3 +161,5 @@ origin，然后断言"外网目标进了桩、loopback 与内网名字没进桩�
 ## 风格约束
 
 主进程是无构建步骤的平凡 CJS，唯二依赖 electron 和 electron-builder（devDependencies），保持这样——不引入打包器、框架或运行时依赖。凡是能写成纯函数的逻辑放 `runtime.js` 这类无 Electron 依赖的模块。用户可见文案用中文。发版：改 `package.json` 的 `version` → 推 `v*` 标签；锁定内核版本用 stage 步骤的 `DSH_VERSION` 环境变量。
+- **pnpm 11.22 起 `minimum-release-age` 默认 1440 分钟（供应链新鲜度门禁）**。dsh 生态天天发 rc 包，新发布的插件/内核永远"太年轻"：add 路径软处理（自动写 minimumReleaseAgeExclude），**remove 路径没接违规回调直接崩**（ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED），内核升级（pnpm add 新内核）同样会撞。**env（npm_config_*）和内置 pnpmrc 对这个键都不生效（实测），唯一有效通道是子命令前的 `--config.minimum-release-age=0` 旗标**——注入点：userData/bin 的 pnpm shim（dsh 经 PATH 找 pnpm，服务/CLI/终端全走它）与 installCoreRuntime 的直接 spawn。严格模式复现法：`--config.minimum-release-age-strict=true` 装一个 24h 内发布的包。
+- **新内核会前向迁移 `~/.dsh/.credentials.yaml`（version 变数字），旧内核解析器要求字符串，降级方向必砖**（"the value for \"version\" in … must be a string"，拒绝启动）。applyBootErrorFix 两步自愈：先把数字加引号原地改写（留 .bak，能保住登录态就保），同文件再失败则整体隔离（.broken-*，用户重新登录）。注意该自愈只保护带此逻辑的版本——降级到更老的版本仍需手工处理（引号或删文件）。

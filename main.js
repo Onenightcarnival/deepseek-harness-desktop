@@ -1000,14 +1000,27 @@ function syncPresetPlugins() {
     const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
     const resolvable = (name) => pkgIntactAt(localNm, name) || pkgIntactAt(runtimeNm, name)
 
-    // Broken leftovers of preset packages in the profile's own
-    // node_modules shadow the healed closure and crash boot — clear them.
+    // Leftovers of preset packages in the profile's own node_modules shadow
+    // the healed closure: broken ones crash boot, and STALE-VERSION ones
+    // silently keep serving the old plugin after an overwrite install
+    // (better-sidebar stayed at 0.13.1 for exactly this reason). Clear both —
+    // resolution then falls back to the closure link onto the bundled copy.
     for (const name of new Set([...Object.keys(manifest), ...managed])) {
       const localDir = path.join(localNm, ...name.split('/'))
       try {
-        if (fs.existsSync(localDir) && !pkgIntactAt(localNm, name)) {
+        if (!fs.existsSync(localDir)) continue
+        if (!pkgIntactAt(localNm, name)) {
           fs.rmSync(localDir, { recursive: true, force: true })
           console.log(`cleared broken leftover of ${name} from profile node_modules`)
+          continue
+        }
+        const want = manifest[name]
+        if (!want) continue
+        let got = null
+        try { got = JSON.parse(fs.readFileSync(path.join(localDir, 'package.json'), 'utf8')).version } catch { /* unreadable = broken-ish, leave to pkgIntactAt */ }
+        if (got && got !== want) {
+          fs.rmSync(localDir, { recursive: true, force: true })
+          console.log(`cleared stale ${name}@${got} from profile node_modules (preset is ${want})`)
         }
       } catch { /* best-effort */ }
     }
@@ -1040,13 +1053,21 @@ function syncPresetPlugins() {
         changed = true
       }
     }
-    // Ensure everything we want is present. ??= keeps a version the user
-    // pinned themselves via a real profile install.
+    // Ensure everything we want is present AT THE MANIFEST VERSION. Presets
+    // are version-owned by the installed build (declarative sync) — the old
+    // `??=` kept whatever version was seeded first, so an overwrite install
+    // never moved the profile pin forward and the UI stayed on the old
+    // plugin. A user preferring another version should use the minimal build
+    // and install the plugin themselves.
     for (const name of desired) {
-      if (!pkg.dsh.profile.bundles.includes(name) || !pkg.dependencies[name]) {
-        pkg.dependencies[name] ??= manifest[name]
-        if (!pkg.dsh.profile.bundles.includes(name)) pkg.dsh.profile.bundles.push(name)
-        console.log(`preset sync: applied ${name}`)
+      if (pkg.dependencies[name] !== manifest[name]) {
+        if (pkg.dependencies[name]) console.log(`preset sync: ${name} ${pkg.dependencies[name]} -> ${manifest[name]}`)
+        else console.log(`preset sync: applied ${name}`)
+        pkg.dependencies[name] = manifest[name]
+        changed = true
+      }
+      if (!pkg.dsh.profile.bundles.includes(name)) {
+        pkg.dsh.profile.bundles.push(name)
         changed = true
       }
     }

@@ -48,9 +48,10 @@ GitHub Release。**版本号以标签为准**：CI 会把 `vX.Y.Z` 写进
 **内置 dsh 的版本以 `locks/` 下的锁文件为准**（构建用 `npm ci` 从锁
 安装：确定、快、跨平台一份锁通吃；实时解析 dsh 的依赖图在 npm 侧
 偶发指数级回溯，CI 上直接 OOM）。升级内置 dsh：本地跑
-`node stage-dsh.mjs --update-locks` 和
-`DSH_FLAVOR=full node stage-dsh.mjs --update-locks`
-重新生成两份锁，提交后打标签。改了预置插件清单同样要重新生成 full 锁。
+`node update-locks.mjs <dsh版本> ["插件@版本"...]`
+重新生成两份锁（不做实时 npm 解析——那条路会指数回溯，脚本把上一份
+锁整体平移到目标版本），跑一遍 staging 冒烟后提交、打标签。改了预置
+插件清单同样要重新生成锁。
 
 每个平台出两种安装包（CI matrix 的 flavor 维度）：**常规版**只含官方
 dsh；文件名带 **`-full`** 的版本额外预置

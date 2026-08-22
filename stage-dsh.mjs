@@ -94,7 +94,12 @@ if (!wantLive && fs.existsSync(lockPath)) {
     console.log(`installing from lock ${path.basename(lockPath)} (dsh ${lockedDsh})`)
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true, dependencies: rootDeps }, null, 2))
     fs.copyFileSync(lockPath, path.join(dir, 'package-lock.json'))
-    execSync(`npm ${['ci', ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit' })
+    // --force: npm ci re-validates peer ranges even though the lock already
+    // fixed every version. A preset plugin lagging dsh by one minor (e.g.
+    // better-sidebar peering the previous rc while the ecosystem catches up)
+    // would refuse to install; the lock is the decision record and the
+    // staging smoke run is the real compatibility check, so ci just installs.
+    execSync(`npm ${['ci', '--force', ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit' })
   }
 } else if (!wantLive) {
   console.log(`no lockfile at ${lockPath} — live resolution (slow); run --update-locks to create it`)

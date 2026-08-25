@@ -98,13 +98,21 @@ for (const [k, v] of [...Object.entries(lock.packages)]) {
   for (const d of Object.keys({ ...v.dependencies, ...v.peerDependencies })) await ensure(d)
 }
 
-// Pass 3: widen preset-plugin peers still pinned to the PREVIOUS release so
-// the lock is self-consistent (npm ci validates peers even with a lock).
+// Pass 3: widen lagging peers so the lock is self-consistent (npm ci
+// validates peers even with a lock). A lagging peer is any peer that the
+// lock resolves to the target dsh version while the declaring package's
+// range doesn't mention it — plugins routinely pin one or two rc's behind
+// the core (e.g. ^0.1.0-rc.8 while core is 0.1.1-rc.2). Checked on EVERY
+// lock entry, not just the preset plugins: transitive plugin deps lag too
+// (better-sidebar's optional better-locale peer did).
 let widened = 0
-for (const name of Object.keys(pluginBumps)) {
-  const entry = lock.packages[`node_modules/${name}`]
+for (const entry of Object.values(lock.packages)) {
   for (const [n, r] of Object.entries(entry?.peerDependencies ?? {})) {
-    if (r === `^${prevDsh}`) { entry.peerDependencies[n] = `^${prevDsh} || ^${target}`; widened++ }
+    const resolved = lock.packages[`node_modules/${n}`]
+    if (resolved?.version === target && !r.includes(target)) {
+      entry.peerDependencies[n] = `${r} || ^${target}`
+      widened++
+    }
   }
 }
 

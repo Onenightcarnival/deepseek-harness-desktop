@@ -1,7 +1,7 @@
 # DeepSeek Harness Desktop（非官方打包）
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的
-桌面安装包：Windows exe 和 macOS dmg。本仓库只包含打包用的 Electron 壳和
+桌面安装包：Windows exe / 免安装 zip 和 macOS dmg。本仓库只包含打包用的 Electron 壳和
 CI 配置，不包含上游源码——构建时直接安装 npm 发布版 `@deepseek-ai/dsh`。
 
 应用启动时用 Electron 内置 Node（加 `--expose-internals`）在本机
@@ -65,6 +65,15 @@ dsh；文件名带 **`-full`** 的版本额外预置
 皮肤和宠物类插件暂不预置（上游尚不稳定），需要的用户可自行安装。两种版本共享 `~/.dsh`
 数据，可互相覆盖安装切换：换到常规版时预置插件自动停用，换回
 full 版自动恢复。
+
+Windows 除 NSIS 安装包外另出一个**免安装 zip**（两种 flavor 都有）：
+解压到任意目录后直接运行 `DeepSeek Harness.exe`，无需管理员权限、
+不写注册表。只在解压时慢这一次，之后每次启动与安装版一样快（早期
+试过的 portable 单 exe 每次启动都要把几百 MB 自解压到临时目录再过
+一遍杀软扫描，已弃用）。数据同样在用户目录（`%APPDATA%` 与
+`~/.dsh`），与安装版/命令行版通用；应用目录可整体移动，CLI 启动器
+每次启动自动重写，不会指向旧路径。未签名，首次运行同样有
+SmartScreen 提示。
 
 ## 预置 / 增删插件
 

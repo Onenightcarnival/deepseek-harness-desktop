@@ -58,6 +58,7 @@ jobs:
           EXTRA=()
           if [ "${{ matrix.flavor }}" = "full" ]; then
             EXTRA+=('-c.nsis.artifactName=DeepSeek-Harness-Setup-${version}-win-${arch}-full.${ext}')
+            EXTRA+=('-c.win.artifactName=DeepSeek-Harness-${version}-win-${arch}-full.${ext}')
             EXTRA+=('-c.mac.artifactName=DeepSeek-Harness-${version}-mac-${arch}-full.${ext}')
           fi
           npx electron-builder ${{ matrix.args }} --publish never "${EXTRA[@]}"
@@ -67,6 +68,7 @@ jobs:
           name: desktop-${{ matrix.os }}-${{ matrix.flavor }}
           path: |
             dist/*.exe
+            dist/*.zip
             dist/*.dmg
           if-no-files-found: error
 
@@ -97,6 +99,10 @@ jobs:
             - 文件名带 `-full`：额外预置三个生产力插件——任务看板、SSH 远程
               连接（dsh-web-ui）与 dsh-better-sidebar 工作台（文件管理、
               终端、Git 面板等）。
+
+            Windows 另有免安装 zip：解压到任意目录后运行
+            `DeepSeek Harness.exe`（只解压这一次，之后启动速度与安装版
+            相同；数据仍在用户目录，与安装版/命令行版通用）。
 
             安装包未做代码签名：
             - Windows 首次运行如弹出 SmartScreen，点「更多信息 → 仍要运行」。

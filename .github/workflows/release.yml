@@ -63,13 +63,21 @@ jobs:
           fi
           npx electron-builder ${{ matrix.args }} --publish never "${EXTRA[@]}"
 
+      # Windows 的 exe 与免安装 zip 分开上传：单个 artifact 下载包不超过
+      # 200MB，不会出现 exe+zip 打在一起近 400MB 的下载体验。
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}-${{ matrix.flavor }}
           path: |
             dist/*.exe
-            dist/*.zip
             dist/*.dmg
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: desktop-${{ matrix.os }}-${{ matrix.flavor }}-zip
+          path: dist/*.zip
           if-no-files-found: error
 
   release:

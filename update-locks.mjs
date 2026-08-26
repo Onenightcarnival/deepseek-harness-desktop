@@ -70,60 +70,120 @@ for (const [key, entry] of Object.entries(lock.packages)) {
     version: want, resolved: v.dist.tarball, integrity: v.dist.integrity,
   })
   if (v.dependencies) entry.dependencies = v.dependencies; else delete entry.dependencies
+  if (v.optionalDependencies) entry.optionalDependencies = v.optionalDependencies; else delete entry.optionalDependencies
   if (v.peerDependencies) entry.peerDependencies = v.peerDependencies; else delete entry.peerDependencies
+  if (v.peerDependenciesMeta) entry.peerDependenciesMeta = v.peerDependenciesMeta; else delete entry.peerDependenciesMeta
   if (v.engines) entry.engines = v.engines
   bumped++
 }
 
-// Pass 2: ensure every referenced name (dep or peer) has a tree entry.
+// Pass 2: ensure every referenced name (dep or peer) has a tree entry —
+// including a preset plugin newly ADDED to the set (nothing references it
+// yet; without the explicit seed below it would never get an entry).
+// OPTIONAL peers are NOT pulled in: npm doesn't auto-install them, and
+// following them explodes (mongodb's kerberos/aws integrations, b4a's
+// react-native — one hop dragged in 395 packages once). Optional deps ARE
+// pulled: npm installs those by default.
 const have = new Set(Object.keys(lock.packages).map((k) => k.replace(/^.*node_modules\//, '')))
 const added = []
-async function ensure(name) {
+// npm's own semver, resolved out of the npm installation next to the running
+// node — a new entry must be picked BY THE REFERRER'S RANGE (mongodb ^6 must
+// not become latest 7.x; npm ci validates every edge and rejects that).
+const { createRequire } = await import('node:module')
+const npmDir = path.resolve(path.dirname(process.execPath), '../lib/node_modules/npm')
+const semver = createRequire(path.join(npmDir, 'index.js'))('semver')
+const requiredRefs = (v) => Object.entries({
+  ...v.dependencies,
+  ...v.optionalDependencies,
+  ...Object.fromEntries(Object.entries(v.peerDependencies ?? {}).filter(([n]) => !v.peerDependenciesMeta?.[n]?.optional)),
+})
+async function ensure(name, range) {
   if (!name || have.has(name)) return
   const doc = await reg(name)
-  const version = doc.versions[target] ? target : doc['dist-tags'].latest
+  const version = doc.versions[range] ? range // exact pin (plugin seeds)
+    : range && semver.satisfies(target, range) ? target // lockstep names first
+    : (range && semver.maxSatisfying(Object.keys(doc.versions), range)) ?? doc['dist-tags'].latest
   const v = doc.versions[version]
+  if (!v) throw new Error(`${name}@${version} 不在 registry`)
   lock.packages[`node_modules/${name}`] = {
     version, resolved: v.dist.tarball, integrity: v.dist.integrity,
     ...(v.dependencies ? { dependencies: v.dependencies } : {}),
+    ...(v.optionalDependencies ? { optionalDependencies: v.optionalDependencies } : {}),
     ...(v.peerDependencies ? { peerDependencies: v.peerDependencies } : {}),
+    ...(v.peerDependenciesMeta ? { peerDependenciesMeta: v.peerDependenciesMeta } : {}),
     ...(v.engines ? { engines: v.engines } : {}),
   }
   have.add(name)
   added.push(`${name}@${version}`)
-  for (const d of Object.keys({ ...v.dependencies, ...v.peerDependencies })) await ensure(d)
+  for (const [d, r] of requiredRefs(v)) await ensure(d, r)
 }
+for (const [n, v] of Object.entries(pluginBumps)) await ensure(n, v)
 for (const [k, v] of [...Object.entries(lock.packages)]) {
   if (!k) continue
-  for (const d of Object.keys({ ...v.dependencies, ...v.peerDependencies })) await ensure(d)
+  for (const [d, r] of requiredRefs(v)) await ensure(d, r)
 }
 
-// Pass 3: widen lagging peers so the lock is self-consistent (npm ci
-// validates peers even with a lock). A lagging peer is any peer that the
-// lock resolves to the target dsh version while the declaring package's
-// range doesn't mention it — plugins routinely pin one or two rc's behind
-// the core (e.g. ^0.1.0-rc.8 while core is 0.1.1-rc.2). Checked on EVERY
-// lock entry, not just the preset plugins: transitive plugin deps lag too
-// (better-sidebar's optional better-locale peer did).
+// Pass 3: widen unsatisfied peers so the lock is self-consistent (npm ci
+// validates every peer edge — optional ones included, whenever the name
+// happens to be present in the tree). Two real cases: plugins pinning one
+// or two rc's behind the core (better-sidebar ^0.1.0-rc.8 while core is
+// 0.1.1-rc.2), and an optional peer of a plugin dep colliding with a
+// DIFFERENT major already in the dsh graph (mongodb's gcp-metadata ^5.2.0
+// vs google-auth-library's 8.x). Widening the recorded range is the lock's
+// decision record; real compatibility is what the staging smoke verifies.
 let widened = 0
 for (const entry of Object.values(lock.packages)) {
   for (const [n, r] of Object.entries(entry?.peerDependencies ?? {})) {
     const resolved = lock.packages[`node_modules/${n}`]
-    if (resolved?.version === target && !r.includes(target)) {
-      entry.peerDependencies[n] = `${r} || ^${target}`
+    if (resolved !== undefined && !semver.satisfies(resolved.version, r, { includePrerelease: false })) {
+      entry.peerDependencies[n] = `${r} || ${resolved.version}`
       widened++
     }
   }
 }
 
-// Root ranges + write full, then derive minimal by pruning with npm (all
-// versions pre-pinned: seconds, no backtracking).
+// Pass 4: prune entries no longer reachable from the root — this is what
+// makes removing/swapping a preset plugin work; the transplant alone would
+// leave the dropped plugin's subtree in the lock and npm ci would still
+// install it. The walk mirrors Node/npm resolution over the lock's flat
+// keys (look for `${key}/node_modules/${dep}`, then walk up), so nested
+// entries are kept exactly when their owner is kept. NOT delegated to
+// `npm install --package-lock-only`: that would rewrite peer ranges from
+// registry metadata and undo pass 3's widening.
 lock.packages[''].dependencies = {
   '@deepseek-ai/dsh': `^${target}`,
   ...Object.fromEntries(Object.entries(pluginBumps).map(([n, v]) => [n, `^${v}`])),
 }
+const reached = new Set([''])
+const resolveKey = (fromKey, dep) => {
+  let base = fromKey
+  for (;;) {
+    const cand = base === '' ? `node_modules/${dep}` : `${base}/node_modules/${dep}`
+    if (cand in lock.packages) return cand
+    if (base === '') return undefined
+    const cut = base.lastIndexOf('/node_modules/')
+    base = cut === -1 ? '' : base.slice(0, cut)
+  }
+}
+{
+  const queue = ['']
+  while (queue.length > 0) {
+    const key = queue.pop()
+    const entry = lock.packages[key]
+    const wants = { ...entry.dependencies, ...entry.optionalDependencies, ...entry.peerDependencies }
+    for (const dep of Object.keys(wants)) {
+      const found = resolveKey(key, dep)
+      if (found !== undefined && !reached.has(found)) { reached.add(found); queue.push(found) }
+    }
+  }
+}
+const pruned = Object.keys(lock.packages).filter((k) => !reached.has(k))
+for (const k of pruned) delete lock.packages[k]
 fs.writeFileSync(fullPath, JSON.stringify(lock, null, 2))
 
+// Derive minimal by pruning with npm (all versions pre-pinned: seconds, no
+// backtracking; core-only tree has no lagging peers, so npm's rewrite of
+// peer metadata is harmless here).
 const tmp = fs.mkdtempSync('/tmp/lockmin-')
 const minimal = structuredClone(lock)
 minimal.packages[''].dependencies = { '@deepseek-ai/dsh': `^${target}` }
@@ -133,6 +193,6 @@ execSync('npm install --package-lock-only --force --ignore-scripts --no-audit --
 fs.copyFileSync(path.join(tmp, 'package-lock.json'), path.join(here, 'locks', 'minimal.package-lock.json'))
 
 console.log(`bumped ${bumped} (from ${prevDsh} to ${target}); added ${added.length}: ${added.join(', ') || '-'}`)
-console.log(`widened lagging plugin peers: ${widened}`)
+console.log(`widened lagging plugin peers: ${widened}; pruned unreachable: ${pruned.length}${pruned.length > 0 ? ' (' + pruned.map((k) => k.replace(/^.*node_modules\//, '')).join(', ') + ')' : ''}`)
 console.log(drift.length ? `依赖形状变化 ${drift.length} 条（人工确认）：\n  ` + drift.join('\n  ') : '依赖形状零漂移')
 console.log('locks/ 已重写；接着跑 DSH_FLAVOR=full node stage-dsh.mjs + 无头冒烟验证')

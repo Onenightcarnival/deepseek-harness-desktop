@@ -235,7 +235,7 @@ async function installCoreRuntime(version) {
         for (const [name, v] of Object.entries(group || {})) presetSpecs.push(`${name}@${v}`)
       }
     } catch { /* minimal flavor */ }
-    const child = spawn(process.execPath, [...nodePreloadArgs(), pnpmCjs, '--config.minimum-release-age=0', 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
+    const child = spawn(process.execPath, [...nodePreloadArgs(), pnpmCjs, '--config.minimum-release-age=0', '--config.auto-install-peers=false', 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
       cwd: dir,
       env: withNodePreloadEnv(withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' })),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -557,11 +557,21 @@ function writeCliLaunchers() {
       // so a fresh plugin/runtime is ALWAYS "too young" — and pnpm's remove
       // path crashes outright on the resulting violations
       // (ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED, no handler wired).
-      // env/npmrc channels are ignored for this key (verified) — the CLI
+      // --config.auto-install-peers=false: with auto-install on (pnpm's
+      // default when the profile workspace file doesn't set it), any add
+      // re-resolves the peers of EVERY installed plugin; pnpm combines the
+      // ranges of multiple dependents by an intersection that DROPS
+      // prerelease qualifiers (^0.1.0-rc.8 ∩ * → >=0.1.0 <0.2.0), and the
+      // dsh core only publishes prereleases — so a preset with @deepseek-ai
+      // peers (better-sidebar) makes every later plugin install die with
+      // ERR_PNPM_NO_MATCHING_VERSION until the preset is removed. The peers
+      // are provided by the app closure at runtime anyway; better-sidebar's
+      // own installer scripts set the same key.
+      // env/npmrc channels are ignored for these keys (verified) — the CLI
       // flag before the subcommand is the one channel that works, and dsh
       // resolves pnpm via PATH, i.e. through this shim.
       fs.writeFileSync(path.join(binDir, 'pnpm.cmd'),
-        `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n${winProxy}"${exe}" "${pnpmCjs}" --config.minimum-release-age=0 %*\r\n`)
+        `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n${winProxy}"${exe}" "${pnpmCjs}" --config.minimum-release-age=0 --config.auto-install-peers=false %*\r\n`)
     }
   } else {
     const shProxy = proxyShimLines(false).join('\n') + '\n'
@@ -572,7 +582,7 @@ function writeCliLaunchers() {
     if (fs.existsSync(pnpmCjs)) {
       // see the .cmd twin above for why --config.minimum-release-age=0
       fs.writeFileSync(path.join(binDir, 'pnpm'),
-        `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\n${shProxy}exec "${exe}" "${pnpmCjs}" --config.minimum-release-age=0 "$@"\n`, { mode: 0o755 })
+        `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\n${shProxy}exec "${exe}" "${pnpmCjs}" --config.minimum-release-age=0 --config.auto-install-peers=false "$@"\n`, { mode: 0o755 })
     }
   }
   return binDir

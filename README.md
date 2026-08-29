@@ -55,11 +55,8 @@ GitHub Release。**版本号以标签为准**：CI 会把 `vX.Y.Z` 写进
 
 每个平台出两种安装包（CI matrix 的 flavor 维度）：**常规版**只含官方
 dsh；文件名带 **`-full`** 的版本额外预置
-三个生产力插件：任务看板
-（[dsh-web](https://github.com/zhu1090093659/dsh-web)）、
-[dsh-ssh-ops](https://www.npmjs.com/package/dsh-ssh-ops)
-运维面板（SSH 终端 / SFTP / 隧道，外加 MySQL、PostgreSQL、Redis、
-MongoDB 数据库连接面板）与
+三个生产力插件：任务看板、SSH 远程连接
+（[dsh-web](https://github.com/zhu1090093659/dsh-web)）与
 [dsh-better-sidebar](https://www.npmjs.com/package/dsh-better-sidebar)
 工作台（文件管理、编辑预览、内嵌浏览器、真实终端、Git 面板、
 后台任务），

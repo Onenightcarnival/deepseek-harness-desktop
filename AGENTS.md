@@ -50,9 +50,9 @@ afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 
 desktop-patch.yml   随包分发的插件组合覆盖层（默认空）
 plugins.json        要预置进安装包的插件 npm 包列表（默认空 = minimal flavor）
 plugins-full.json   full flavor 的预置清单：packages（任务看板/better-sidebar 工作台/
-                    dsh-ssh-ops 运维面板（SSH+数据库，替换了早期的
-                    @linxin666/dsh-ssh）三件生产力套件，播种激活；
-                    better-sidebar 自带 Git 面板，故不再单独预置 git-graph）；另支持 carry 组（只装进闭包可解析、
+                    SSH 三件生产力套件，播种激活；曾短暂换过 dsh-ssh-ops，
+                    因体验不佳回退。better-sidebar 自带 Git 面板，
+                    故不再单独预置 git-graph）；另支持 carry 组（只装进闭包可解析、
                     不激活，当前为空）。stage 按 DSH_FLAVOR 选清单并把精确版本写进
                     运行时 preset-plugins.json（{seed, carry}），main.js 每次启动按
                     seed 组做声明式同步（syncPresetPlugins）
@@ -163,4 +163,5 @@ origin，然后断言"外网目标进了桩、loopback 与内网名字没进桩�
 
 主进程是无构建步骤的平凡 CJS，唯二依赖 electron 和 electron-builder（devDependencies），保持这样——不引入打包器、框架或运行时依赖。凡是能写成纯函数的逻辑放 `runtime.js` 这类无 Electron 依赖的模块。用户可见文案用中文。发版：改 `package.json` 的 `version` → 推 `v*` 标签；锁定内核版本用 stage 步骤的 `DSH_VERSION` 环境变量。
 - **pnpm 11.22 起 `minimum-release-age` 默认 1440 分钟（供应链新鲜度门禁）**。dsh 生态天天发 rc 包，新发布的插件/内核永远"太年轻"：add 路径软处理（自动写 minimumReleaseAgeExclude），**remove 路径没接违规回调直接崩**（ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED），内核升级（pnpm add 新内核）同样会撞。**env（npm_config_*）和内置 pnpmrc 对这个键都不生效（实测），唯一有效通道是子命令前的 `--config.minimum-release-age=0` 旗标**——注入点：userData/bin 的 pnpm shim（dsh 经 PATH 找 pnpm，服务/CLI/终端全走它）与 installCoreRuntime 的直接 spawn。严格模式复现法：`--config.minimum-release-age-strict=true` 装一个 24h 内发布的包。
+- **pnpm 的 peer 自动安装会让"预置了 better-sidebar 的干净安装"装任何新插件都报 ERR_PNPM_NO_MATCHING_VERSION**（用户表现："必须先手动移除 better-sidebar 才能装别的"）。机制：profile 的 pnpm-workspace.yaml 不设 `autoInstallPeers` 时 pnpm 默认开启，任何 add 都会重解析**全部已装插件**的 peer；多个依赖方对同名 peer 的区间做交集时 pnpm **丢掉预发布限定**（`^0.1.0-rc.8 ∩ *` → `>=0.1.0 <0.2.0`），而 dsh 核心只发预发布版，交集后的区间一个版本都配不上——树里只要有一个带 @deepseek-ai peer 的插件（预置里就 better-sidebar 一个）就全灭。修法与 minimum-release-age 同通道：pnpm shim 与 installCoreRuntime 追加 `--config.auto-install-peers=false`（peer 由应用闭包在运行期提供，自动装进 profile 本来就是重复；better-sidebar 自家安装脚本也写这个键）。容器里复现要先把 profile workspace yaml 的 `autoInstallPeers` 改成 true（老 profile 可能残留 false）。
 - **新内核会前向迁移 `~/.dsh/.credentials.yaml`（version 变数字），旧内核解析器要求字符串，降级方向必砖**（"the value for \"version\" in … must be a string"，拒绝启动）。applyBootErrorFix 两步自愈：先把数字加引号原地改写（留 .bak，能保住登录态就保），同文件再失败则整体隔离（.broken-*，用户重新登录）。注意该自愈只保护带此逻辑的版本——降级到更老的版本仍需手工处理（引号或删文件）。

@@ -104,10 +104,9 @@ jobs:
 
             每个平台两种安装包：
             - 常规版：只含官方 dsh，插件自装。
-            - 文件名带 `-full`：额外预置三个生产力插件——任务看板、
-              dsh-ssh-ops 运维面板（SSH 终端/SFTP/隧道 + MySQL/PostgreSQL/
-              Redis/MongoDB 数据库连接）与 dsh-better-sidebar 工作台
-              （文件管理、终端、Git 面板等）。
+            - 文件名带 `-full`：额外预置三个生产力插件——任务看板、SSH 远程
+              连接（dsh-web）与 dsh-better-sidebar 工作台（文件管理、
+              终端、Git 面板等）。
 
             Windows 另有免安装 zip：解压到任意目录后运行
             `DeepSeek Harness.exe`（只解压这一次，之后启动速度与安装版

@@ -1,0 +1,138 @@
+/**
+ * Staging-time patch for @linxin666/dsh-ssh: keep the SSH terminal session
+ * alive across UI unmounts ("switch away and the terminal reconnects" bug).
+ *
+ * Upstream binds the session lifetime to the React component: TerminalTab's
+ * unmount cleanup closes the WebSocket, and the host closes the ssh2
+ * connection the moment the socket drops — so switching panel tabs, or any
+ * center-column rebuild by the shell (session/workspace switches), kills the
+ * SSH session. Upstream's 0.3.5 "don't close the panel on session-list
+ * churn" fix is task-board-only and does not touch this path (user-verified).
+ *
+ * The patch is CLIENT-ONLY: the WebSocket and the xterm instance move into a
+ * module-level slot on unmount (render detached, socket stays open, output
+ * keeps flowing into the live terminal buffer), and the next mount re-adopts
+ * them — reparent the xterm element, rewire status handlers, refit. Only the
+ * explicit disconnect button or a remote exit really closes the session. The
+ * host needs no change because it only tears down when the socket closes.
+ *
+ * Applied by stage-dsh.mjs to the INSTALLED package's lib/client.js (the
+ * file dsh serves at /plugins/<pkg>/client.js). Anchors are exact strings
+ * from the 0.3.5 build and THROW when they stop matching, so an upstream
+ * bump that reshapes TerminalTab fails the stage loudly instead of shipping
+ * an unpatched or half-patched bundle. Drop this file (and its call site)
+ * once upstream persists sessions itself.
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+
+const MARKER = '/* dsh-desktop ssh-terminal-keepalive */'
+
+/** Replace exactly one occurrence, or throw with the anchor's name. */
+function replaceOnce(source, anchorName, from, to) {
+  const first = source.indexOf(from)
+  if (first === -1) throw new Error(`ssh keepalive patch: anchor "${anchorName}" not found — upstream layout changed, re-derive the patch`)
+  if (source.indexOf(from, first + 1) !== -1) throw new Error(`ssh keepalive patch: anchor "${anchorName}" is not unique — re-derive the patch`)
+  return source.slice(0, first) + to + source.slice(first + from.length)
+}
+
+export function applySshKeepalivePatch(stagingDir) {
+  const file = path.join(stagingDir, 'node_modules', '@linxin666', 'dsh-ssh', 'lib', 'client.js')
+  if (!fs.existsSync(file)) return false // minimal flavor / plugin absent
+  let s = fs.readFileSync(file, 'utf8')
+  if (s.includes(MARKER)) return true // already patched (defensive; staging installs fresh)
+
+  // 1. Module-level parking slot, next to the module-level CSS guard.
+  s = replaceOnce(s, 'module slot',
+    '\t\tlet xtermCssInjected = false;',
+    `\t\tlet xtermCssInjected = false;
+\t\t${MARKER}
+\t\t/** Live session parked across component unmounts; adopted on next mount. */
+\t\tlet keptSession = null;`)
+
+  // 2. Track the CONNECTED alias (the select's alias state can drift).
+  s = replaceOnce(s, 'ref block',
+    '\t\t\tconst dataSubRef = (0, react.useRef)(null);',
+    `\t\t\tconst dataSubRef = (0, react.useRef)(null);
+\t\t\tconst connAliasRef = (0, react.useRef)("");`)
+
+  // 3. Unmount: park a live session instead of tearing it down, and adopt a
+  //    parked one on mount. Replaces the teardown-on-unmount effect.
+  s = replaceOnce(s, 'unmount effect',
+    `\t\t\t(0, react.useEffect)(() => () => {
+\t\t\t\tteardown();
+\t\t\t}, []);`,
+    `\t\t\t(0, react.useEffect)(() => () => {
+\t\t\t\tconst connection = connRef.current;
+\t\t\t\tconst term = termRef.current;
+\t\t\t\tif (connection !== null && term !== null && term.element) {
+\t\t\t\t\t// Park the live session: detach the render, keep the socket.
+\t\t\t\t\tif (keptSession !== null) {
+\t\t\t\t\t\ttry { keptSession.dataSub?.dispose(); } catch {}
+\t\t\t\t\t\ttry { keptSession.term.dispose(); } catch {}
+\t\t\t\t\t\ttry { keptSession.conn.close(); } catch {}
+\t\t\t\t\t}
+\t\t\t\t\tconst kept = { term, fit: fitRef.current, conn: connection, dataSub: dataSubRef.current, alias: connAliasRef.current, exited: false, detail: void 0 };
+\t\t\t\t\tconnection.onReady = void 0;
+\t\t\t\t\tconnection.onExit = (code, error) => {
+\t\t\t\t\t\tkept.exited = true;
+\t\t\t\t\t\tkept.detail = error;
+\t\t\t\t\t\ttry { term.options.disableStdin = true; } catch {}
+\t\t\t\t\t};
+\t\t\t\t\ttry { term.element.remove(); } catch {}
+\t\t\t\t\tkeptSession = kept;
+\t\t\t\t\tconnRef.current = null;
+\t\t\t\t\ttermRef.current = null;
+\t\t\t\t\tfitRef.current = null;
+\t\t\t\t\tdataSubRef.current = null;
+\t\t\t\t\treturn;
+\t\t\t\t}
+\t\t\t\tteardown();
+\t\t\t}, []);
+\t\t\t(0, react.useEffect)(() => {
+\t\t\t\tconst kept = keptSession;
+\t\t\t\tif (kept === null) return;
+\t\t\t\tkeptSession = null;
+\t\t\t\tconst container = containerRef.current;
+\t\t\t\tif (container === null || !kept.term.element) {
+\t\t\t\t\ttry { kept.dataSub?.dispose(); } catch {}
+\t\t\t\t\ttry { kept.term.dispose(); } catch {}
+\t\t\t\t\ttry { kept.conn.close(); } catch {}
+\t\t\t\t\treturn;
+\t\t\t\t}
+\t\t\t\tcontainer.appendChild(kept.term.element);
+\t\t\t\ttermRef.current = kept.term;
+\t\t\t\tfitRef.current = kept.fit;
+\t\t\t\tdataSubRef.current = kept.dataSub;
+\t\t\t\tconnAliasRef.current = kept.alias;
+\t\t\t\tif (kept.alias !== "") setAlias(kept.alias);
+\t\t\t\tif (kept.exited) {
+\t\t\t\t\tconnRef.current = null;
+\t\t\t\t\tsetStatus({ kind: "exited", alias: kept.alias, detail: kept.detail });
+\t\t\t\t} else {
+\t\t\t\t\tconnRef.current = kept.conn;
+\t\t\t\t\tkept.conn.onExit = (code, error) => {
+\t\t\t\t\t\ttry { dataSubRef.current?.dispose(); } catch {}
+\t\t\t\t\t\tdataSubRef.current = null;
+\t\t\t\t\t\ttry { kept.term.options.disableStdin = true; } catch {}
+\t\t\t\t\t\tconnRef.current = null;
+\t\t\t\t\t\tsetStatus({ kind: "exited", alias: kept.alias, detail: error });
+\t\t\t\t\t};
+\t\t\t\t\tsetStatus({ kind: "connected", alias: kept.alias });
+\t\t\t\t}
+\t\t\t\ttry {
+\t\t\t\t\tkept.fit?.fit();
+\t\t\t\t\tif (!kept.exited) kept.conn.resize(kept.term.cols, kept.term.rows);
+\t\t\t\t\tkept.term.refresh(0, kept.term.rows - 1);
+\t\t\t\t} catch {}
+\t\t\t}, []);`)
+
+  // 4. Remember the alias a connection was opened for.
+  s = replaceOnce(s, 'connect alias capture',
+    '\t\t\t\tconnRef.current = connection;',
+    `\t\t\t\tconnRef.current = connection;
+\t\t\t\tconnAliasRef.current = target;`)
+
+  fs.writeFileSync(file, s)
+  return true
+}

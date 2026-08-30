@@ -48,6 +48,16 @@ stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 st
                     裁剪，安装 pnpm 到 dsh/tools/，把预置插件注册进 dsh 应用依赖清单
 afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh
 desktop-patch.yml   随包分发的插件组合覆盖层（默认空）
+patches/            stage 期打在已安装预置插件上的行为补丁。当前一个：
+                    ssh-terminal-keepalive（@linxin666/dsh-ssh 的终端会话随
+                    React 组件卸载而断线——客户端单侧改法：卸载时把
+                    WebSocket+xterm 停进模块级槽位、只摘渲染不断连接，重挂
+                    时重新收养；服务端零改动，因为它只在 socket 关闭时才拆
+                    会话）。锚点是构建产物里的精确字符串，失配即 throw 让
+                    stage 响亮失败——升级 ssh 插件版本后 stage 报锚点错误
+                    就是提醒重推导补丁；上游自己修好后删补丁与调用点即可。
+                    注意补丁打在应用闭包的拷贝上，profile 里同版本的真实
+                    拷贝（用户手动 pnpm 装过同版本才会有）会遮蔽它
 plugins.json        要预置进安装包的插件 npm 包列表（默认空 = minimal flavor）
 plugins-full.json   full flavor 的预置清单：packages（任务看板/better-sidebar 工作台/
                     SSH 三件生产力套件，播种激活；曾短暂换过 dsh-ssh-ops，

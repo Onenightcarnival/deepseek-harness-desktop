@@ -3,5 +3,8 @@
     "@linxin666/dsh-client-ui-task-board",
     "dsh-better-sidebar",
     "@linxin666/dsh-ssh"
+  ],
+  "carry": [
+    "@huanlin/dsh-plugin-better-locale"
   ]
 }

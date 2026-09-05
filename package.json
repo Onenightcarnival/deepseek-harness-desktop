@@ -46,16 +46,9 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64"
-          ]
         }
       ],
-      "icon": "build/icon.ico",
-      "artifactName": "DeepSeek-Harness-${version}-win-${arch}.${ext}"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,

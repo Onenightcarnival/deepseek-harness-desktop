@@ -90,7 +90,19 @@ function satisfiesNode(nodeVersion, enginesExpr) {
   return false
 }
 
-module.exports = { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode }
+/**
+ * Release line of a dsh version: the numeric major.minor.patch, prerelease
+ * tag dropped ("0.1.2-rc.1" -> "0.1.2"). Third-party plugins target a line,
+ * not a version — the 0.1.2 cohort dropped 0.1.1-rc.x support outright — so
+ * the in-app core upgrade only moves within the bundled core's line; crossing
+ * lines needs a new desktop build that ships matching presets.
+ */
+function releaseLine(v) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(v))
+  return m ? `${m[1]}.${m[2]}.${m[3]}` : String(v)
+}
+
+module.exports = { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, releaseLine }
 
 /**
  * Upsert a marker-fenced managed block inside a cordis patch YAML document

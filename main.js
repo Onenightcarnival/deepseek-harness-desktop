@@ -3,7 +3,7 @@
  *
  * Boots the bundled `dsh` server (via Electron's embedded Node using
  * ELECTRON_RUN_AS_NODE) on a free loopback port, waits for the ready line
- * ("dsh web: http://127.0.0.1:<port>"), then shows the Web UI in a window.
+ * ("dsh web: http://127.0.0.1:<port>/?token=…"), then shows the Web UI in a window.
  */
 'use strict'
 
@@ -11,12 +11,15 @@ const { app, BrowserWindow, dialog, shell, Menu, ipcMain, session, net: electron
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
-const { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath,
+const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath,
   COMMON_SETTINGS, validateCommonSettings, buildSettingsBlock,
   applyProxyEnv, PROXY_ENV_KEYS } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
 
-const READY_RE = /dsh web: (http:\/\/127\.0\.0\.1:\d+)/
+// 0.1.2-rc.1+ appends a one-time browser-trust token to the ready URL
+// ("…:<port>/?token=…"); loading the bare origin answers 401. Capture the
+// whole URL — the token exchange (303 → cookie) happens inside the window.
+const READY_RE = /dsh web: (http:\/\/127\.0\.0\.1:\d+\S*)/
 const STARTUP_TIMEOUT_MS = 90_000
 /** GitHub repo the update check queries ("owner/name"), from package.json. */
 const UPDATE_REPO = (() => {
@@ -172,6 +175,23 @@ async function checkCoreUpdates(interactive) {
           type: 'info', title: 'DeepSeek Harness',
           message: `dsh 内核已是最新（v${current}）`, buttons: ['好'],
         })
+      }
+      return
+    }
+    // Presets are pinned to the BUNDLED core's release line; a core from
+    // another line would boot under plugins built for the old one (the
+    // 0.1.2 cohort dropped 0.1.1-rc.x support entirely) — offer the new
+    // desktop build instead of an in-place jump.
+    const bundledVersion = runtimeVersion(bundledDshDir()) || current
+    if (releaseLine(latest) !== releaseLine(bundledVersion)) {
+      if (interactive) {
+        const { response } = await dialog.showMessageBox({
+          type: 'info', title: 'DeepSeek Harness',
+          message: `npm 上有 dsh v${latest}，属于新的版本线（${releaseLine(latest)}）`,
+          detail: `本安装包内置的是 v${bundledVersion}（${releaseLine(bundledVersion)} 线），预置插件与内核版本线绑定，跨线升级需要下载新版桌面安装包。`,
+          buttons: ['检查应用更新', '好'], defaultId: 0, cancelId: 1,
+        })
+        if (response === 0) await checkAppUpdates(true)
       }
       return
     }

@@ -1,7 +1,7 @@
 # DeepSeek Harness Desktop（非官方打包）
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的
-桌面安装包：Windows exe / 免安装 zip 和 macOS dmg。本仓库只包含打包用的 Electron 壳和
+桌面安装包：Windows exe 和 macOS dmg。本仓库只包含打包用的 Electron 壳和
 CI 配置，不包含上游源码——构建时直接安装 npm 发布版 `@deepseek-ai/dsh`。
 
 应用启动时用 Electron 内置 Node（加 `--expose-internals`）在本机
@@ -68,15 +68,6 @@ dsh；文件名带 **`-full`** 的版本额外预置
 数据，可互相覆盖安装切换：换到常规版时预置插件自动停用，换回
 full 版自动恢复。
 
-Windows 除 NSIS 安装包外另出一个**免安装 zip**（两种 flavor 都有）：
-解压到任意目录后直接运行 `DeepSeek Harness.exe`，无需管理员权限、
-不写注册表。只在解压时慢这一次，之后每次启动与安装版一样快（早期
-试过的 portable 单 exe 每次启动都要把几百 MB 自解压到临时目录再过
-一遍杀软扫描，已弃用）。数据同样在用户目录（`%APPDATA%` 与
-`~/.dsh`），与安装版/命令行版通用；应用目录可整体移动，CLI 启动器
-每次启动自动重写，不会指向旧路径。未签名，首次运行同样有
-SmartScreen 提示。
-
 ## 预置 / 增删插件
 
 dsh 一切皆插件，桌面版留了两个定制入口，改完重新打标签出包即可：
@@ -110,7 +101,8 @@ insert 挂载条目；带界面的双面插件要把 host 和 client-ui 两半�
 - **内核更新**（dsh 本体）：启动后静默检查 npm 上的 `@deepseek-ai/dsh`，
   发现新版可一键"下载并升级"——用内置 pnpm 装到用户数据目录的
   `runtimes/<版本>/`，重启应用生效，无需重装应用；新内核启动失败会自动
-  隔离并回退到内置版本。菜单「帮助 → 检查内核更新…」可手动查，
+  隔离并回退到内置版本。只在同一版本线内升级（如 0.1.2-rc.1 → rc.2）；
+  跨线（0.1.1 → 0.1.2）因预置插件与内核线绑定，需要下载新版安装包。菜单「帮助 → 检查内核更新…」可手动查，
   「帮助」菜单第一项显示当前生效的内核版本。
 
 ## 配置中心与命令行

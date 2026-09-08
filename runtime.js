@@ -159,6 +159,7 @@ function buildMcpBlock(servers) {
         lines.push('        env:')
         for (const [k, v] of Object.entries(s.env)) lines.push(`          ${q(k)}: ${q(v)}`)
       }
+      if (s.cwd) lines.push(`        cwd: ${q(s.cwd)}`)
     } else {
       lines.push(`        url: ${q(s.url)}`)
       if (s.headers && Object.keys(s.headers).length) {

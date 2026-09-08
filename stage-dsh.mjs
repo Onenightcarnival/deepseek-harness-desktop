@@ -158,12 +158,77 @@ if (extraPackages.length > 0) {
 
 // ---- bundled CLI tooling ----
 // Ship pnpm inside the runtime (dsh/tools/node_modules/pnpm). The desktop
-// app writes `dsh`/`pnpm` launchers that run it on Electron's embedded
+// app writes `dsh`/`pnpm`/`npx` launchers that run it on Electron's embedded
 // Node, so `dsh plugin add` works with nothing installed on the machine.
+// PINNED TO THE 11 LINE: pnpm 12 stopped shipping JavaScript — its package
+// is a placeholder whose postinstall downloads a native binary, and with
+// --ignore-scripts (and offline users) there is nothing to run. 11.x still
+// ships bin/pnpm.cjs + bin/pnpm.mjs.
 const toolsDir = path.join(dir, 'tools')
 fs.mkdirSync(toolsDir, { recursive: true })
 fs.writeFileSync(path.join(toolsDir, 'package.json'), JSON.stringify({ name: 'dsh-desktop-tools', private: true }, null, 2))
-execSync(`npm ${['install', 'pnpm@latest', ...baseFlags, '--omit=optional', ...crossFlags].join(' ')}`, { cwd: toolsDir, stdio: 'inherit' })
+execSync(`npm ${['install', 'pnpm@11', ...baseFlags, '--omit=optional', ...crossFlags].join(' ')}`, { cwd: toolsDir, stdio: 'inherit' })
+{
+  const pnpmBin = path.join(toolsDir, 'node_modules', 'pnpm', 'bin')
+  if (!fs.existsSync(path.join(pnpmBin, 'pnpm.cjs')) && !fs.existsSync(path.join(pnpmBin, 'pnpm.mjs'))) {
+    throw new Error('bundled pnpm has no JavaScript entry (bin/pnpm.cjs|mjs) — the launchers cannot run it')
+  }
+}
+
+// Ship uv (Python-side counterpart of pnpm dlx): `uvx <pkg>` MCP servers run
+// without a system Python — uv downloads an interpreter on first use into
+// the app's userData (see the uvx launcher in main.js). Pinned release from
+// GitHub, sha256-verified against the asset's published digest. The archive
+// holds two static binaries, uv and uvx; both go to dsh/tools/uv/.
+const UV_VERSION = '0.12.10'
+const UV_TRIPLE = {
+  'win32-x64': 'x86_64-pc-windows-msvc', 'win32-arm64': 'aarch64-pc-windows-msvc',
+  'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin',
+  'linux-x64': 'x86_64-unknown-linux-gnu', 'linux-arm64': 'aarch64-unknown-linux-gnu',
+}[key]
+if (UV_TRIPLE === undefined) throw new Error(`no uv build mapped for ${key}`)
+{
+  const ext = platform === 'win32' ? 'zip' : 'tar.gz'
+  const asset = `uv-${UV_TRIPLE}.${ext}`
+  const base = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/`
+  const fetchBuf = async (url) => {
+    const res = await fetch(url, { redirect: 'follow' })
+    if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`)
+    return Buffer.from(await res.arrayBuffer())
+  }
+  const [archive, digestText] = await Promise.all([fetchBuf(base + asset), fetchBuf(base + asset + '.sha256')])
+  const expected = digestText.toString('utf8').trim().split(/\s+/)[0].toLowerCase()
+  const actual = (await import('node:crypto')).createHash('sha256').update(archive).digest('hex')
+  if (actual !== expected) throw new Error(`uv ${asset}: sha256 mismatch (got ${actual}, published ${expected})`)
+  const uvDir = path.join(toolsDir, 'uv')
+  fs.rmSync(uvDir, { recursive: true, force: true })
+  fs.mkdirSync(uvDir, { recursive: true })
+  const tmpArchive = path.join(toolsDir, asset)
+  fs.writeFileSync(tmpArchive, archive)
+  const extractDir = path.join(toolsDir, 'uv-extract')
+  fs.rmSync(extractDir, { recursive: true, force: true })
+  fs.mkdirSync(extractDir, { recursive: true })
+  if (ext === 'zip') {
+    // bsdtar (Windows 10+, macOS) opens zips; GNU tar on Linux does not.
+    if (process.platform === 'linux') execSync(`unzip -q -o "${tmpArchive}" -d "${extractDir}"`, { stdio: 'inherit' })
+    else execSync(`tar -xf "${tmpArchive}" -C "${extractDir}"`, { stdio: 'inherit' })
+  } else {
+    execSync(`tar -xzf "${tmpArchive}" -C "${extractDir}"`, { stdio: 'inherit' })
+  }
+  const wanted = platform === 'win32' ? ['uv.exe', 'uvx.exe'] : ['uv', 'uvx']
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)])
+  const found = walk(extractDir)
+  for (const name of wanted) {
+    const src = found.find((f) => path.basename(f) === name)
+    if (!src) throw new Error(`uv archive ${asset} lacks ${name}`)
+    fs.copyFileSync(src, path.join(uvDir, name))
+    if (platform !== 'win32') fs.chmodSync(path.join(uvDir, name), 0o755)
+  }
+  fs.writeFileSync(path.join(uvDir, 'VERSION'), UV_VERSION + '\n')
+  fs.rmSync(extractDir, { recursive: true, force: true })
+  fs.rmSync(tmpArchive, { force: true })
+  console.log(`bundled uv ${UV_VERSION} (${UV_TRIPLE})`)
+}
 
 // ---- prune ----
 const nm = path.join(dir, 'node_modules')

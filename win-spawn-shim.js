@@ -17,18 +17,32 @@
  * are unaffected (native ConPTY, not child_process). No-op off Windows.
  */
 
+/**
+ * Whether this process sits on the shell's invisible host console (set once
+ * setupHiddenConsole attached). Then console INHERITANCE beats
+ * CREATE_NO_WINDOW: a windowsHide child has no console at all, so any
+ * console app IT spawns gets a brand-new visible window — uv → python for a
+ * `uvx` MCP server, for instance. Inheriting the invisible console keeps the
+ * whole native subtree windowless. Only an explicit `windowsHide: true` is
+ * flipped (a missing value is still filled the same way), never a detached
+ * spawn (DETACHED_PROCESS drops the console anyway).
+ */
+let hostConsole = false
+
 /** Insert/patch the options argument of a child_process-style call. */
 function withHide(args) {
+  const want = !hostConsole
   const a = Array.prototype.slice.call(args)
   for (let i = 1; i < a.length; i++) {
     const v = a[i]
     if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
-      if (v.windowsHide === undefined) a[i] = { ...v, windowsHide: true }
+      if (v.windowsHide === undefined) a[i] = { ...v, windowsHide: want }
+      else if (v.windowsHide === true && hostConsole && !v.detached) a[i] = { ...v, windowsHide: false }
       return a
     }
     if (typeof v === 'function') break // callback reached — no options given
   }
-  const opts = { windowsHide: true }
+  const opts = { windowsHide: want }
   if (typeof a[a.length - 1] === 'function') a.splice(a.length - 1, 0, opts)
   else a.push(opts)
   return a
@@ -193,7 +207,9 @@ function setupHiddenConsole(deps = {}) {
 
 if (process.platform === 'win32') {
   try { patchChildProcess(require('child_process')) } catch { /* never break the host process */ }
-  setupHiddenConsole()
+  // Attach first, then decide the spawn policy for the rest of the process.
+  // DSHDESKTOP_INHERIT_CONSOLE=0 is the escape hatch back to CREATE_NO_WINDOW.
+  if (setupHiddenConsole() && process.env.DSHDESKTOP_INHERIT_CONSOLE !== '0') hostConsole = true
 }
 
-module.exports = { patchChildProcess, withHide, setupHiddenConsole }
+module.exports = { patchChildProcess, withHide, setupHiddenConsole, _setHostConsole: (v) => { hostConsole = !!v } }

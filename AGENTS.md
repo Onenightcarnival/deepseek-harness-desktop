@@ -11,7 +11,7 @@
 ```
 main.js             主进程全部逻辑：服务拉起/守护、菜单、更新检查（应用=GitHub Release，
                     内核=npm registry + 应用内升级到 userData/runtimes/）、CLI 启动器生成
-                    （dsh/pnpm/node 三个 shim）、配置中心 IPC（插件/MCP/技能）
+                    （dsh/pnpm/node/npx/uvx/uv 六个 shim）、配置中心 IPC（插件/MCP/技能）
 runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目录选择（升级版优先+损坏回退）、
                     engines 粗校验、cordis patch 托管区块编辑（upsertManagedBlock/buildMcpBlock）、
                     zip 技能包内容识别（collectSkills）、代理环境变量清场与注入
@@ -24,17 +24,19 @@ win-spawn-shim.js   预载进整棵 Node 子进程树（argv --require 只到直
                     windowsHide:true（含重建 promisify.custom），治 pwsh/cmd/git
                     闪黑窗；DSHDESKTOP_CONSOLE_HOST=1 时再配隐形宿主控制台
                     （setupHiddenConsole，治沙箱 CreateProcessAsUserW 路径，结果
-                    打 stderr 进 dsh-server.log）。显式 windowsHide:false 保留，
-                    非 Windows 空操作。asar 里普通 Node 读不到，启动时拷到
+                    打 stderr 进 dsh-server.log；附着成功后子进程改为继承该控制台，
+                    见坑清单）。显式 windowsHide:false 保留，非 Windows 空操作。asar 里普通 Node 读不到，启动时拷到
                     userData 再注入（见坑清单）
 proxy-forward.js    进程内转发代理（无 Electron 依赖，resolveSystem 由 main.js 注入）：
                     createForwarder 起 127.0.0.1 随机端口，处理 CONNECT 隧道与明文
                     HTTP，每条连接现问 routeFor 决定直连/上游代理。所有子进程只拿到
                     这一个固定端点，路由策略留在主进程
 plugins.html        配置中心窗口（左侧导航五页：插件 / MCP 服务器 / 技能 / 常用设置 /
-                    代理；MCP 为主从布局，表单仅暴露 streamable-http——
-                    validateMcpServer 与 buildMcpBlock 仍接受 stdio 以兼容旧存量
-                    条目。常用设置页是内置插件配置的精选覆盖：注册表在 runtime.js
+                    代理；MCP 为主从布局，连接方式二选一：streamable-http
+                    （地址/请求头）或 stdio（命令/参数/环境变量/工作目录）。
+                    stdio 的「测试」在 main.js testMcpServer 里真做 initialize
+                    + tools/list 握手（Windows 上裸命令落到 .cmd 启动器时经
+                    cmd.exe，仿 cross-spawn）。常用设置页是内置插件配置的精选覆盖：注册表在 runtime.js
                     的 COMMON_SETTINGS（key/entryId/configKey/type/默认值/文案），
                     页面按注册表声明式渲染、validateCommonSettings 校验、
                     buildSettingsBlock 生成 `- id: X` + `config:` 逐键覆盖条目，
@@ -45,7 +47,12 @@ plugins.html        配置中心窗口（左侧导航五页：插件 / MCP 服�
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动等待页
 stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 staging/<platform>-<arch>/dsh，
-                    裁剪，安装 pnpm 到 dsh/tools/，把预置插件注册进 dsh 应用依赖清单
+                    裁剪，安装 pnpm（钉 11 线）到 dsh/tools/、从 GitHub 拉钉版 uv
+                    （sha256 校验）到 dsh/tools/uv/，把预置插件注册进 dsh 应用依赖清单。
+                    main.js 的 writeCliLaunchers 据此在 userData/bin 生成 dsh/node/
+                    pnpm/npx/uvx/uv 六个启动器：npx 经 npx-shim.js 过滤 -y 等
+                    npx 专属旗标后转 `pnpm dlx`，uvx/uv 直指内置二进制并把缓存、
+                    解释器、工具目录锁进 userData（UV_NATIVE_TLS=1 走系统证书库）
 afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh
 desktop-patch.yml   随包分发的插件组合覆盖层（默认空）
 patches/            stage 期打在已安装预置插件上的行为补丁。当前一个：
@@ -146,7 +153,9 @@ origin，然后断言"外网目标进了桩、loopback 与内网名字没进桩�
 - **electron-builder 的 extraResources 默认排除 node_modules**，运行时必须走 afterPack 钩子复制，别改回 extraResources。
 - **本仓库若被放进 pnpm workspace（如上游 fork 的子目录）**，electron-builder 会向上探测 workspace 根并错误改用 pnpm 收集依赖——必须把本目录拷到仓库外构建（独立仓库布局无此问题）。
 - **给子进程改 PATH 必须大小写不敏感地找键**（runtime.js 的 prependEnvPath，含单测）。Windows 上 `{...process.env}` 展开出的真实键通常是 `Path`，再赋值 `PATH` 会造出重复键，子进程实际生效的 PATH 可能只剩新加的目录——dsh 服务进程曾因此丢掉整个系统 PATH，git 等外部命令全部 ENOENT，表现为 git-graph/aionui-panel 在 Windows 上静默失效而 mac 正常（magic 的 `process.env` 本身大小写不敏感，展开后的普通对象不是）。
-- **CLI 启动器是 dsh / pnpm / node 三件套**，缺一不可：pnpm 生命周期脚本会裸调 `node`，用户机器上没有 Node.js。pnpm 本体只随**内置**运行时分发（`dsh/tools/`），应用内升级的运行时没有 tools 目录，取 pnpm 路径必须锚定 `bundledDshDir()`。
+- **CLI 启动器是 dsh / pnpm / node 三件套**（外加给 stdio MCP 用的 npx / uvx / uv），缺一不可：pnpm 生命周期脚本会裸调 `node`，用户机器上没有 Node.js。pnpm 本体只随**内置**运行时分发（`dsh/tools/`），应用内升级的运行时没有 tools 目录，取 pnpm 路径必须锚定 `bundledDshDir()`。**pnpm 必须钉在 11 线**：pnpm 12 起 npm 包只是占位 sh 脚本，postinstall 才下载原生二进制——我们 `--ignore-scripts` 安装、用户离线运行，根本没有东西可执行（曾因 `pnpm@latest` 静默滑到 12.3.4，`bin/pnpm.cjs` 消失，pnpm/npx 启动器一个都写不出来）；main.js 的 pnpmEntry() 接受 cjs/mjs 任一入口，stage 装完断言入口存在。
+- **uv 默认用自带根证书，在 TLS 拦截型代理/沙箱后面表现为"解码响应体超时"而不是证书错误**，排查很误导；启动器默认 `UV_NATIVE_TLS=1` 改走系统证书库，与代理页"默认信任系统证书库"一致（沙箱实测：不加则 PyPI 元数据请求必超时，加了首次即通）。uv 只是启动器，Python 解释器首次运行才从 GitHub 下载到 userData/uv/python，国内用户靠 `UV_PYTHON_INSTALL_MIRROR`（在 MCP 条目环境变量里设，启动器的 `if not defined` 语义保证用户值优先）。
+- **有隐形宿主控制台时，子进程改为继承控制台而不是 CREATE_NO_WINDOW**（win-spawn-shim 的 hostConsole 策略）：`windowsHide:true` 的子进程自己没有控制台，它再起的任何控制台程序都会拿到一个**新的可见窗口**——`uvx` MCP 服务器就是 uv → python 两级，MCP SDK 硬编码 windowsHide:true，python 会弹窗。宿主有隐形控制台时让整棵子树继承它，全程无窗；没有隐形控制台（CLI 场景 setupHiddenConsole 不介入）时维持原来的 windowsHide 默认。逃生口 `DSHDESKTOP_INHERIT_CONSOLE=0`。
 - **pnpm 两道门禁**：allowBuilds（构建脚本审批——配置中心**有意不代为放行**，这是安全边界，只提示走命令行）；minimumReleaseAge（新发布版本冷却期——裸装包名可能**静默降级**到远古版本，表现为"装上了但没效果"，显式带版本号可豁免）。
 - **MCP 的 GUI 配置写入 `~/.dsh/profiles/web/cordis.patch.yml` 的标记托管区块**（`# >>> dsh-desktop mcp >>>`），因为该文件被 dsh 热加载、dsh-mcp-client 支持配置热替换——保存即生效不用重启。只改标记区块、保留用户手写条目；文件默认内容是 flow 空列表 `[]`，与块列表条目不能共存，upsertManagedBlock 已处理（含单测）。已知余波：移除条目时经 `pnpm dlx` 包装启动的旧 MCP 服务器进程可能残留到应用退出。
 - **electron-builder 的 FIND_PROCESS 会误报，绝不能用它作为拦截安装的门条件**。PowerShell 可用时它根本不按进程名查，而是"任何路径在 $INSTDIR 下的进程"都算命中：wine 的 powershell 桩对一切命令返回 0（恒判定"在运行"），用户装到宽泛的自定义目录时该目录下无关进程同样命中。旧版宏在误报时重试后弹 "app cannot be closed" 并 Quit——安装器和（更糟的）静默运行的旧版卸载器都会因此退出非零，覆盖安装死在 installUtil 的卸载重试上，弹的还是同一句误导文案（appCannotBeClosed 有三个来源：进程检查/解包失败/旧卸载器非零退出）。现行设计（build/installer.nsh）：清扫无条件执行、按已知进程名收窄（taskkill 树杀 + 无过滤按名杀 + 限定 OpenConsole/winpty-agent/应用 exe 的路径扫），几轮后无论检测结果如何**直接放行**（真锁文件由解包阶段自带的重试兜底），放行前把安装目录下存活进程落盘到桌面 dsh-install-debug.txt；customInit 预跑旧版卸载器，非零退出时删注册表键+清旧载荷绕过它（在野的旧安装都带会误报自杀的卸载器）。

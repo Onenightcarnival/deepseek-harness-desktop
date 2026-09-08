@@ -15,7 +15,8 @@ CI 配置，不包含上游源码——构建时直接安装 npm 发布版 `@dee
   固定为 browse 组合（原生 Win32 弹窗的子进程在 Electron 打包环境下起不来）。
 - `splash.html` — 启动等待页。
 - `stage-dsh.mjs` — 把 `@deepseek-ai/dsh` 安装进 `staging/<platform>-<arch>/dsh`
-  并裁剪（node-pty 只留本平台预编译、去掉 sharp wasm 回退、删 sourcemap/pdb）。
+  并裁剪（node-pty 只留本平台预编译、去掉 sharp wasm 回退、删 sourcemap/pdb），
+  再往 `dsh/tools/` 放入内置 pnpm（11 线）和 uv（钉版、sha256 校验）。
 - `afterPack.js` — electron-builder 钩子，把 staging 的运行时拷进应用 resources。
   （不用 extraResources 是因为它默认排除 node_modules。）
 - `build/` — 图标（由上游仓库的 favicon.svg 生成）。
@@ -112,8 +113,16 @@ insert 挂载条目；带界面的双面插件要把 host 和 client-ui 两半�
   方式装开发中的插件，改代码后重启生效，插件自身依赖需先在其目录里
   `pnpm install`；「从 .tgz 安装」装 `npm pack` 打出的成品包）、**MCP 服务器**（左列表 + 右详情的
   主从布局：列表显示每台服务器与启用状态、测试结果指示灯，详情页
-  编辑名称、地址、请求头，含启用开关与「测试连接」；目前仅支持
-  streamable-http 一种传输方式。配置写入用户配置层的标记托管区块，
+  编辑名称，含启用开关与「测试连接」。两种连接方式：**远程服务**
+  （streamable-http：地址 + 请求头）和**本机命令**（stdio：命令、参数、
+  环境变量、工作目录——照抄各 MCP 服务器 README 里的 `npx …`/`uvx …`
+  即可）。`npx` 与 `uvx` 由应用内置运行时提供：`npx` 走内置 pnpm 的
+  `pnpm dlx`、跑在应用自带的 Node 上，`uvx` 走随包分发的 uv（首次运行
+  会把 Python 解释器下载到应用数据目录，国内网络可在条目的环境变量里
+  设 `UV_PYTHON_INSTALL_MIRROR` 指向镜像），机器上无需安装 Node/Python。
+  stdio 的「测试连接」会真的启动命令并完成 MCP 握手，显示服务器名与
+  工具数；首次运行要下载依赖，可能要等一会儿。命令以你的身份在本机
+  执行，只添加信任的服务器。配置写入用户配置层的标记托管区块，
   保存即热生效无需重启，不碰用户手写条目）、**技能**（安装 zip 技能
   包——单技能或多技能合集均可，列表删除、打开目录，装删即时生效无需
   重启；目录固定为 dsh 约定的 `~/.dsh/skills`）、**常用设置**（内置
@@ -141,7 +150,8 @@ insert 挂载条目；带界面的双面插件要把 host 和 client-ui 两半�
   会被自动排除到下个版本重试，这个入口用于立即重试）。
 - 菜单「插件 → 打开命令行窗口」直接弹出一个终端（Windows 为 cmd，
   macOS 为 Terminal），其中 `dsh`、`pnpm`、`node` 已在 PATH 上、
-  跑在应用内置的 Node 上，机器无需安装 Node/pnpm。想在自己的终端里
+  跑在应用内置的 Node 上（另有 `npx`、`uvx`、`uv`），机器无需安装
+  Node/pnpm/Python。想在自己的终端里
   长期使用，可把用户数据目录下的 `bin/` 加进 PATH。命令行同样遵循
   配置中心的代理设置——应用运行时走应用的代理决策，应用关闭后直连。需要执行构建脚本
   的插件（GitHub 源码分发、触发 pnpm allowBuilds 门禁）不在图形界面

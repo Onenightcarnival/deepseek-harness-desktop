@@ -29,9 +29,11 @@
   .sub { color: #8a8a96; font-size: 12px; line-height: 1.6; margin: 0 0 14px; }
 
   /* ---- shared controls ---- */
-  input, select { background: #1e1e26; color: #e8e8ec; border: 1px solid #32323c;
+  input, select, textarea { background: #1e1e26; color: #e8e8ec; border: 1px solid #32323c;
                   border-radius: 8px; padding: 8px 11px; font-size: 13px; outline: none; width: 100%; }
-  input:focus { border-color: #4d6bfe; }
+  textarea { font-family: ui-monospace, Menlo, Consolas, monospace; resize: vertical; box-sizing: border-box; }
+  input:focus, textarea:focus { border-color: #4d6bfe; }
+  code { font-family: ui-monospace, Menlo, Consolas, monospace; background: #26262e; padding: 1px 5px; border-radius: 4px; }
   button { background: #26262e; color: #e8e8ec; border: 1px solid #3a3a44; border-radius: 8px;
            padding: 8px 14px; cursor: pointer; font-size: 13px; }
   button:hover { background: #2d2d37; }
@@ -140,11 +142,30 @@
       </div>
       <div class="field"><label>名称（作为工具前缀 mcp__名称__，限字母数字_-）</label>
         <input id="m-name" placeholder="my-server" spellcheck="false"></div>
-      <div class="field"><label>服务器地址（streamable-http；本机/内网服务通常是 http:// 而非 https://）</label>
-        <input id="m-url" placeholder="http://127.0.0.1:8080/mcp" spellcheck="false"></div>
-      <div class="field"><label>请求头（用于认证等，可留空）</label>
-        <div id="m-headers"></div>
-        <button class="ghost" id="m-add-header">＋ 添加请求头</button></div>
+      <div class="field"><label>连接方式</label>
+        <select id="m-transport">
+          <option value="streamable-http">远程服务（streamable-http）</option>
+          <option value="stdio">本机命令（stdio）</option>
+        </select></div>
+      <div id="m-http-fields">
+        <div class="field"><label>服务器地址（本机/内网服务通常是 http:// 而非 https://）</label>
+          <input id="m-url" placeholder="http://127.0.0.1:8080/mcp" spellcheck="false"></div>
+        <div class="field"><label>请求头（用于认证等，可留空）</label>
+          <div id="m-headers"></div>
+          <button class="ghost" id="m-add-header">＋ 添加请求头</button></div>
+      </div>
+      <div id="m-stdio-fields" style="display:none">
+        <div class="field"><label>命令（在本机启动；<code>npx</code> 与 <code>uvx</code> 由应用内置运行时提供，机器无需安装 Node/Python）</label>
+          <input id="m-command" placeholder="npx" spellcheck="false"></div>
+        <div class="field"><label>参数（每行一个；照抄 MCP 服务器 README 里 npx/uvx 后面的部分）</label>
+          <textarea id="m-args" rows="4" placeholder="-y&#10;@modelcontextprotocol/server-filesystem&#10;/Users/me/projects" spellcheck="false"></textarea></div>
+        <div class="field"><label>环境变量（API 密钥等，可留空；Python 系可在此设 UV_PYTHON_INSTALL_MIRROR 指向国内镜像）</label>
+          <div id="m-env"></div>
+          <button class="ghost" id="m-add-env">＋ 添加环境变量</button></div>
+        <div class="field"><label>工作目录（可留空）</label>
+          <input id="m-cwd" placeholder="/path/to/project" spellcheck="false"></div>
+        <p class="sub">命令会以你的身份在本机执行，只添加你信任的 MCP 服务器。首次运行 npx/uvx 需要下载依赖，可能要等一会儿。</p>
+      </div>
       <div class="row" style="margin-top:18px">
         <button class="danger" id="m-del">删除</button>
         <span class="spacer"></span>
@@ -343,10 +364,10 @@
     })
   }
 
-  function headerRow(k = '', v = '') {
+  function headerRow(k = '', v = '', kph = 'Authorization', vph = 'Bearer …') {
     const row = document.createElement('div'); row.className = 'kv-row'
-    const ki = document.createElement('input'); ki.className = 'k'; ki.placeholder = 'Authorization'; ki.value = k
-    const vi = document.createElement('input'); vi.placeholder = 'Bearer …'; vi.value = v
+    const ki = document.createElement('input'); ki.className = 'k'; ki.placeholder = kph; ki.value = k
+    const vi = document.createElement('input'); vi.placeholder = vph; vi.value = v
     const x = document.createElement('button'); x.className = 'ghost'; x.textContent = '×'
     x.onclick = () => row.remove()
     row.appendChild(ki); row.appendChild(vi); row.appendChild(x)
@@ -363,27 +384,61 @@
     $('m-title').textContent = s.serverName || '新服务器'
     $('m-enabled').checked = s.enabled !== false
     $('m-name').value = s.serverName || ''
+    $('m-transport').value = s.transport === 'stdio' ? 'stdio' : 'streamable-http'
     $('m-url').value = s.url || ''
     const hb = $('m-headers'); hb.innerHTML = ''
     for (const [k, v] of Object.entries(s.headers || {})) hb.appendChild(headerRow(k, v))
+    $('m-command').value = s.command || ''
+    $('m-args').value = Array.isArray(s.args) ? s.args.join('\n') : ''
+    const eb = $('m-env'); eb.innerHTML = ''
+    for (const [k, v] of Object.entries(s.env || {})) eb.appendChild(headerRow(k, v, 'API_KEY', '值'))
+    $('m-cwd').value = s.cwd || ''
+    applyTransportView()
     $('mcp-msg').textContent = ''; $('mcp-msg').className = 'msg'
-    if (s.transport === 'stdio') setMsg('此条目为 stdio 类型（旧版创建），当前界面仅支持 streamable-http：保留它会继续生效，但在此保存会转换类型。', 'err')
+  }
+
+  function applyTransportView() {
+    const stdio = $('m-transport').value === 'stdio'
+    $('m-http-fields').style.display = stdio ? 'none' : 'block'
+    $('m-stdio-fields').style.display = stdio ? 'block' : 'none'
+  }
+
+  function readKv(containerId) {
+    const out = {}
+    for (const row of $(containerId).querySelectorAll('.kv-row')) {
+      const [ki, vi] = row.querySelectorAll('input')
+      if (ki.value.trim()) out[ki.value.trim()] = vi.value.trim()
+    }
+    return out
   }
 
   function readForm() {
-    const headers = {}
-    for (const row of $('m-headers').querySelectorAll('.kv-row')) {
-      const [ki, vi] = row.querySelectorAll('input')
-      if (ki.value.trim()) headers[ki.value.trim()] = vi.value.trim()
+    const s = { serverName: $('m-name').value.trim(), enabled: $('m-enabled').checked }
+    if ($('m-transport').value === 'stdio') {
+      s.transport = 'stdio'
+      s.command = $('m-command').value.trim()
+      s.args = $('m-args').value.split('\n').map((a) => a.trim()).filter(Boolean)
+      const env = readKv('m-env')
+      if (Object.keys(env).length) s.env = env
+      const cwd = $('m-cwd').value.trim()
+      if (cwd) s.cwd = cwd
+    } else {
+      s.transport = 'streamable-http'
+      s.url = $('m-url').value.trim()
+      const headers = readKv('m-headers')
+      if (Object.keys(headers).length) s.headers = headers
     }
-    const s = {
-      serverName: $('m-name').value.trim(),
-      transport: 'streamable-http',
-      url: $('m-url').value.trim(),
-      enabled: $('m-enabled').checked,
-    }
-    if (Object.keys(headers).length) s.headers = headers
     return s
+  }
+
+  /** Field-level check before save/test; returns an error string or null. */
+  function checkForm(s) {
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(s.serverName)) return '名称需为 1-32 位字母/数字/_-'
+    if (s.transport === 'stdio') {
+      if (!s.command) return '请填写命令（如 npx 或 uvx）'
+      if (/\s/.test(s.command)) return '命令栏只填可执行文件名，参数请写在下方「参数」里（每行一个）'
+    } else if (!/^https?:\/\//.test(s.url)) return '地址需以 http:// 或 https:// 开头'
+    return null
   }
 
   function setMsg(text, cls) { const m = $('mcp-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
@@ -404,8 +459,8 @@
   $('m-save').onclick = async () => {
     if (sel < 0) return
     const s = readForm()
-    if (!/^[A-Za-z0-9_-]{1,32}$/.test(s.serverName)) { setMsg('名称需为 1-32 位字母/数字/_-', 'err'); return }
-    if (!/^https?:\/\//.test(s.url)) { setMsg('地址需以 http:// 或 https:// 开头', 'err'); return }
+    const bad = checkForm(s)
+    if (bad) { setMsg(bad, 'err'); return }
     if (servers.some((x, i) => i !== sel && x.serverName === s.serverName)) { setMsg('名称与已有服务器重复', 'err'); return }
     servers[sel] = s
     if (await persist()) $('m-title').textContent = s.serverName
@@ -425,12 +480,15 @@
     renderServerList()
   }
   $('m-add-header').onclick = () => $('m-headers').appendChild(headerRow())
+  $('m-add-env').onclick = () => $('m-env').appendChild(headerRow('', '', 'API_KEY', '值'))
+  $('m-transport').onchange = applyTransportView
   $('m-test').onclick = async () => {
     if (sel < 0) return
     const s = readForm()
-    if (!/^https?:\/\//.test(s.url)) { setMsg('先填写有效地址再测试', 'err'); return }
+    const bad = checkForm(s)
+    if (bad) { setMsg(bad, 'err'); return }
     $('m-test').disabled = true
-    setMsg('测试中…')
+    setMsg(s.transport === 'stdio' ? '测试中…（启动命令并做 MCP 握手，首次运行需下载依赖，最长等 90 秒）' : '测试中…')
     const res = await pluginApi.mcpTest(s)
     testState[s.serverName] = res.ok ? 'ok' : 'err'
     setMsg((res.ok ? '✓ ' : '✗ ') + res.detail, res.ok ? 'ok' : 'err')

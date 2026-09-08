@@ -242,8 +242,8 @@ async function installCoreRuntime(version) {
     fs.rmSync(dir, { recursive: true, force: true })
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true }, null, 2))
-    const pnpmCjs = path.join(bundledDshDir(), 'tools', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
-    if (!fs.existsSync(pnpmCjs)) { reject(new Error('bundled pnpm missing')); return }
+    const pnpmCjs = pnpmEntry()
+    if (!pnpmCjs) { reject(new Error('bundled pnpm missing')); return }
     // Full-flavor builds: the upgraded runtime must also carry the preset
     // plugins, or the seeded profile bundles stop resolving (the profile
     // resolves plugins from the ACTIVE runtime's app closure). Exact staged
@@ -468,6 +468,7 @@ function validateMcpServer(s, seen) {
   if (s.transport === 'stdio') {
     if (!noCtl(s.command) || s.command.trim() === '') return `"${s.serverName}" 缺少 command`
     if (s.args && (!Array.isArray(s.args) || !s.args.every(noCtl))) return `"${s.serverName}" 的 args 无效`
+    if (s.cwd !== undefined && s.cwd !== '' && !noCtl(s.cwd)) return `"${s.serverName}" 的工作目录无效`
   } else if (s.transport === 'streamable-http') {
     if (!noCtl(s.url) || !/^https?:\/\//.test(s.url)) return `"${s.serverName}" 的 url 无效`
   } else {
@@ -555,14 +556,32 @@ function proxyShimLines(win) {
  * works with no Node.js/pnpm installed on the machine. Returns the bin dir,
  * which is also prepended to the server's PATH so dsh finds pnpm.
  */
+/**
+ * JavaScript entry of the bundled pnpm (cjs preferred, mjs accepted). Empty
+ * string when absent — pnpm ships only with the BUNDLED runtime; stage pins
+ * the 11 line because 12 is a native-binary download, not JavaScript.
+ */
+function pnpmEntry() {
+  const bin = path.join(bundledDshDir(), 'tools', 'node_modules', 'pnpm', 'bin')
+  for (const f of ['pnpm.cjs', 'pnpm.mjs']) {
+    const p = path.join(bin, f)
+    if (fs.existsSync(p)) return p
+  }
+  return ''
+}
+
 function writeCliLaunchers() {
   const binDir = path.join(app.getPath('userData'), 'bin')
   fs.mkdirSync(binDir, { recursive: true })
   const entry = dshEntry()
   // pnpm always ships with the BUNDLED runtime (an upgraded core runtime
   // under userData/runtimes has no tools/ directory).
-  const pnpmCjs = path.join(bundledDshDir(), 'tools', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+  const pnpmCjs = pnpmEntry()
   const exe = process.execPath
+  const npxShim = path.join(binDir, 'npx-shim.js')
+  fs.writeFileSync(npxShim, NPX_SHIM_SOURCE)
+  const uvDir = path.join(bundledDshDir(), 'tools', 'uv')
+  const uvExe = fs.existsSync(path.join(uvDir, process.platform === 'win32' ? 'uv.exe' : 'uv'))
   if (process.platform === 'win32') {
     const winProxy = proxyShimLines(true).join('\r\n') + '\r\n'
     fs.writeFileSync(path.join(binDir, 'dsh.cmd'),
@@ -592,6 +611,23 @@ function writeCliLaunchers() {
       // resolves pnpm via PATH, i.e. through this shim.
       fs.writeFileSync(path.join(binDir, 'pnpm.cmd'),
         `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n${winProxy}"${exe}" "${pnpmCjs}" --config.minimum-release-age=0 --config.auto-install-peers=false %*\r\n`)
+      // `npx`: what every MCP server README tells users to run. Routed to
+      // `pnpm dlx` through a small argv filter (npx's -y/--yes has no pnpm
+      // equivalent) so Node-based stdio MCP servers run on the embedded
+      // Node with nothing installed. cross-spawn (the MCP SDK's spawner)
+      // resolves .cmd shims on PATH, so a plain "npx" command works.
+      fs.writeFileSync(path.join(binDir, 'npx.cmd'),
+        `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\nset "DSHDESKTOP_PNPM_CJS=${pnpmCjs}"\r\n${winProxy}"${exe}" "${npxShim}" %*\r\n`)
+    }
+    if (uvExe) {
+      // `uvx`/`uv`: bundled Python-side runtime for `uvx <pkg>` MCP servers.
+      // Caches and interpreters live under userData so nothing leaks into
+      // the user's ~/.local; env already set by the user wins (`if not
+      // defined`), e.g. UV_PYTHON_INSTALL_MIRROR for a domestic mirror.
+      for (const name of ['uvx', 'uv']) {
+        fs.writeFileSync(path.join(binDir, `${name}.cmd`),
+          `@echo off\r\nset "PATH=${binDir};%PATH%"\r\n${uvEnvLines(true).join('\r\n')}\r\n${winProxy}"${path.join(uvDir, name + '.exe')}" %*\r\n`)
+      }
     }
   } else {
     const shProxy = proxyShimLines(false).join('\n') + '\n'
@@ -603,10 +639,67 @@ function writeCliLaunchers() {
       // see the .cmd twin above for why --config.minimum-release-age=0
       fs.writeFileSync(path.join(binDir, 'pnpm'),
         `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\n${shProxy}exec "${exe}" "${pnpmCjs}" --config.minimum-release-age=0 --config.auto-install-peers=false "$@"\n`, { mode: 0o755 })
+      // see the .cmd twin above
+      fs.writeFileSync(path.join(binDir, 'npx'),
+        `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\nexport DSHDESKTOP_PNPM_CJS="${pnpmCjs}"\n${shProxy}exec "${exe}" "${npxShim}" "$@"\n`, { mode: 0o755 })
+    }
+    if (uvExe) {
+      for (const name of ['uvx', 'uv']) {
+        fs.writeFileSync(path.join(binDir, name),
+          `#!/bin/sh\nexport PATH="${binDir}:$PATH"\n${uvEnvLines(false).join('\n')}\n${shProxy}exec "${path.join(uvDir, name)}" "$@"\n`, { mode: 0o755 })
+      }
     }
   }
   return binDir
 }
+
+/**
+ * Environment for the bundled uv: keep its cache, downloaded interpreters
+ * and tool venvs under userData (uninstall-clean, no ~/.local pollution);
+ * a value the user already exported wins so mirrors/overrides still apply.
+ */
+function uvEnvLines(win) {
+  const base = path.join(app.getPath('userData'), 'uv')
+  const vars = {
+    UV_CACHE_DIR: path.join(base, 'cache'),
+    UV_PYTHON_INSTALL_DIR: path.join(base, 'python'),
+    UV_TOOL_DIR: path.join(base, 'tools'),
+    UV_TOOL_BIN_DIR: path.join(base, 'bin'),
+    // OS certificate store instead of uv's bundled roots: matches the proxy
+    // page's "trust the system store" default and is what makes uv work
+    // behind TLS-intercepting corporate proxies (bundled roots time out
+    // decoding the response instead of failing loudly — seen in the sandbox).
+    UV_NATIVE_TLS: '1',
+  }
+  return Object.entries(vars).map(([k, v]) => win
+    ? `if not defined ${k} set "${k}=${v}"`
+    : `[ -n "\${${k}:-}" ] || export ${k}="${v}"`)
+}
+
+/**
+ * The npx → pnpm dlx argv filter, written next to the launchers (userData is
+ * outside the asar, so the embedded Node can load it). npx-only flags are
+ * dropped; `--package=<spec>` / `-p <spec>` become pnpm dlx's `--package`.
+ */
+const NPX_SHIM_SOURCE = `'use strict'
+const { spawn } = require('child_process')
+const pnpmCjs = process.env.DSHDESKTOP_PNPM_CJS
+const args = process.argv.slice(2)
+const out = []
+for (let i = 0; i < args.length; i++) {
+  const a = args[i]
+  if (a === '-y' || a === '--yes' || a === '-q' || a === '--quiet' || a === '--no-install' || a === '--ignore-existing') continue
+  if (a === '-p' || a === '--package') { out.push('--package', args[++i]); continue }
+  if (a.startsWith('--package=')) { out.push(a); continue }
+  out.push(a)
+}
+const child = spawn(process.execPath, [pnpmCjs, '--config.minimum-release-age=0', '--config.auto-install-peers=false', 'dlx', ...out], { stdio: 'inherit', windowsHide: true })
+child.on('exit', (code, signal) => process.exit(code === null ? 1 : code))
+child.on('error', (err) => { console.error('npx shim: ' + err.message); process.exit(127) })
+// dsh stops a stdio server by signalling the process it spawned — us; pass
+// it on so the real server (pnpm's child) goes down with the shim.
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => { try { child.kill(sig) } catch {} })
+`
 
 /**
  * Open an OS terminal window with the bundled dsh/pnpm CLI on PATH, so
@@ -1485,12 +1578,20 @@ async function testMcpServer(server, extraPath) {
       return { ok: false, detail: `连接失败：${msg} ${hint}` }
     }
   }
-  // stdio: the command must start and stay alive briefly
+  // stdio: spawn the command exactly the way dsh will (PATH with our
+  // launchers, proxy env, the entry's own env/cwd) and run a real MCP
+  // initialize handshake over stdin/stdout, then count tools. Generous
+  // timeout: `npx -y …` / `uvx …` download on first run.
   return new Promise((resolve) => {
+    const env = withProxyEnv({ ...process.env })
+    Object.assign(env, server.env || {})
+    if (extraPath) prependEnvPath(env, extraPath, path.delimiter)
+    const { file, args, shell } = resolveSpawnCommand(server.command, server.args || [], env)
     let child
     try {
-      child = spawn(server.command, server.args || [], {
-        env: (() => { const e = withProxyEnv({ ...process.env }); Object.assign(e, server.env || {}); if (extraPath) prependEnvPath(e, extraPath, path.delimiter); return e })(),
+      child = spawn(file, args, {
+        env, shell,
+        cwd: server.cwd && server.cwd.trim() ? server.cwd.trim() : undefined,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
@@ -1499,17 +1600,78 @@ async function testMcpServer(server, extraPath) {
       return
     }
     let errTail = ''
-    child.stderr.on('data', (c) => { errTail = (errTail + c.toString()).slice(-400) })
-    child.on('error', (err) => resolve({ ok: false, detail: `无法启动命令：${String(err.message)}（命令不存在或不可执行）` }))
-    const timer = setTimeout(() => {
-      try { child.kill() } catch { /* gone */ }
-      resolve({ ok: true, detail: '命令可启动并保持运行（能否完成 MCP 握手以保存后实际连接为准）' })
-    }, 2500)
-    child.on('exit', (code) => {
+    let outBuf = ''
+    let done = false
+    let serverInfo = null
+    const finish = (r) => {
+      if (done) return
+      done = true
       clearTimeout(timer)
-      resolve({ ok: false, detail: `命令启动后立即退出 (exit ${code})${errTail ? `：${errTail.trim()}` : ''}` })
+      try { child.kill() } catch { /* gone */ }
+      resolve(r)
+    }
+    const send = (msg) => { try { child.stdin.write(JSON.stringify(msg) + '\n') } catch { /* closed */ } }
+    child.stderr.on('data', (c) => { errTail = (errTail + c.toString()).slice(-600) })
+    child.stdout.on('data', (c) => {
+      outBuf += c.toString()
+      let nl
+      while ((nl = outBuf.indexOf('\n')) !== -1) {
+        const line = outBuf.slice(0, nl).trim()
+        outBuf = outBuf.slice(nl + 1)
+        if (!line) continue
+        let msg
+        try { msg = JSON.parse(line) } catch { continue } // servers may log to stdout before speaking JSON-RPC
+        if (msg.id === 1 && msg.result) {
+          serverInfo = msg.result.serverInfo || {}
+          send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+          send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
+        } else if (msg.id === 1 && msg.error) {
+          finish({ ok: false, detail: `服务器拒绝 initialize：${msg.error.message || JSON.stringify(msg.error)}` })
+        } else if (msg.id === 2) {
+          const n = msg.result && Array.isArray(msg.result.tools) ? msg.result.tools.length : '?'
+          const who = serverInfo && serverInfo.name ? `${serverInfo.name}${serverInfo.version ? ' ' + serverInfo.version : ''}` : '服务器'
+          finish({ ok: true, detail: `握手成功：${who}，提供 ${n} 个工具` })
+        }
+      }
+    })
+    child.on('error', (err) => finish({ ok: false, detail: `无法启动命令：${String(err.message)}（命令不存在或不可执行）` }))
+    child.on('exit', (code) => {
+      finish({ ok: false, detail: `命令在完成 MCP 握手前退出 (exit ${code})${errTail ? `：${errTail.trim()}` : ''}` })
+    })
+    const timer = setTimeout(() => {
+      finish({ ok: false, detail: `90 秒内未完成 MCP 握手（首次运行要下载依赖，可稍后再试；或检查命令是否为 stdio 型 MCP 服务器）${errTail ? `：${errTail.trim()}` : ''}` })
+    }, 90_000)
+    send({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'dsh-desktop-test', version: '1.0' } },
     })
   })
+}
+
+/**
+ * Resolve a stdio command the way cross-spawn (the MCP SDK's spawner) does
+ * on Windows: a bare name that lands on a .cmd/.bat launcher (our npx/pnpm
+ * shims, or npm-installed CLIs) cannot be spawned directly by Node and must
+ * go through cmd.exe. Elsewhere the command runs as given.
+ */
+function resolveSpawnCommand(command, args, env) {
+  if (process.platform !== 'win32' || /[\\/]/.test(command) || /\.(exe|cmd|bat|com)$/i.test(command)) return { file: command, args, shell: false }
+  const pathVar = Object.keys(env).find((k) => k.toLowerCase() === 'path')
+  const dirs = (pathVar ? env[pathVar] : '').split(';').filter(Boolean)
+  for (const dir of dirs) {
+    for (const ext of ['.exe', '.com', '.cmd', '.bat']) {
+      const candidate = path.join(dir, command + ext)
+      if (!fs.existsSync(candidate)) continue
+      if (ext === '.cmd' || ext === '.bat') {
+        // cmd.exe parses the joined line: quote anything with spaces/metachars
+        // (the launcher path lives under %APPDATA%\DeepSeek Harness\bin).
+        const quote = (a) => (/[\s"&|<>^]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)
+        return { file: quote(candidate), args: args.map(quote), shell: true }
+      }
+      return { file: candidate, args, shell: false }
+    }
+  }
+  return { file: command, args, shell: false }
 }
 
 ipcMain.handle('mcp:test', async (_event, server) => {

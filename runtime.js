@@ -1,11 +1,10 @@
 /**
- * Runtime selection and version logic for the desktop shell — plain CJS with
- * no Electron imports so it is unit-testable under any Node.
+ * Runtime selection and version logic for the desktop shell. Plain CJS with
+ * no Electron imports; loads under any Node.
  *
- * A "runtime" is a directory holding node_modules/@deepseek-ai/dsh (the
- * bundled one lives in resources/dsh; upgraded ones live under
- * userData/runtimes/<version>). The active runtime is the highest-version
- * non-broken one, falling back to the bundled runtime.
+ * A runtime is a directory holding node_modules/@deepseek-ai/dsh: the bundled
+ * one in resources/dsh, upgraded ones under userData/runtimes/<version>. The
+ * active runtime is the highest-version valid one, else the bundled runtime.
  */
 'use strict'
 const fs = require('fs')
@@ -21,7 +20,7 @@ function compareVersions(a, b) {
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const x = pa[i], y = pb[i]
     if (x === y) continue
-    // exhausted side: prerelease on the other side is older, zero is equal
+    // exhausted side: a prerelease tag on the other side is older, a zero is equal
     if (x === undefined) { if (typeof y === 'string') return 1; if (y === 0) continue; return -1 }
     if (y === undefined) { if (typeof x === 'string') return -1; if (x === 0) continue; return 1 }
     if (typeof x === 'number' && typeof y === 'number') return x - y
@@ -52,7 +51,7 @@ function pickRuntime(runtimesDir, bundledDir) {
   const bundledVersion = runtimeVersion(bundledDir)
   let best = { dir: bundledDir, version: bundledVersion, bundled: true }
   let entries = []
-  try { entries = fs.readdirSync(runtimesDir) } catch { /* no upgrades yet */ }
+  try { entries = fs.readdirSync(runtimesDir) } catch { /* no runtimes dir */ }
   for (const name of entries) {
     if (name.startsWith('.') || name.includes('broken')) continue
     const dir = path.join(runtimesDir, name)
@@ -66,9 +65,9 @@ function pickRuntime(runtimesDir, bundledDir) {
 }
 
 /**
- * Rough semver-range check for an engines.node expression like
- * "^22.19.0 || >=24.0.0" against a concrete version. Unknown syntax counts
- * as satisfied (the boot-failure fallback is the real safety net).
+ * Rough semver-range check of a concrete version against an engines.node
+ * expression like "^22.19.0 || >=24.0.0". Unknown range syntax counts as
+ * satisfied; the boot-failure fallback covers that case.
  */
 function satisfiesNode(nodeVersion, enginesExpr) {
   if (!enginesExpr) return true
@@ -84,18 +83,18 @@ function satisfiesNode(nodeVersion, enginesExpr) {
       const major = base.split('.')[0]
       if (v.split('.')[0] === major && compareVersions(v, base) >= 0) return true
     } else {
-      return true // unknown range syntax: don't block the upgrade
+      return true // unknown range syntax counts as satisfied
     }
   }
   return false
 }
 
 /**
- * Release line of a dsh version: the numeric major.minor.patch, prerelease
- * tag dropped ("0.1.2-rc.1" -> "0.1.2"). Third-party plugins target a line,
- * not a version — the 0.1.2 cohort dropped 0.1.1-rc.x support outright — so
- * the in-app core upgrade only moves within the bundled core's line; crossing
- * lines needs a new desktop build that ships matching presets.
+ * Release line of a dsh version: numeric major.minor.patch with the
+ * prerelease tag dropped ("0.1.2-rc.1" -> "0.1.2"). Third-party plugins
+ * target a line, not a version; the in-app core upgrade stays within the
+ * bundled core's line. Crossing lines requires a desktop build that ships
+ * matching presets.
  */
 function releaseLine(v) {
   const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(v))
@@ -105,19 +104,18 @@ function releaseLine(v) {
 module.exports = { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, releaseLine }
 
 /**
- * Upsert a marker-fenced managed block inside a cordis patch YAML document
- * (a top-level list). `content` is the block body (top-level list entries,
- * already YAML-formatted); empty content removes the block. The rest of the
- * user's file is preserved byte-for-byte, except a standalone empty flow
- * list `[]` which must give way when block entries are present (mixing `[]`
- * with block-list entries is invalid YAML) and is restored when the
- * document would otherwise contain no entries at all.
+ * Upsert a marker-fenced managed block in a cordis patch YAML document (a
+ * top-level list). `content` is the block body: top-level list entries,
+ * already YAML-formatted; empty content removes the block. The rest of the
+ * file is preserved byte-for-byte. Exception: a standalone empty flow list
+ * `[]` cannot coexist with block-list entries; it is dropped while entries
+ * are present and restored when the document would otherwise be empty.
  */
 function upsertManagedBlock(text, name, content) {
   const begin = `# >>> dsh-desktop ${name} >>>`
   const end = `# <<< dsh-desktop ${name} <<<`
   let lines = String(text ?? '').split('\n')
-  // drop an existing block (idempotent re-save)
+  // drop any existing block
   const from = lines.findIndex((l) => l.trim() === begin)
   if (from !== -1) {
     const to = lines.findIndex((l, i) => i > from && l.trim() === end)
@@ -126,8 +124,7 @@ function upsertManagedBlock(text, name, content) {
   const hasEntries = (ls) => ls.some((l) => /^\s*-\s/.test(l))
   const blockLines = content.trim() === '' ? [] : [begin, ...content.replace(/\n+$/, '').split('\n'), end]
   if (blockLines.length > 0) {
-    // block entries make the document a block list: an empty flow list `[]`
-    // line cannot coexist with them
+    // an empty flow list `[]` line cannot coexist with block-list entries
     lines = lines.filter((l) => l.trim() !== '[]')
   } else if (!hasEntries(lines) && !lines.some((l) => l.trim() === '[]')) {
     lines.push('[]')
@@ -175,27 +172,25 @@ module.exports.upsertManagedBlock = upsertManagedBlock
 module.exports.buildMcpBlock = buildMcpBlock
 
 /**
- * Curated "common settings" the config center exposes over built-in plugin
+ * Curated common settings the config center exposes over built-in plugin
  * config. Each option maps one GUI field onto config keys of composed
  * entries (`- id: <entryId>` + `config:` merges per-key in the user patch
- * layer) — either a single entryId/configKey pair, or `targets` when one
- * user-facing value must land on several entries (e.g. the persistent-shell
- * timeout writes both the bash and the pwsh entry). Declarative on purpose:
- * the GUI page renders from this registry, validation and YAML generation
- * read it too — adding a setting is one registry entry.
- * Types: posInt (integer ≥1), ratio (0 < x < 1), bool (三态: 默认/开/关).
- * `def` mirrors the upstream default purely for display; an empty value in
- * the GUI removes the override so upstream defaults keep applying.
+ * layer): a single entryId/configKey pair, or `targets` when one value lands
+ * on several entries. The GUI page, validation and YAML generation all read
+ * this registry; adding a setting is one registry entry.
+ * Types: posInt (integer >= 1), ratio (0 < x < 1), bool (三态: 默认/开/关).
+ * `def` mirrors the upstream default for display only; an empty GUI value
+ * removes the override and the upstream default applies.
  */
 /**
  * Plugin groups the settings page renders as sections: one row per composed
  * entry id, in display order. An option's `entryId` (or its first target's)
  * picks the group; options whose entry has no row here land in a trailing
- * "其他" section, so adding a setting never requires touching this table.
+ * "其他" section.
  */
 const SETTING_GROUPS = [
-  { entryId: 'goal', label: 'goal 目标模式', hint: '让 agent 围绕一个目标自动多轮续跑的内置插件。' },
-  { entryId: 'compaction-basic', label: '上下文自动压缩', hint: '会话接近上下文上限时把较早内容压缩成摘要的内置插件。' },
+  { entryId: 'goal', label: 'goal 目标模式', hint: '内置插件：agent 围绕一个目标自动多轮续跑。' },
+  { entryId: 'compaction-basic', label: '上下文自动压缩', hint: '内置插件：会话接近上下文上限时把较早内容压缩成摘要。' },
 ]
 module.exports.SETTING_GROUPS = SETTING_GROUPS
 
@@ -203,19 +198,19 @@ const COMMON_SETTINGS = [
   {
     key: 'goalMaxRounds', entryId: 'goal', configKey: 'defaultMaxGoalRounds',
     type: 'posInt', def: 256, label: '轮数上限',
-    hint: '单个目标最多自动续跑的轮数（上游默认 256）。预算耗尽后目标停住不再续跑；创建目标时也可单独指定。留空恢复默认。',
+    hint: '单个目标自动续跑的轮数上限（上游默认 256）。达到上限后目标停止续跑；创建目标时可单独指定。留空恢复默认。',
   },
   {
-    // the web profile ships this entry disabled — the switch toggles the
-    // entry's `disabled` field (kind: 'enable' = value true means enabled)
+    // the web profile ships this entry disabled; the switch writes the
+    // entry's `disabled` field (kind: 'enable': value true = enabled)
     key: 'compactionEnabled', entryId: 'compaction-basic', kind: 'enable',
     type: 'bool', def: false, label: '启用自动压缩',
-    hint: '会话接近上下文上限时自动把较早内容压缩成摘要，腾出空间继续对话（rc8 起可用；web 端默认关闭）。开启后配合下面的触发阈值使用。',
+    hint: '会话接近上下文上限时把较早内容压缩成摘要（rc8 起可用；web 端默认关闭）。触发时机由下面的阈值决定。',
   },
   {
     key: 'compactionThreshold', entryId: 'compaction-basic', configKey: 'thresholdRatio',
     type: 'ratio', def: 0.8, label: '触发阈值（上下文占比）',
-    hint: '上下文用量达到该比例时触发自动压缩（上游默认 0.8）。仅在开启自动压缩后生效。',
+    hint: '上下文用量达到该比例时触发压缩（上游默认 0.8）。仅在开启自动压缩后生效。',
   },
 ]
 module.exports.COMMON_SETTINGS = COMMON_SETTINGS
@@ -260,10 +255,10 @@ function validateCommonSettings(values) {
   for (const [k, v] of Object.entries(values)) {
     const opt = known.get(k)
     if (!opt) return `未知设置项 ${k}`
-    if (v === undefined || v === null || v === '') continue // = no override
-    if (opt.type === 'posInt' && !(Number.isSafeInteger(v) && v >= 1)) return `「${opt.label}」需为正整数`
-    if (opt.type === 'ratio' && !(typeof v === 'number' && v > 0 && v < 1)) return `「${opt.label}」需为 0 到 1 之间的小数`
-    if (opt.type === 'bool' && typeof v !== 'boolean') return `「${opt.label}」取值无效`
+    if (v === undefined || v === null || v === '') continue // no override
+    if (opt.type === 'posInt' && !(Number.isSafeInteger(v) && v >= 1)) return `「${opt.label}」请填正整数`
+    if (opt.type === 'ratio' && !(typeof v === 'number' && v > 0 && v < 1)) return `「${opt.label}」请填 0 到 1 之间的小数`
+    if (opt.type === 'bool' && typeof v !== 'boolean') return `「${opt.label}」取值无效，请重新选择`
   }
   return null
 }
@@ -337,13 +332,12 @@ module.exports.collectSkills = collectSkills
 
 // ---- user skill store (~/.dsh/skills) with an enable/disable switch ----
 //
-// dsh has no per-skill disable config: its filesystem provider scans only the
-// TOP LEVEL of each root (`<name>/SKILL.md` or `<name>.md`, never nested) and a
-// top-level directory without SKILL.md is skipped silently. So "disabled" is a
-// location, not a flag: the skill is moved under `<root>/.disabled/`, where the
-// scanner cannot see it, and moved back to enable it. File contents are never
-// touched, so a reinstall naturally lands enabled, and the root watcher picks
-// the rename up without a restart.
+// dsh has no per-skill disable config; its filesystem provider scans only the
+// top level of each root (`<name>/SKILL.md` or `<name>.md`) and skips a
+// top-level directory without SKILL.md. Disabled is a location: the skill is
+// moved under `<root>/.disabled/` and moved back to enable it. File contents
+// are not touched; a reinstall lands enabled; the root watcher picks the
+// rename up without a restart.
 
 const SKILL_DISABLED_DIR = '.disabled'
 module.exports.SKILL_DISABLED_DIR = SKILL_DISABLED_DIR
@@ -353,12 +347,11 @@ const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 module.exports.SKILL_NAME_RE = SKILL_NAME_RE
 
 /**
- * Parse a SKILL.md's YAML frontmatter into a flat object. Only the subset
- * dsh's own parser cares about needs to be exact (scalar `key: value`
- * pairs, quoted or bare, plus `metadata:` one level of indented scalars);
- * anything fancier (block sequences, multi-line scalars) is kept as raw
- * text so the detail view can still show it. Returns undefined when the
- * file has no leading `---` block.
+ * Parse a SKILL.md's YAML frontmatter into a flat object. Exact for the
+ * subset dsh's own parser reads: scalar `key: value` pairs, quoted or bare,
+ * plus one level of indented scalars under `metadata:`. Block sequences and
+ * multi-line scalars are kept as raw text for the detail view. Returns
+ * undefined when the file has no leading `---` block.
  */
 function parseSkillFrontmatter(text) {
   const m = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text)
@@ -370,7 +363,7 @@ function parseSkillFrontmatter(text) {
     return t
   }
   const lines = m[1].split(/\r?\n/)
-  let current = null // top-level key whose nested block we are inside
+  let current = null // top-level key whose nested block is being collected
   let block = []
   const flush = () => {
     if (current === null) return
@@ -446,7 +439,7 @@ function scanSkillDir(fsLike, pathLike, dir) {
   return out
 }
 
-/** Max entries a detail tree lists (a skill bundling a node_modules must not hang the page). */
+/** Max entries a detail tree lists. */
 const SKILL_TREE_MAX = 400
 /** Largest file the detail viewer reads. */
 const SKILL_FILE_MAX_BYTES = 256 * 1024
@@ -526,7 +519,7 @@ module.exports.skillDetail = skillDetail
 /**
  * Enabled skills (root) followed by disabled ones (root/.disabled), each row
  * carrying `enabled`. A name present in both places is reported once, as
- * enabled — the live copy is the one dsh sees.
+ * enabled; dsh loads the root copy.
  */
 function listSkillStore(fsLike, pathLike, root) {
   const enabled = scanSkillDir(fsLike, pathLike, root).map((s) => ({ ...s, enabled: true }))
@@ -569,8 +562,8 @@ module.exports.removeSkill = removeSkill
 
 /**
  * Move a skill between the root and its .disabled folder. Returns
- * {ok, error?, enabled}. A same-name skill already at the destination refuses
- * the move (never clobber), and an already-in-place skill is a no-op success.
+ * {ok, error?, enabled}. A same-name skill at the destination refuses the
+ * move; a skill already in place is a no-op success.
  */
 function setSkillEnabled(fsLike, pathLike, root, name, enabled) {
   if (!SKILL_NAME_RE.test(name) || name.length > 64) return { ok: false, error: '技能名无效' }
@@ -583,7 +576,7 @@ function setSkillEnabled(fsLike, pathLike, root, name, enabled) {
     return { ok: false, error: '技能不存在' }
   }
   if (locateSkill(fsLike, pathLike, to, name)) {
-    return { ok: false, error: enabled ? `技能目录里已有同名的「${name}」，先删除其中一个` : `.disabled 里已有同名的「${name}」，先删除其中一个` }
+    return { ok: false, error: enabled ? `技能目录里已有同名的「${name}」，请先删除其中一个` : `.disabled 里已有同名的「${name}」，请先删除其中一个` }
   }
   fsLike.mkdirSync(to, { recursive: true })
   const dest = pathLike.join(to, src.kind === 'bundle' ? name : `${name}.md`)
@@ -593,13 +586,11 @@ function setSkillEnabled(fsLike, pathLike, root, name, enabled) {
 module.exports.setSkillEnabled = setSkillEnabled
 
 /**
- * Prepend a directory to the PATH entry of a plain env object,
- * case-insensitively. On Windows the real key is usually "Path"; blindly
- * assigning "PATH" onto a spread of process.env creates a DUPLICATE key,
- * and the child process can end up with an effective PATH containing only
- * the prepended directory — every external tool (git!) silently vanishes
- * from plugins spawned under the dsh server. (The magic `process.env`
- * object is case-insensitive; a spread of it is NOT.)
+ * Prepend a directory to the PATH entry of a plain env object, matching the
+ * key case-insensitively. On Windows the key of a `{...process.env}` spread
+ * is usually "Path"; assigning "PATH" creates a duplicate key, and the child's
+ * effective PATH may then contain only the prepended directory. `process.env`
+ * itself is case-insensitive; a spread of it is not.
  */
 function prependEnvPath(env, dir, delimiter) {
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH'
@@ -609,14 +600,11 @@ function prependEnvPath(env, dir, delimiter) {
 module.exports.prependEnvPath = prependEnvPath
 
 /**
- * Proxy env vars this app takes FULL ownership of. The app's own setting
- * decides a child's proxy environment completely: whatever the OS/IT put in
- * the user environment is removed first, so "不使用代理" really means
- * httpx's trust_env=False and not "inherit whatever happened to be there".
- * Corporate Windows images routinely ship a machine-wide HTTP_PROXY that
- * has no exception list — inheriting it is exactly what breaks intranet
- * access. TLS vars are deliberately NOT here: dropping a user's own
- * NODE_EXTRA_CA_CERTS would break their certificates.
+ * Proxy env vars the app owns. Inherited values are removed before the app's
+ * own setting is applied; "不使用代理" yields a child environment with no
+ * proxy vars. Corporate Windows images commonly set a machine-wide
+ * HTTP_PROXY without an exception list. TLS vars (NODE_EXTRA_CA_CERTS) are
+ * not in this list; the user's own value is kept.
  */
 const PROXY_ENV_KEYS = [
   'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'FTP_PROXY', 'NO_PROXY',
@@ -627,10 +615,9 @@ const PROXY_ENV_KEYS = [
 module.exports.PROXY_ENV_KEYS = PROXY_ENV_KEYS
 
 /**
- * Delete every proxy var from a plain env object, CASE-INSENSITIVELY: on
- * Windows the real key of a `{...process.env}` spread is often `Http_Proxy`,
- * and `delete env.HTTP_PROXY` would leave it in place (same trap as
- * prependEnvPath above).
+ * Delete every proxy var from a plain env object, matching keys
+ * case-insensitively: on Windows the key of a `{...process.env}` spread is
+ * often `Http_Proxy`, which `delete env.HTTP_PROXY` leaves in place.
  */
 function scrubProxyEnv(env) {
   for (const key of Object.keys(env)) {
@@ -643,7 +630,7 @@ module.exports.scrubProxyEnv = scrubProxyEnv
 const LOOPBACK = ['127.0.0.1', 'localhost', '::1']
 module.exports.LOOPBACK = LOOPBACK
 
-/** Bypass patterns for a config: loopback is ALWAYS bypassed. */
+/** Bypass patterns for a config; loopback is always included. */
 function bypassPatterns(config) {
   const out = [...LOOPBACK]
   for (const part of String((config && config.bypass) || '').split(/[,;\s]+/)) {
@@ -654,12 +641,11 @@ function bypassPatterns(config) {
 module.exports.bypassPatterns = bypassPatterns
 
 /**
- * Does `host` match one of the bypass patterns? Supported forms:
+ * Whether `host` matches one of the bypass patterns. Supported forms:
  *   corp.com (exact) | *.corp.com or .corp.com (suffix) | 10.* (prefix) |
- *   <local> (any name without a dot — Windows' "bypass proxy server for
- *   local addresses") | * (everything).
- * Matching happens in ONE place (the forwarder) instead of being handed to
- * NO_PROXY, whose wildcard semantics differ between undici, npm and git.
+ *   <local> (any name without a dot) | * (everything).
+ * Bypass matching lives here, in the forwarder; NO_PROXY wildcard semantics
+ * differ between undici, npm and git.
  */
 function isBypassed(host, patterns) {
   const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '')
@@ -682,12 +668,11 @@ function isBypassed(host, patterns) {
 module.exports.isBypassed = isBypassed
 
 /**
- * Point a child env at the in-process forwarding proxy (proxy-forward.js),
- * after scrubbing whatever proxy vars it inherited. `port` 0 means the
- * forwarder is unavailable — the env is then merely clean (= direct).
- * Note the child always gets the SAME static endpoint whatever the mode is;
- * routing (direct / upstream / per-URL PAC) is decided inside the forwarder,
- * which is why a config change does not need the env to be rebuilt.
+ * Point a child env at the in-process forwarding proxy (proxy-forward.js)
+ * after scrubbing inherited proxy vars. `port` 0 means no forwarder; the env
+ * is then scrubbed only (direct). The child gets the same static endpoint in
+ * every mode; routing (direct / upstream / per-URL PAC) is decided inside the
+ * forwarder, and a config change does not rebuild the env.
  */
 function applyProxyEnv(env, port, config) {
   scrubProxyEnv(env)
@@ -699,16 +684,14 @@ function applyProxyEnv(env, port, config) {
       HTTP_PROXY: url, http_proxy: url,
       HTTPS_PROXY: url, https_proxy: url,
       NO_PROXY: noProxy, no_proxy: noProxy,
-      // npm/pnpm read ~/.npmrc too, where corporate images also write a
-      // proxy=; an explicit env entry is the only way to override it.
+      // npm/pnpm also read proxy= from ~/.npmrc; these env entries override it.
       npm_config_proxy: url, npm_config_https_proxy: url, npm_config_noproxy: noProxy,
       NODE_USE_ENV_PROXY: '1',
     })
   }
   if (c.mode !== 'none') {
-    // TLS-intercepting proxies (corporate MITM) re-sign traffic with their
-    // own CA; Node's bundled CA store rejects it ("self signed certificate
-    // in certificate chain"). The OS trust store usually has the corp CA.
+    // TLS-intercepting proxies re-sign traffic with their own CA, which
+    // Node's bundled CA store rejects; the OS trust store usually carries it.
     env.NODE_USE_SYSTEM_CA = '1'
     if (typeof c.caPath === 'string' && c.caPath.trim()) env.NODE_EXTRA_CA_CERTS = c.caPath.trim()
     if (c.insecure) env.NODE_TLS_REJECT_UNAUTHORIZED = '0'

@@ -1,26 +1,24 @@
 /**
- * Staging-time patch for @linxin666/dsh-ssh: keep the SSH terminal session
- * alive across UI unmounts ("switch away and the terminal reconnects" bug).
+ * Staging-time patch for @linxin666/dsh-ssh: keeps the SSH terminal session
+ * alive across UI unmounts.
  *
  * Upstream binds the session lifetime to the React component: TerminalTab's
  * unmount cleanup closes the WebSocket, and the host closes the ssh2
- * connection the moment the socket drops — so switching panel tabs, or any
- * center-column rebuild by the shell (session/workspace switches), kills the
- * SSH session. Upstream's 0.3.5 "don't close the panel on session-list
- * churn" fix is task-board-only and does not touch this path (user-verified).
+ * connection when the socket drops. Switching panel tabs or any
+ * center-column rebuild by the shell (session/workspace switches) ends the
+ * SSH session.
  *
- * The patch is CLIENT-ONLY: the WebSocket and the xterm instance move into a
- * module-level slot on unmount (render detached, socket stays open, output
- * keeps flowing into the live terminal buffer), and the next mount re-adopts
- * them — reparent the xterm element, rewire status handlers, refit. Only the
- * explicit disconnect button or a remote exit really closes the session. The
- * host needs no change because it only tears down when the socket closes.
+ * Client-only patch: on unmount the WebSocket and the xterm instance move
+ * into a module-level slot (render detached, socket open, output flowing
+ * into the live terminal buffer); the next mount re-adopts them (reparent
+ * the xterm element, rewire status handlers, refit). The disconnect button
+ * or a remote exit closes the session. The host tears down only when the
+ * socket closes and needs no change.
  *
- * Applied by stage-dsh.mjs to the INSTALLED package's lib/client.js (the
- * file dsh serves at /plugins/<pkg>/client.js). Anchors are exact strings
- * from the 0.3.5 build and THROW when they stop matching, so an upstream
- * bump that reshapes TerminalTab fails the stage loudly instead of shipping
- * an unpatched or half-patched bundle. Drop this file (and its call site)
+ * Applied by stage-dsh.mjs to the installed package's lib/client.js (served
+ * by dsh at /plugins/<pkg>/client.js). Anchors are exact strings from the
+ * 0.3.5 build and throw when they stop matching; an upstream bump that
+ * reshapes TerminalTab fails the stage. Remove this file and its call site
  * once upstream persists sessions itself.
  */
 import fs from 'node:fs'
@@ -31,8 +29,8 @@ const MARKER = '/* dsh-desktop ssh-terminal-keepalive */'
 /** Replace exactly one occurrence, or throw with the anchor's name. */
 function replaceOnce(source, anchorName, from, to) {
   const first = source.indexOf(from)
-  if (first === -1) throw new Error(`ssh keepalive patch: anchor "${anchorName}" not found — upstream layout changed, re-derive the patch`)
-  if (source.indexOf(from, first + 1) !== -1) throw new Error(`ssh keepalive patch: anchor "${anchorName}" is not unique — re-derive the patch`)
+  if (first === -1) throw new Error(`ssh keepalive patch: anchor "${anchorName}" not found; upstream layout changed. Re-derive the patch.`)
+  if (source.indexOf(from, first + 1) !== -1) throw new Error(`ssh keepalive patch: anchor "${anchorName}" is not unique. Re-derive the patch.`)
   return source.slice(0, first) + to + source.slice(first + from.length)
 }
 
@@ -40,7 +38,7 @@ export function applySshKeepalivePatch(stagingDir) {
   const file = path.join(stagingDir, 'node_modules', '@linxin666', 'dsh-ssh', 'lib', 'client.js')
   if (!fs.existsSync(file)) return false // minimal flavor / plugin absent
   let s = fs.readFileSync(file, 'utf8')
-  if (s.includes(MARKER)) return true // already patched (defensive; staging installs fresh)
+  if (s.includes(MARKER)) return true // already patched
 
   // 1. Module-level parking slot, next to the module-level CSS guard.
   s = replaceOnce(s, 'module slot',
@@ -50,14 +48,14 @@ export function applySshKeepalivePatch(stagingDir) {
 \t\t/** Live session parked across component unmounts; adopted on next mount. */
 \t\tlet keptSession = null;`)
 
-  // 2. Track the CONNECTED alias (the select's alias state can drift).
+  // 2. Track the connected alias; the select's alias state can drift.
   s = replaceOnce(s, 'ref block',
     '\t\t\tconst dataSubRef = (0, react.useRef)(null);',
     `\t\t\tconst dataSubRef = (0, react.useRef)(null);
 \t\t\tconst connAliasRef = (0, react.useRef)("");`)
 
-  // 3. Unmount: park a live session instead of tearing it down, and adopt a
-  //    parked one on mount. Replaces the teardown-on-unmount effect.
+  // 3. Unmount parks a live session; mount adopts a parked one. Replaces the
+  //    teardown-on-unmount effect.
   s = replaceOnce(s, 'unmount effect',
     `\t\t\t(0, react.useEffect)(() => () => {
 \t\t\t\tteardown();

@@ -1,26 +1,24 @@
 /**
- * Stage the @deepseek-ai/dsh runtime for the current (or overridden)
- * platform into staging/<platform>-<arch>/dsh, then prune what the desktop
- * app never needs. Cross-platform: runs on the Windows / macOS / Linux CI
- * runner with plain Node >= 18.
+ * Stage the @deepseek-ai/dsh runtime for the host (or given) platform into
+ * staging/<platform>-<arch>/dsh and prune what the desktop app does not use.
+ * Runs on Windows / macOS / Linux with plain Node >= 18.
  *
  * Usage:
  *   node stage-dsh.mjs                  # stage for the host platform/arch
  *   node stage-dsh.mjs win32 x64        # cross-stage (adds npm --os/--cpu)
  *
  * Env:
- *   DSH_VERSION  npm version/tag of @deepseek-ai/dsh. Default: use the
- *                committed lockfile (locks/<flavor>.package-lock.json) —
- *                deterministic and fast. Setting a version that differs from
- *                the locked one (or DSH_STAGE_LIVE=1) switches to live npm
- *                resolution, which can be pathologically slow/OOM-prone when
- *                the registry graph misbehaves — see AGENTS.md.
- *   DSH_FLAVOR   preset-plugin manifest to use: "minimal" (default) reads
- *                plugins.json, anything else reads plugins-<flavor>.json
- *                (e.g. full -> plugins-full.json); missing manifest = error
+ *   DSH_VERSION  npm version/tag of @deepseek-ai/dsh. Default: install from
+ *                the committed lockfile (locks/<flavor>.package-lock.json).
+ *                A version that differs from the locked one, or
+ *                DSH_STAGE_LIVE=1, switches to live npm resolution (slow,
+ *                may OOM; see AGENTS.md).
+ *   DSH_FLAVOR   preset-plugin manifest: "minimal" (default) reads
+ *                plugins.json, any other value reads plugins-<flavor>.json
+ *                (full -> plugins-full.json). A missing manifest is an error.
  *
  * `node stage-dsh.mjs --update-locks` runs a live resolution and writes the
- * result back to locks/<flavor>.package-lock.json — the dsh-upgrade step.
+ * result to locks/<flavor>.package-lock.json.
  */
 import { execSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -42,12 +40,12 @@ fs.rmSync(dir, { recursive: true, force: true })
 fs.mkdirSync(dir, { recursive: true })
 fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true }, null, 2))
 
-// --ignore-scripts: skip node-gyp fallbacks entirely; every native dep this
-// runtime needs (node-pty, sharp via @img/*, koffi via @koromix/*) ships
-// prebuilt binaries selected by npm's os/cpu fields.
-// Extra preset plugin packages (installed alongside dsh so the loader
-// resolves them from the same node_modules tree; activated by main.js
-// seeding them into the user profile, see preset-plugins.json below).
+// --ignore-scripts: no node-gyp builds. Every native dep (node-pty, sharp via
+// @img/*, koffi via @koromix/*) ships prebuilt binaries selected by npm's
+// os/cpu fields.
+// Preset plugin packages install next to dsh so the loader resolves them from
+// the same node_modules tree; main.js activates them by seeding the user
+// profile from preset-plugins.json (written below).
 let extraPackages = []
 const flavor = (process.env.DSH_FLAVOR || 'minimal').trim()
 const pluginsFile = path.join(here, flavor === 'minimal' ? 'plugins.json' : `plugins-${flavor}.json`)
@@ -55,11 +53,11 @@ if (!fs.existsSync(pluginsFile)) {
   throw new Error(`flavor "${flavor}" 对应的插件清单不存在：${pluginsFile}`)
 }
 const pluginsManifest = JSON.parse(fs.readFileSync(pluginsFile, 'utf8'))
-// "packages" get seeded into the user profile (activated); "carry" are
-// only installed + registered so they RESOLVE from the app closure —
-// activation stays with the user (e.g. skins: the skin center enforces
-// one-active-at-a-time, seeding them all would activate every skin at
-// once AND collide entry ids with skins the user installed before).
+// "packages" are seeded into the user profile (activated). "carry" are only
+// installed and registered so they resolve from the app closure; activation
+// stays with the user. Mutually exclusive families (skins) must be carry:
+// seeding all of them activates every skin and collides entry ids with skins
+// the user installed.
 const seedPackages = pluginsManifest.packages ?? []
 const carryPackages = pluginsManifest.carry ?? []
 extraPackages = [...seedPackages, ...carryPackages]
@@ -70,13 +68,11 @@ const crossFlags = cross ? [`--os=${platform}`, `--cpu=${arch}`, '--force'] : []
 const baseFlags = ['--ignore-scripts', '--no-audit', '--no-fund']
 
 // ---- install: locked by default, live only when asked ----
-// Live npm resolution of the dsh graph can explode: arborist backtracks on
-// peer ranges and a registry-side release can turn a 30s install into an
-// OOM (observed on the mac CI runners AND on linux — >10min at 2GB heap).
-// So CI installs from a committed lockfile (npm ci: no resolution, integrity
-// checked, one lock covers every platform via os/cpu-conditional entries).
-// Live mode is for upgrading dsh: it gets a bigger heap and writes the new
-// lock back with --update-locks.
+// Live npm resolution of the dsh graph backtracks on peer ranges and can run
+// for >10min or OOM at a 2GB heap. Default is `npm ci` from the committed
+// lockfile: no resolution, integrity checked, one lock covers every platform
+// via os/cpu-conditional entries. Live mode is the dsh-upgrade path: larger
+// heap, and --update-locks writes the new lock back.
 const lockPath = path.join(here, 'locks', `${flavor}.package-lock.json`)
 const wantLive = updateLocks || process.env.DSH_STAGE_LIVE === '1'
 let useLock = false
@@ -84,37 +80,34 @@ if (!wantLive && fs.existsSync(lockPath)) {
   const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
   const lockedDsh = lock.packages['node_modules/@deepseek-ai/dsh']?.version
   if (version !== 'latest' && version !== lockedDsh) {
-    console.log(`DSH_VERSION=${version} != locked ${lockedDsh} — falling back to live resolution (slow); run --update-locks to re-pin`)
+    console.log(`DSH_VERSION=${version} differs from locked ${lockedDsh}; using live resolution (slow). Run --update-locks to re-pin.`)
   } else {
     useLock = true
     const rootDeps = lock.packages[''].dependencies ?? {}
     const lockPlugins = Object.keys(rootDeps).filter((n) => n !== '@deepseek-ai/dsh').sort()
     if (lockPlugins.join() !== [...extraPackages].sort().join()) {
-      throw new Error(`锁文件与插件清单不一致：lock=[${lockPlugins}] manifest=[${extraPackages}]；改过 ${path.basename(pluginsFile)} 后需要跑 node stage-dsh.mjs --update-locks 重新生成 ${path.basename(lockPath)}`)
+      throw new Error(`锁文件与插件清单不一致：lock=[${lockPlugins}] manifest=[${extraPackages}]。运行 node stage-dsh.mjs --update-locks 重新生成 ${path.basename(lockPath)}`)
     }
     console.log(`installing from lock ${path.basename(lockPath)} (dsh ${lockedDsh})`)
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true, dependencies: rootDeps }, null, 2))
     fs.copyFileSync(lockPath, path.join(dir, 'package-lock.json'))
-    // --force: npm ci re-validates peer ranges even though the lock already
-    // fixed every version. A preset plugin lagging dsh by one minor (e.g.
-    // better-sidebar peering the previous rc while the ecosystem catches up)
-    // would refuse to install; the lock is the decision record and the
-    // staging smoke run is the real compatibility check, so ci just installs.
+    // --force: npm ci re-validates peer ranges and rejects a preset plugin
+    // whose peer lags dsh by one release. The lock is the decision record;
+    // the staging smoke run is the compatibility check.
     execSync(`npm ${['ci', '--force', ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit' })
   }
 } else if (!wantLive) {
-  console.log(`no lockfile at ${lockPath} — live resolution (slow); run --update-locks to create it`)
+  console.log(`no lockfile at ${lockPath}; using live resolution (slow). Run --update-locks to create it.`)
 }
 
 if (!useLock) {
-  // bigger heap for arborist's backtracking; still no guarantee — prefer locks
+  // Larger heap for arborist's backtracking. Locks remain the default path.
   const liveEnv = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=6144`.trim() }
   // Step 1: dsh itself.
   execSync(`npm ${['install', `@deepseek-ai/dsh@${version}`, ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit', env: liveEnv })
-  // Step 2: preset plugin packages. NOTE: a plugin whose peer ranges target an
-  // older dsh release than the bundled one makes this step extremely slow
-  // (npm backtracks trying to satisfy stale peers) and would not work at
-  // runtime anyway — pick plugin versions built for the bundled dsh release.
+  // Step 2: preset plugin packages. Plugin versions must target the bundled
+  // dsh release: stale peer ranges make npm backtrack for a long time and
+  // fail at runtime.
   if (extraPackages.length > 0) {
     execSync(`npm ${['install', ...extraPackages, ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit', env: liveEnv })
   }
@@ -127,11 +120,10 @@ if (!useLock) {
 
 if (extraPackages.length > 0) {
 
-  // Register the preset plugins as dependencies of the bundled dsh app.
-  // At boot dsh symlinks its app's dependency closure into
-  // $DSH_HOME/profiles/node_modules (healProfilesModuleFallback), which is
-  // what makes a package resolvable as a plugin from the web profile —
-  // installing into this staging tree alone is not enough.
+  // Register the preset plugins as dependencies of the bundled dsh app. At
+  // boot dsh symlinks the app's dependency closure into
+  // $DSH_HOME/profiles/node_modules (healProfilesModuleFallback); a package
+  // resolves as a plugin from the web profile only through that closure.
   const rootManifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
   const pluginNames = Object.keys(rootManifest.dependencies ?? {}).filter((n) => n !== '@deepseek-ai/dsh')
   const appManifestPath = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
@@ -141,29 +133,27 @@ if (extraPackages.length > 0) {
   fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2))
   console.log(`registered preset plugins in dsh app manifest: ${pluginNames.join(', ')}`)
 
-  // Registration only makes the packages RESOLVABLE from the profile.
-  // Activation happens at runtime: main.js seeds each preset (once) into
-  // the profile manifest's dependencies + dsh.profile.bundles, reading
-  // this manifest of exact staged versions.
+  // Registration makes the packages resolvable from the profile. Activation
+  // happens at runtime: main.js seeds each preset into the profile manifest's
+  // dependencies + dsh.profile.bundles from this manifest of exact versions.
   const ver = (name) => JSON.parse(fs.readFileSync(path.join(dir, 'node_modules', ...name.split('/'), 'package.json'), 'utf8')).version
   const presets = { seed: {}, carry: {} }
   for (const name of seedPackages) presets.seed[name] = ver(name)
   for (const name of carryPackages) presets.carry[name] = ver(name)
   fs.writeFileSync(path.join(dir, 'preset-plugins.json'), JSON.stringify(presets, null, 2))
 
-  // Desktop-local behavior patches on the installed plugins (anchors throw
-  // on upstream drift so a version bump can't silently ship them broken).
+  // Desktop-local patches on the installed plugins. Anchors throw on upstream
+  // drift; a version bump fails the stage instead of shipping a broken patch.
   if (applySshKeepalivePatch(dir)) console.log('applied patch: ssh terminal keepalive')
 }
 
 // ---- bundled CLI tooling ----
-// Ship pnpm inside the runtime (dsh/tools/node_modules/pnpm). The desktop
+// pnpm ships inside the runtime (dsh/tools/node_modules/pnpm). The desktop
 // app writes `dsh`/`pnpm`/`npx` launchers that run it on Electron's embedded
-// Node, so `dsh plugin add` works with nothing installed on the machine.
-// PINNED TO THE 11 LINE: pnpm 12 stopped shipping JavaScript — its package
-// is a placeholder whose postinstall downloads a native binary, and with
-// --ignore-scripts (and offline users) there is nothing to run. 11.x still
-// ships bin/pnpm.cjs + bin/pnpm.mjs.
+// Node; `dsh plugin add` needs nothing installed on the machine.
+// pnpm is pinned to the 11 line: from 12 the npm package is a placeholder
+// whose postinstall downloads a native binary, which --ignore-scripts and
+// offline users never run. 11.x ships bin/pnpm.cjs + bin/pnpm.mjs.
 const toolsDir = path.join(dir, 'tools')
 fs.mkdirSync(toolsDir, { recursive: true })
 fs.writeFileSync(path.join(toolsDir, 'package.json'), JSON.stringify({ name: 'dsh-desktop-tools', private: true }, null, 2))
@@ -171,15 +161,15 @@ execSync(`npm ${['install', 'pnpm@11', ...baseFlags, '--omit=optional', ...cross
 {
   const pnpmBin = path.join(toolsDir, 'node_modules', 'pnpm', 'bin')
   if (!fs.existsSync(path.join(pnpmBin, 'pnpm.cjs')) && !fs.existsSync(path.join(pnpmBin, 'pnpm.mjs'))) {
-    throw new Error('bundled pnpm has no JavaScript entry (bin/pnpm.cjs|mjs) — the launchers cannot run it')
+    throw new Error('bundled pnpm has no JavaScript entry (bin/pnpm.cjs|mjs); the launchers require one')
   }
 }
 
-// Ship uv (Python-side counterpart of pnpm dlx): `uvx <pkg>` MCP servers run
-// without a system Python — uv downloads an interpreter on first use into
-// the app's userData (see the uvx launcher in main.js). Pinned release from
-// GitHub, sha256-verified against the asset's published digest. The archive
-// holds two static binaries, uv and uvx; both go to dsh/tools/uv/.
+// uv (Python-side counterpart of pnpm dlx): `uvx <pkg>` MCP servers run
+// without a system Python; uv downloads an interpreter on first use into the
+// app's userData (uvx launcher in main.js). Pinned GitHub release, sha256
+// verified against the published digest. The archive holds two static
+// binaries, uv and uvx; both go to dsh/tools/uv/.
 const UV_VERSION = '0.12.10'
 const UV_TRIPLE = {
   'win32-x64': 'x86_64-pc-windows-msvc', 'win32-arm64': 'aarch64-pc-windows-msvc',
@@ -209,7 +199,7 @@ if (UV_TRIPLE === undefined) throw new Error(`no uv build mapped for ${key}`)
   fs.rmSync(extractDir, { recursive: true, force: true })
   fs.mkdirSync(extractDir, { recursive: true })
   if (ext === 'zip') {
-    // bsdtar (Windows 10+, macOS) opens zips; GNU tar on Linux does not.
+    // bsdtar (Windows 10+, macOS) extracts zips; GNU tar on Linux does not.
     if (process.platform === 'linux') execSync(`unzip -q -o "${tmpArchive}" -d "${extractDir}"`, { stdio: 'inherit' })
     else execSync(`tar -xf "${tmpArchive}" -C "${extractDir}"`, { stdio: 'inherit' })
   } else {
@@ -234,7 +224,7 @@ if (UV_TRIPLE === undefined) throw new Error(`no uv build mapped for ${key}`)
 const nm = path.join(dir, 'node_modules')
 const rm = (p) => fs.rmSync(p, { recursive: true, force: true })
 
-// node-pty: keep only this platform's prebuilds; drop sources and debug symbols
+// node-pty: keep this platform's prebuilds only; drop sources and debug symbols.
 const pty = path.join(nm, 'node-pty')
 if (fs.existsSync(pty)) {
   const prebuilds = path.join(pty, 'prebuilds')
@@ -244,10 +234,10 @@ if (fs.existsSync(pty)) {
   for (const junk of ['deps', 'build', 'src', 'third_party']) rm(path.join(pty, junk))
 }
 
-// sharp: the wasm fallback is dead weight next to the native @img package
+// sharp: the native @img package is used; the wasm fallback is dropped.
 rm(path.join(nm, '@img', 'sharp-wasm32'))
 
-// sourcemaps and .pdb debug symbols
+// Sourcemaps and .pdb debug symbols.
 const walk = (p) => {
   for (const entry of fs.readdirSync(p, { withFileTypes: true })) {
     const full = path.join(p, entry.name)
@@ -257,9 +247,8 @@ const walk = (p) => {
 }
 walk(nm)
 
-// sanity checks: the pieces the desktop app depends on must exist.
-// node-pty ships prebuilds for win32/darwin only — the packaged targets;
-// a linux staging run (local smoke tests) skips that assertion.
+// Required pieces. node-pty ships prebuilds for win32/darwin (the packaged
+// targets) only; a linux staging run skips that assertion.
 const mustExist = [
   path.join(nm, '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
   ...(platform === 'win32' || platform === 'darwin'

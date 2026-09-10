@@ -154,7 +154,7 @@
   <!-- ============ 插件 ============ -->
   <div class="pane single active" id="pane-plugins">
     <h2>插件</h2>
-    <p class="sub">按 npm 包名或来源安装到你的用户配置层；带 bundle 标记的重启后自动生效。需要执行构建脚本的插件（多为 GitHub 源码分发）请通过菜单「插件 → 打开命令行窗口」按提示安装。</p>
+    <p class="sub">按 npm 包名或来源安装到用户配置层，重启后生效。需要执行构建脚本的插件请在「插件 → 打开命令行窗口」中安装。</p>
     <div class="row" style="margin-bottom:8px">
       <input id="spec" placeholder="some-dsh-plugin@1.2.0 或 github:owner/repo" spellcheck="false">
       <button id="add" class="primary" style="flex:none">安装</button>
@@ -180,7 +180,7 @@
     <div id="mcp-detail" style="display:none">
       <div class="row" style="margin-bottom:16px">
         <h2 id="m-title" style="flex:1">服务器</h2>
-        <label class="toggle" title="启用/停用（停用保留配置，热断开连接）">
+        <label class="toggle" title="启用 / 停用">
           <input type="checkbox" id="m-enabled"><span class="knob"></span>
         </label>
       </div>
@@ -192,23 +192,23 @@
           <option value="stdio">本机命令（stdio）</option>
         </select></div>
       <div id="m-http-fields">
-        <div class="field"><label>服务器地址（本机/内网服务通常是 http:// 而非 https://）</label>
+        <div class="field"><label>服务器地址</label>
           <input id="m-url" placeholder="http://127.0.0.1:8080/mcp" spellcheck="false"></div>
-        <div class="field"><label>请求头（用于认证等，可留空）</label>
+        <div class="field"><label>请求头（可选）</label>
           <div id="m-headers"></div>
           <button class="ghost" id="m-add-header">＋ 添加请求头</button></div>
       </div>
       <div id="m-stdio-fields" style="display:none">
-        <div class="field"><label>命令（在本机启动；<code>npx</code> 与 <code>uvx</code> 由应用内置运行时提供，机器无需安装 Node/Python）</label>
+        <div class="field"><label>命令（<code>npx</code>、<code>uvx</code> 由应用内置运行时提供）</label>
           <input id="m-command" placeholder="npx" spellcheck="false"></div>
-        <div class="field"><label>参数（每行一个；照抄 MCP 服务器 README 里 npx/uvx 后面的部分）</label>
+        <div class="field"><label>参数（每行一个）</label>
           <textarea id="m-args" rows="4" placeholder="-y&#10;@modelcontextprotocol/server-filesystem&#10;/Users/me/projects" spellcheck="false"></textarea></div>
-        <div class="field"><label>环境变量（API 密钥等，可留空；Python 系可在此设 UV_PYTHON_INSTALL_MIRROR 指向国内镜像）</label>
+        <div class="field"><label>环境变量（可选）</label>
           <div id="m-env"></div>
           <button class="ghost" id="m-add-env">＋ 添加环境变量</button></div>
-        <div class="field"><label>工作目录（可留空）</label>
+        <div class="field"><label>工作目录（可选）</label>
           <input id="m-cwd" placeholder="/path/to/project" spellcheck="false"></div>
-        <p class="sub">命令会以你的身份在本机执行，只添加你信任的 MCP 服务器。首次运行 npx/uvx 需要下载依赖，可能要等一会儿。</p>
+        <p class="sub">命令以当前用户身份在本机执行，只添加信任的服务器。首次运行 npx/uvx 会下载依赖。</p>
       </div>
       <div class="row" style="margin-top:18px">
         <button class="danger" id="m-del">删除</button>
@@ -217,7 +217,7 @@
         <button class="primary" id="m-save">保存</button>
       </div>
       <div class="msg" id="mcp-msg"></div>
-      <p class="sub" style="margin-top:14px">保存即生效：配置写入你的用户配置层，dsh 几秒内热加载，无需重启。连接失败不会弹错——用「测试连接」验证，或<a href="#" onclick="pluginApi.openLog();return false" style="color:#7ea0ff">查看服务日志</a>。</p>
+      <p class="sub" style="margin-top:14px">保存即生效，无需重启。连接状态用「测试连接」查看，或<a href="#" onclick="pluginApi.openLog();return false" style="color:#7ea0ff">打开服务日志</a>。</p>
     </div>
     <div id="mcp-none">左侧 ＋ 添加一个 MCP 服务器</div>
   </div>
@@ -225,7 +225,7 @@
   <!-- ============ 技能 ============ -->
   <div class="pane single" id="pane-skills">
     <h2>技能</h2>
-    <p class="sub">给模型的可选指令包，按名称与描述自动调用；列表展示 SKILL.md 的 frontmatter 信息，点名称查看全部字段与源文件。安装/删除/开关即时生效。关闭的技能移入技能目录的 .disabled 子目录，模型看不到，随时可再打开。zip 可为单个技能（根目录含 SKILL.md）或多技能合集（每个子目录一个技能）。</p>
+    <p class="sub">模型按名称与描述自动调用的指令包。点名称查看全部字段与源文件；安装、删除、开关即时生效。关闭的技能移入 .disabled 子目录。zip 可为单个技能或多技能合集。</p>
     <div class="row" style="margin-bottom:12px">
       <button id="s-install" class="primary">安装技能（.zip）</button>
       <button id="s-open">打开技能目录</button>
@@ -233,7 +233,7 @@
     <div class="sk-list" id="skills-list">加载中…</div>
     <div class="msg" id="skills-msg"></div>
 
-    <!-- 技能详情：frontmatter 摘要 + 源文件树 + 只读预览 -->
+    <!-- 技能详情 -->
     <div class="sk-overlay" id="sk-overlay" hidden>
       <div class="sk-detail" role="dialog" aria-modal="true">
         <div class="sk-detail-head">
@@ -266,7 +266,7 @@
   <!-- ============ 常用设置 ============ -->
   <div class="pane single" id="pane-settings">
     <h2>常用设置</h2>
-    <p class="sub">内置插件的常用配置项，写入你的用户配置层的托管区块（不碰手写内容），保存即生效；留空保存即恢复 dsh 默认值。这里没有的配置项可手动编辑 ~/.dsh/profiles/web/cordis.patch.yml（按条目 id 覆盖 config，语法见仓库 desktop-patch.yml 注释）。</p>
+    <p class="sub">内置插件的常用配置项，保存即生效，留空恢复默认值。其他配置项可编辑 ~/.dsh/profiles/web/cordis.patch.yml。</p>
     <div class="cs-grid" id="cs-fields">加载中…</div>
     <div class="row" style="margin-top:16px"><span class="spacer"></span><button class="primary" id="cs-save">保存</button></div>
     <div class="msg" id="cs-msg"></div>
@@ -275,7 +275,7 @@
   <!-- ============ 代理 ============ -->
   <div class="pane single" id="pane-proxy">
     <h2>HTTP 代理</h2>
-    <p class="sub">对 dsh 服务及其发起的一切网络请求生效（模型 API、插件安装、内核升级、MCP 连接）。本机地址（127.0.0.1 / localhost）始终直连。「不使用代理」会清除系统预设的 HTTP_PROXY 等变量，强制全程直连；「使用系统代理」按目标地址逐个询问系统设置（支持 PAC 与例外列表），内网直连、外网走代理。保存后自动重启 dsh 服务即时生效（窗口会短暂回到加载页）。</p>
+    <p class="sub">对 dsh 服务的全部网络请求生效：模型 API、插件安装、内核升级、MCP 连接。本机地址始终直连。「使用系统代理」按目标地址读取系统设置，支持 PAC 与例外列表。保存后自动重启 dsh 服务。</p>
     <div class="field">
       <label class="radio-row"><input type="radio" name="p-mode" id="p-mode-none" value="none"> 不使用代理</label>
       <label class="radio-row"><input type="radio" name="p-mode" id="p-mode-system" value="system"> 使用系统代理</label>
@@ -305,15 +305,15 @@
       </div>
     </div>
     <div id="p-bypass-box">
-      <div class="field"><label>不代理的主机（逗号分隔，可留空；本机地址已默认包含）</label>
+      <div class="field"><label>不代理的主机（逗号分隔，可选）</label>
         <input id="p-bypass" placeholder="*.example.internal, 10.*, &lt;local&gt;" spellcheck="false">
         <div class="meta" style="margin-top:4px">支持 corp.com、*.corp.com、10.*、&lt;local&gt;（不含点的主机名）。系统代理模式下这里的条目叠加在系统例外列表之上。</div></div>
     </div>
     <div id="p-tls">
-      <div class="field" style="margin-top:4px"><label>自定义 CA 证书（可选，PEM；代理做 TLS 拦截时导入其根证书。系统证书库已默认信任）</label>
-        <div class="row"><input id="p-ca" placeholder="留空 = 仅系统证书库" spellcheck="false"><button id="p-ca-pick" style="flex:none">选择…</button></div></div>
+      <div class="field" style="margin-top:4px"><label>自定义 CA 证书（PEM，可选）</label>
+        <div class="row"><input id="p-ca" placeholder="系统证书库" spellcheck="false"><button id="p-ca-pick" style="flex:none">选择…</button></div></div>
       <div class="field">
-        <label class="radio-row"><input type="checkbox" id="p-insecure"> 不校验 TLS 证书（不安全，仅当无法获得代理 CA 证书时临时使用）</label>
+        <label class="radio-row"><input type="checkbox" id="p-insecure"> 不校验 TLS 证书（不安全）</label>
       </div>
     </div>
     <div class="row" style="margin-top:16px">
@@ -347,7 +347,7 @@
     const { deps, bundles } = await pluginApi.list()
     const names = Object.keys(deps)
     const box = $('installed')
-    if (names.length === 0) { box.textContent = '还没有通过用户配置安装的插件'; return }
+    if (names.length === 0) { box.textContent = '尚未安装插件'; return }
     box.innerHTML = ''
     for (const name of names) {
       const div = document.createElement('div'); div.className = 'item-row'
@@ -370,14 +370,12 @@
     for (const id of ['add', 'add-dir', 'add-tgz']) $(id).disabled = v
   }
   function logResult(res) {
-    log((res.output || '').trim()); log(res.code === 0 ? '✓ 完成' : `✗ 失败 (exit ${res.code})`)
+    log((res.output || '').trim()); log(res.code === 0 ? '完成' : `失败（exit ${res.code}）`)
     if (res.code === 0) $('restart-plugins').style.display = 'flex'
     if (res.code !== 0 && res.needsAllowBuilds && res.needsAllowBuilds.length > 0) {
       log('')
-      log('ℹ 该插件需要在安装时执行构建脚本（等同于运行第三方代码），桌面版不代为放行。')
-      log('  如果你信任该插件来源，请通过菜单「插件 → 打开命令行窗口」，')
-      log('  按上方输出中 dsh 给出的提示编辑 allowBuilds 配置后，在终端里重新安装。')
-      log('  （推荐优先使用插件市场 dshmarket 安装精选来源的插件。）')
+      log('该插件安装时需要执行构建脚本，桌面版不代为放行。')
+      log('按上方 dsh 的提示编辑 allowBuilds 配置后，在「插件 → 打开命令行窗口」中重新安装。')
     }
   }
   async function runPlugin(action, spec) {
@@ -396,8 +394,7 @@
       log(`> dsh plugin --profile web add ${res.spec || '（本地插件）'}`)
       logResult(res)
       if (res.code === 0 && kind === 'dir') {
-        log('ℹ 目录以软链安装：改动插件代码后重启应用生效。若插件有自身依赖，')
-        log('  需先在该目录里执行过 pnpm install（可用菜单「插件 → 打开命令行窗口」）。')
+        log('目录以软链方式安装，改动代码后重启应用生效；插件自身依赖需先在该目录执行 pnpm install。')
       }
       refreshPlugins()
     }
@@ -409,8 +406,8 @@
   $('spec').addEventListener('keydown', (e) => { if (e.key === 'Enter') runPlugin('add', $('spec').value.trim()) })
 
   // ================= MCP（主-从） =================
-  let servers = []            // 持久数据
-  let sel = -1                // 选中下标
+  let servers = []
+  let sel = -1
   const testState = {}        // serverName -> 'ok' | 'err'
 
   function renderServerList() {
@@ -418,7 +415,7 @@
     box.innerHTML = ''
     if (servers.length === 0) {
       const d = document.createElement('div'); d.id = 'mcp-empty'
-      d.textContent = '还没有服务器'
+      d.textContent = '尚无服务器'
       box.appendChild(d)
     }
     servers.forEach((s, i) => {
@@ -519,7 +516,7 @@
   async function persist() {
     const res = await pluginApi.mcpSave(servers)
     if (!res.ok) { setMsg('保存失败：' + res.error, 'err'); servers = await pluginApi.mcpList(); renderServerList(); return false }
-    setMsg('已保存，热加载生效（连接失败不会弹错，可用「测试连接」验证）', 'ok')
+    setMsg('已保存', 'ok')
     renderServerList()
     return true
   }
@@ -561,17 +558,16 @@
     const bad = checkForm(s)
     if (bad) { setMsg(bad, 'err'); return }
     $('m-test').disabled = true
-    setMsg(s.transport === 'stdio' ? '测试中…（启动命令并做 MCP 握手，首次运行需下载依赖，最长等 90 秒）' : '测试中…')
+    setMsg(s.transport === 'stdio' ? '测试中…（首次运行需下载依赖，最长 90 秒）' : '测试中…')
     const res = await pluginApi.mcpTest(s)
     testState[s.serverName] = res.ok ? 'ok' : 'err'
-    setMsg((res.ok ? '✓ ' : '✗ ') + res.detail, res.ok ? 'ok' : 'err')
+    setMsg(res.detail, res.ok ? 'ok' : 'err')
     $('m-test').disabled = false
     renderServerList()
   }
 
   // ================= 技能 =================
-  // 列表只展示 SKILL.md frontmatter 里的信息（名字、版本、描述、调用面），
-  // 点卡片进详情：frontmatter 全部字段 + 源文件树 + 只读预览。
+  // 列表：SKILL.md frontmatter 摘要；详情：全部字段、源文件树、只读预览。
   const SKILL_ICON = '✦'
   function skillBadges(s) {
     const tags = []
@@ -583,7 +579,7 @@
   async function refreshSkills() {
     const skills = await pluginApi.skillsList()
     const box = $('skills-list')
-    if (skills.length === 0) { box.textContent = '还没有用户技能，点「安装技能」导入一个'; return }
+    if (skills.length === 0) { box.textContent = '尚未安装技能'; return }
     box.innerHTML = ''
     for (const s of skills) {
       const card = document.createElement('div'); card.className = 'sk-card'
@@ -600,10 +596,9 @@
       main.append(nameRow, desc)
       main.onclick = () => openSkillDetail(s.name)
       const actions = document.createElement('div'); actions.className = 'sk-actions'
-      // 启用/关闭：关闭 = 搬到技能目录的 .disabled/ 下（dsh 只扫顶层，看不见），
-      // 启用 = 搬回来；文件内容不动，dsh 的目录监视会即时生效。
+      // 关闭 = 移入 .disabled/，启用 = 移回；dsh 的目录监视即时生效。
       const toggle = document.createElement('label'); toggle.className = 'toggle'
-      toggle.title = s.enabled ? '已启用，点击关闭（移入 .disabled，模型不再看到）' : '已关闭，点击启用'
+      toggle.title = s.enabled ? '已启用' : '已关闭'
       const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!s.enabled
       const knob = document.createElement('span'); knob.className = 'knob'
       toggle.append(cb, knob)
@@ -654,7 +649,7 @@
     $('skd-state').textContent = d.enabled ? '已启用' : '已关闭'
     $('skd-enabled').checked = d.enabled
     $('skd-desc').textContent = d.description || '（SKILL.md 没有 description）'
-    // frontmatter 表：除 name/description 外的所有字段 + metadata 子项
+    // frontmatter 表：name/description 之外的字段与 metadata 子项
     const fm = $('skd-fm'); fm.innerHTML = ''
     const rows = []
     const fields = (d.frontmatter && d.frontmatter.fields) || {}
@@ -685,7 +680,7 @@
       }
       tree.appendChild(row)
     }
-    if (d.tree.truncated) { const more = document.createElement('div'); more.className = 'meta'; more.textContent = '…（文件过多，未全部列出）'; tree.appendChild(more) }
+    if (d.tree.truncated) { const more = document.createElement('div'); more.className = 'meta'; more.textContent = '…（仅列出前 400 项）'; tree.appendChild(more) }
     $('sk-overlay').hidden = false
     const entry = d.tree.entries.find((e) => e.path === activeFile) || d.tree.entries.find((e) => e.type === 'file')
     if (entry) showSkillFile(d.name, entry.path, entry.size)
@@ -702,8 +697,7 @@
     $('skd-file-meta').textContent = fmtSize(res.size) + (res.truncated ? '（只显示前 256 KB）' : '')
     renderSkillText($('skd-pre'), res.text, /\.md$/i.test(rel))
   }
-  // 只读预览：markdown 只做最轻的观感处理（frontmatter 变灰、标题加粗、
-  // 围栏代码块加底色），其余原样，避免为一个预览引入渲染库。
+  // 只读预览。markdown 仅处理 frontmatter、标题、围栏代码块的显示，其余原样。
   function renderSkillText(pre, text, isMd) {
     pre.innerHTML = ''
     if (!isMd) { pre.textContent = text; return }
@@ -746,8 +740,7 @@
   $('s-open').onclick = () => pluginApi.skillsOpen()
 
   // ================= 常用设置 =================
-  // 声明式渲染：字段清单来自主进程的 COMMON_SETTINGS 注册表，
-  // 新增配置项只需在 runtime.js 注册，一行都不用改这里。
+  // 字段清单来自 runtime.js 的 COMMON_SETTINGS 注册表，按 SETTING_GROUPS 分卡片渲染。
   let csOptions = []
   function csMsg(text, cls) { const m = $('cs-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
   async function loadCommonSettings() {
@@ -756,9 +749,7 @@
     const box = $('cs-fields')
     box.innerHTML = ''
     const byKey = new Map(options.map((o) => [o.key, o]))
-    // 按插件分组：每组一个标题 + 该插件的字段；主进程按 SETTING_GROUPS 排好序。
     const sections = (groups && groups.length ? groups : [{ label: '', hint: '', keys: options.map((o) => o.key) }])
-    // 每个插件一张卡片，网格自动换列（窄窗口单列）。
     for (const g of sections) {
       const card = document.createElement('div')
       card.className = 'cs-card'
@@ -836,7 +827,7 @@
     }
     $('cs-save').disabled = true
     const res = await pluginApi.settingsSave(values)
-    csMsg(res.ok ? '✓ 已保存并生效' : '✗ ' + (res.error || '保存失败'), res.ok ? 'ok' : 'err')
+    csMsg(res.ok ? '已保存' : (res.error || '保存失败'), res.ok ? 'ok' : 'err')
     $('cs-save').disabled = false
   }
 
@@ -889,22 +880,22 @@
     $('p-save').disabled = true
     const res = await pluginApi.proxySave(c)
     if (!res.ok) { proxyMsg('保存失败：' + res.error, 'err'); $('p-save').disabled = false; return }
-    proxyMsg('已保存，正在重启 dsh 服务使其生效…')
+    proxyMsg('已保存，正在重启 dsh 服务…')
     const r = await pluginApi.serverRestart()
     $('p-save').disabled = false
-    if (r.ok) proxyMsg('已保存并生效', 'ok')
-    else proxyMsg('已保存，但服务重启失败：' + r.error + '\n可通过重启应用生效。', 'err')
+    if (r.ok) proxyMsg('已保存', 'ok')
+    else proxyMsg('已保存，服务重启失败：' + r.error + '\n重启应用后生效。', 'err')
   }
   $('p-test').onclick = async () => {
     const c = readProxyForm()
     if (c.mode === 'manual') {
       const err = validateProxyForm(c)
-      if (err) { proxyMsg('先填写有效的主机名和端口再测试', 'err'); return }
+      if (err) { proxyMsg('请先填写主机名和端口', 'err'); return }
     }
     $('p-test').disabled = true
     proxyMsg('测试中…')
     const res = await pluginApi.proxyTest(c, $('p-test-url').value.trim())
-    proxyMsg((res.ok ? '✓ ' : '✗ ') + res.detail, res.ok ? 'ok' : 'err')
+    proxyMsg(res.detail, res.ok ? 'ok' : 'err')
     $('p-test').disabled = false
   }
 

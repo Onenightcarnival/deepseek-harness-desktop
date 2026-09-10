@@ -1,18 +1,16 @@
 'use strict'
 /**
- * The single place where "does this request go direct, or through which
- * proxy?" is decided.
+ * In-process forwarding proxy: the single decision point for whether a
+ * request goes direct or through which upstream proxy.
  *
  * Every child process gets HTTP_PROXY=http://127.0.0.1:<port> pointing here
- * (see applyProxyEnv in runtime.js) and nothing else, so the shell window,
- * the dsh server, pnpm and every MCP server share one decision. This is what
- * a static HTTP_PROXY env var cannot do: a Windows system proxy is a PAC
- * script plus an exception list, i.e. a per-URL decision — flattening it into
- * one URL sends intranet traffic to the proxy and breaks it.
+ * (applyProxyEnv in runtime.js) and nothing else; the dsh server, pnpm and
+ * every MCP server share one per-URL decision. A system proxy is a PAC script
+ * plus an exception list; a single static HTTP_PROXY URL routes intranet
+ * traffic to the proxy.
  *
  * No Electron dependency: `resolveSystem` is injected (main.js passes
- * Chromium's session.resolveProxy) so the whole thing runs under plain node
- * in tests.
+ * Chromium's session.resolveProxy); the module runs under plain node in tests.
  */
 const http = require('http')
 const net = require('net')
@@ -49,18 +47,16 @@ async function routeFor(config, resolveSystem, host, port, scheme) {
 }
 
 /**
- * Start a forwarder. Returns {port, close()}; port 0 means it could not
- * listen (callers then fall back to a merely-scrubbed env = direct).
- * `getConfig` is read per request, so saving a new proxy config takes effect
- * without restarting anything.
+ * Start a forwarder. Returns {port, close()}; port 0 means listen failed and
+ * callers fall back to a scrubbed env (direct). `getConfig` is read per
+ * request; a saved proxy config takes effect without a restart.
  */
 function createForwarder({ getConfig, resolveSystem, onError } = {}) {
   const config = () => (typeof getConfig === 'function' ? getConfig() : getConfig) || {}
   const fail = (err) => { if (onError) { try { onError(err) } catch { /* best effort */ } } }
 
-  // CONNECT: tunnel bytes, either straight to the target or through the
-  // upstream proxy. TLS stays end-to-end, so cert validation (and the
-  // corporate MITM CA) remains the child's business.
+  // CONNECT: tunnel bytes to the target or through the upstream proxy. TLS
+  // stays end-to-end; certificate validation belongs to the child process.
   async function onConnect(req, client, head) {
     const [host, port] = splitHostPort(req.url, 443)
     client.on('error', () => client.destroy())
@@ -91,7 +87,7 @@ function createForwarder({ getConfig, resolveSystem, onError } = {}) {
       if (route.auth) head1 += `Proxy-Authorization: ${route.auth}\r\n`
       upstream.write(head1 + '\r\n')
     })
-    // Read the upstream's CONNECT response before handing the socket over.
+    // Consume the upstream's CONNECT response before joining the sockets.
     let buf = Buffer.alloc(0)
     const onData = (chunk) => {
       buf = Buffer.concat([buf, chunk])

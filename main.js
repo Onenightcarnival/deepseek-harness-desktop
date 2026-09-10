@@ -1,5 +1,5 @@
 /**
- * DeepSeek Harness Desktop — Electron shell.
+ * DeepSeek Harness Desktop: Electron shell.
  *
  * Boots the bundled `dsh` server (via Electron's embedded Node using
  * ELECTRON_RUN_AS_NODE) on a free loopback port, waits for the ready line
@@ -17,9 +17,9 @@ const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, sa
   applyProxyEnv, PROXY_ENV_KEYS } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
 
-// 0.1.2-rc.1+ appends a one-time browser-trust token to the ready URL
-// ("…:<port>/?token=…"); loading the bare origin answers 401. Capture the
-// whole URL — the token exchange (303 → cookie) happens inside the window.
+// The ready line carries a one-time browser-trust token (dsh 0.1.2-rc.1+);
+// the bare origin answers 401. The whole URL is captured and loaded as-is;
+// the token exchange (303 → cookie) happens inside the window.
 const READY_RE = /dsh web: (http:\/\/127\.0\.0\.1:\d+\S*)/
 const STARTUP_TIMEOUT_MS = 90_000
 /** GitHub repo the update check queries ("owner/name"), from package.json. */
@@ -108,13 +108,12 @@ function dshEntry() {
 }
 
 /**
- * Preload args for every Node child we spawn: --require win-spawn-shim.js,
- * which defaults windowsHide for the whole child process so dsh's own
- * pwsh/cmd/git spawns stop flashing console windows (GUI-subsystem parent =
- * each unhidden console child gets a visible console host). The shim ships
- * inside the asar, which plain Node children cannot read — copy it to
- * userData once per boot. No-op off Windows, but injected everywhere so the
- * Linux smoke run exercises the loading path.
+ * Preload args for every Node child: --require win-spawn-shim.js, which
+ * defaults windowsHide for the whole child process (under a GUI parent each
+ * unhidden console child gets a visible console host). Plain Node children
+ * cannot read the asar; the shim is copied to userData once per boot. No-op
+ * off Windows; injected on every platform so the Linux smoke run covers the
+ * loading path.
  */
 let spawnShimPath = null
 function nodePreloadArgs() {
@@ -125,29 +124,26 @@ function nodePreloadArgs() {
       spawnShimPath = dest
     } catch (err) {
       console.error('spawn shim unavailable:', String((err && err.message) || err))
-      spawnShimPath = '' // don't retry every call
+      spawnShimPath = '' // no retry on later calls
     }
   }
   return spawnShimPath ? ['--require', spawnShimPath] : []
 }
 
 /**
- * Propagate the shim to EVERY descendant Node process via NODE_OPTIONS —
- * argv --require only reaches the direct child, but pwsh can be spawned by
- * a grandchild (background job runners, stdio MCP servers), which flashes a
- * console the argv injection cannot see. NODE_OPTIONS is inherited down the
- * whole tree; the path is quoted so the userData path's spaces survive.
- * Appends after any user-set NODE_OPTIONS. Mutates and returns env.
+ * Propagate the shim to every descendant Node process via NODE_OPTIONS:
+ * argv --require reaches only the direct child, while pwsh may be spawned by
+ * a grandchild (background job runners, stdio MCP servers). The path is
+ * quoted so spaces in the userData path survive. Appends after any user-set
+ * NODE_OPTIONS. Mutates and returns env.
  */
 function withNodePreloadEnv(env) {
   const args = nodePreloadArgs()
   if (args.length === 2) {
-    // FORWARD slashes: inside NODE_OPTIONS quotes Node treats backslash as
-    // an escape character, so a native Windows path silently loses its
-    // separators ("…\DeepSeek Harness\win-spawn-shim.js" became
-    // "…Harnesswin-spawn-shim.js") and the fatal --require failure killed
-    // every Node child — the app would not start. Node accepts / in
-    // require paths on Windows; quotes keep the space intact.
+    // Forward slashes only: inside NODE_OPTIONS quotes Node treats backslash
+    // as an escape, a native Windows path loses its separators, and the
+    // --require failure kills every Node child. Node accepts / in require
+    // paths on Windows; the quotes keep spaces intact.
     const inject = `--require "${args[1].replace(/\\/g, '/')}"`
     env.NODE_OPTIONS = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ${inject}` : inject
   }
@@ -179,17 +175,16 @@ async function checkCoreUpdates(interactive) {
       }
       return
     }
-    // Presets are pinned to the BUNDLED core's release line; a core from
-    // another line would boot under plugins built for the old one (the
-    // 0.1.2 cohort dropped 0.1.1-rc.x support entirely) — offer the new
-    // desktop build instead of an in-place jump.
+    // Presets are pinned to the bundled core's release line; a core from
+    // another line boots under plugins built for the old one. Cross-line
+    // upgrades go through a new desktop build.
     const bundledVersion = runtimeVersion(bundledDshDir()) || current
     if (releaseLine(latest) !== releaseLine(bundledVersion)) {
       if (interactive) {
         const { response } = await dialog.showMessageBox({
           type: 'info', title: 'DeepSeek Harness',
           message: `npm 上有 dsh v${latest}，属于新的版本线（${releaseLine(latest)}）`,
-          detail: `本安装包内置的是 v${bundledVersion}（${releaseLine(bundledVersion)} 线），预置插件与内核版本线绑定，跨线升级需要下载新版桌面安装包。`,
+          detail: `本安装包内置 v${bundledVersion}（${releaseLine(bundledVersion)} 线）。预置插件与内核版本线绑定；跨线升级需下载新版桌面安装包。`,
           buttons: ['检查应用更新', '好'], defaultId: 0, cancelId: 1,
         })
         if (response === 0) await checkAppUpdates(true)
@@ -200,8 +195,8 @@ async function checkCoreUpdates(interactive) {
       if (interactive) {
         await dialog.showMessageBox({
           type: 'warning', title: 'DeepSeek Harness',
-          message: `npm 上有 dsh v${latest}，但它要求的 Node 版本超出本应用内置的 v${process.versions.node}`,
-          detail: '需要等待桌面版发布新安装包升级。',
+          message: `dsh v${latest} 要求的 Node 版本高于本应用内置的 v${process.versions.node}`,
+          detail: '请等待新版桌面安装包。',
           buttons: ['好'],
         })
       }
@@ -210,7 +205,7 @@ async function checkCoreUpdates(interactive) {
     const { response } = await dialog.showMessageBox({
       type: 'info', title: 'DeepSeek Harness',
       message: `发现 dsh 内核新版本 v${latest}（当前 v${current}）`,
-      detail: '将下载到本机并在重启应用后生效；若新内核启动失败会自动回退。',
+      detail: '下载后重启应用生效；新内核启动失败时自动回退到内置版本。',
       buttons: ['下载并升级', '取消'], defaultId: 0, cancelId: 1,
     })
     if (response !== 0) return
@@ -245,10 +240,9 @@ async function installCoreRuntime(version) {
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true }, null, 2))
     const pnpmCjs = pnpmEntry()
     if (!pnpmCjs) { reject(new Error('bundled pnpm missing')); return }
-    // Full-flavor builds: the upgraded runtime must also carry the preset
-    // plugins, or the seeded profile bundles stop resolving (the profile
-    // resolves plugins from the ACTIVE runtime's app closure). Exact staged
-    // versions — deterministic, immune to minimumReleaseAge downgrades.
+    // Full-flavor builds: the upgraded runtime carries the preset plugins;
+    // the profile resolves plugins from the active runtime's app closure.
+    // Exact staged versions, immune to minimumReleaseAge downgrades.
     const presetSpecs = []
     try {
       const presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8'))
@@ -268,9 +262,9 @@ async function installCoreRuntime(version) {
     child.stderr.on('data', onChunk)
     child.on('exit', (code) => {
       if (code === 0 && runtimeVersion(dir) === version) {
-        // Mirror stage-dsh.mjs: presets must be dependencies of the dsh APP
-        // manifest — the profile resolves plugins from the app's dependency
-        // closure, the runtime root manifest is not part of it.
+        // Presets are dependencies of the dsh app manifest (same as
+        // stage-dsh.mjs): the profile resolves plugins from the app's
+        // dependency closure, not from the runtime root manifest.
         if (presetSpecs.length > 0) {
           try {
             const appManifestPath = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
@@ -309,8 +303,8 @@ function logFile() {
 
 /**
  * Optional plugin-composition overlay shipped with the app
- * (desktop-patch.yml, applied via `dsh web --patch`). Lets a build preset,
- * disable, or reconfigure plugins without touching the upstream defaults.
+ * (desktop-patch.yml, applied via `dsh web --patch`): presets, disables or
+ * reconfigures plugins on top of the upstream defaults.
  */
 function desktopPatchArgs() {
   const candidates = [
@@ -325,16 +319,16 @@ function desktopPatchArgs() {
 //
 // Servers are written as a marker-fenced managed block inside the user's
 // profile patch layer (~/.dsh/profiles/web/cordis.patch.yml). dsh hot-reloads
-// that file and dsh-mcp-client hot-swaps on config change, so saving in the
-// GUI takes effect within seconds — no app restart. Only the fenced block is
-// ever touched; the user's own entries are preserved.
+// that file and dsh-mcp-client hot-swaps on config change; saving takes
+// effect without an app restart. Only the fenced block is touched; the
+// user's own entries are preserved.
 
 /**
  * Proxy config store, PyCharm-shaped:
  * {mode: 'none'|'system'|'manual', host, port, bypass, auth, login, remember,
- *  password?} — password is persisted ONLY when remember is true;
- * otherwise it lives in sessionProxyPassword for this run and must be
- * re-entered after a restart.
+ *  password?}. password is persisted only when remember is true; otherwise
+ * it lives in sessionProxyPassword for this run and is re-entered after a
+ * restart.
  */
 function proxyStorePath() { return path.join(app.getPath('userData'), 'proxy.json') }
 let sessionProxyPassword = ''
@@ -342,7 +336,7 @@ const PROXY_DEFAULTS = { mode: 'none', host: '', port: '', bypass: '', auth: fal
 function readProxyConfig() {
   let c = {}
   try { c = JSON.parse(fs.readFileSync(proxyStorePath(), 'utf8')) } catch { /* none yet */ }
-  // migrate the earlier {enabled, url} shape once
+  // one-time migration of the {enabled, url} shape
   if (c.url !== undefined && c.host === undefined) {
     try {
       const u = new URL(c.url)
@@ -356,16 +350,15 @@ function readProxyConfig() {
   return merged
 }
 /**
- * Resolve the OS proxy for ONE url via Chromium — PAC-aware, honours the
+ * Resolve the OS proxy for one URL via Chromium: PAC-aware, honours the
  * Windows exception list, cross-platform. Returns {host, port} or null
- * (= direct). Called per request by the forwarder and never cached: that
- * per-URL answer is the whole point (intranet direct, internet proxied).
+ * (direct). Called per request by the forwarder; never cached.
  */
 async function resolveSystemProxy(url) {
   try {
-    // A dedicated in-memory session: defaultSession gets setProxy() applied
-    // from our own config, which would make its resolveProxy() self-referential.
-    // This partition keeps Chromium's default behaviour (= OS settings, PAC).
+    // Dedicated in-memory session: defaultSession carries our own setProxy()
+    // config, so its resolveProxy() would be self-referential. This partition
+    // keeps Chromium's default behaviour (OS settings, PAC).
     const probe = session.fromPartition('proxy-probe')
     const s = await probe.resolveProxy(url || 'https://registry.npmjs.org/')
     const m = /(?:PROXY|HTTPS)\s+([^;\s:]+):(\d+)/.exec(s || '')
@@ -373,20 +366,19 @@ async function resolveSystemProxy(url) {
   } catch { return null }
 }
 /**
- * Mirror the proxy config onto Electron's own (Chromium) network layer so
- * shell-window traffic — external resources loaded by pages, update checks
- * that go through Chromium — follows the same setting. The dsh child process
- * and everything it spawns are plain Node processes with their own network
- * stack; those go through the forwarder below. Loopback is always bypassed
- * implicitly by Chromium, so the local web UI is unaffected.
+ * Mirror the proxy config onto Electron's (Chromium) network layer: shell
+ * window traffic and update checks follow the same setting. The dsh child
+ * process and its descendants are plain Node processes and go through the
+ * forwarder below. Chromium bypasses loopback implicitly; the local web UI
+ * is unaffected.
  */
 async function applyChromiumProxy(config) {
   const c = config || PROXY_DEFAULTS
   try {
     if (c.mode === 'manual' && String(c.host || '').trim() && String(c.port ?? '').trim()) {
       const bypass = ['127.0.0.1', 'localhost', '::1']
-      // same separators as runtime.js bypassPatterns, so the shell window
-      // and the forwarder read one list the same way
+      // same separators as runtime.js bypassPatterns; shell window and
+      // forwarder read one list
       for (const part of String(c.bypass || '').split(/[,;\s]+/)) { if (part.trim()) bypass.push(part.trim()) }
       await session.defaultSession.setProxy({
         proxyRules: `http://${String(c.host).trim()}:${String(c.port).trim()}`,
@@ -397,13 +389,13 @@ async function applyChromiumProxy(config) {
     } else {
       await session.defaultSession.setProxy({ mode: 'system' })
     }
-  } catch { /* window traffic falls back to whatever was set before */ }
+  } catch { /* previous proxy setting stays in effect */ }
 }
 
 /**
- * The in-process forwarding proxy every child process is pointed at. Started
+ * In-process forwarding proxy every child process is pointed at. Started
  * once at boot; the routing decision is read from the stored config per
- * request, so saving a new config needs no respawn.
+ * request, so a config change needs no respawn.
  */
 let forwarder = null
 async function startForwarder() {
@@ -413,12 +405,13 @@ async function startForwarder() {
     resolveSystem: resolveSystemProxy,
     onError: (err) => console.error('proxy forwarder:', String((err && err.message) || err)),
   })
-  if (!forwarder.port) console.error('proxy forwarder could not listen — children fall back to direct connections')
+  if (!forwarder.port) console.error('proxy forwarder could not listen; children use direct connections')
   return forwarder
 }
 /**
- * Give a child env OUR proxy environment: inherited HTTP_PROXY & friends are
- * stripped, then the forwarder endpoint is written in. Mutates and returns env.
+ * Apply the app's proxy environment to a child env: inherited HTTP_PROXY and
+ * related vars are stripped, then the forwarder endpoint is written in.
+ * Mutates and returns env.
  */
 function withProxyEnv(env) {
   return applyProxyEnv(env, forwarder ? forwarder.port : 0, readProxyConfig())
@@ -432,10 +425,10 @@ function readMcpServers() {
 }
 
 // ---- common settings (curated built-in plugin config overrides) ----
-// Registry lives in runtime.js (COMMON_SETTINGS); values persist in
-// userData and are applied into the profile patch layer as a second
-// managed block ('settings') — same mechanism and hot-reload behavior as
-// the MCP block, and same regeneration on quarantine self-heal.
+// Registry lives in runtime.js (COMMON_SETTINGS); values persist in userData
+// and are applied to the profile patch layer as a second managed block
+// ('settings'): same mechanism and hot reload as the MCP block, regenerated
+// together on quarantine self-heal.
 function settingsStorePath() { return path.join(app.getPath('userData'), 'common-settings.json') }
 function readCommonSettings() {
   try { return JSON.parse(fs.readFileSync(settingsStorePath(), 'utf8')) } catch { return {} }
@@ -455,7 +448,7 @@ function applyMcpToProfile(servers) {
   let text = ''
   try { text = fs.readFileSync(file, 'utf8') } catch { text = '[]\n' }
   fs.writeFileSync(file, upsertManagedBlock(text, 'mcp', buildMcpBlock(servers)))
-  // retire the pre-0.1.3 launcher-overlay mechanism (required app restarts)
+  // remove the pre-0.1.3 launcher overlay
   try { fs.rmSync(path.join(app.getPath('userData'), 'mcp-patch.yml'), { force: true }) } catch { /* gone */ }
 }
 
@@ -490,16 +483,16 @@ function skillsDir() { return path.join(app.getPath('home'), '.dsh', 'skills') }
 function listSkills() { return listSkillStore(fs, path, skillsDir()) }
 
 /**
- * On Windows the bundled dsh's native folder dialog (a koffi child process
- * re-spawning process.execPath) does not survive the Electron-as-node
- * packaging, so pin the in-app "browse" directory picker via a patch overlay.
+ * Windows: the bundled dsh's native folder dialog (a koffi child process
+ * re-spawning process.execPath) does not run under the Electron-as-node
+ * packaging; the in-app "browse" directory picker is pinned via a patch overlay.
  */
 function pickerPatchArgs() {
   if (process.platform !== 'win32') return []
   const p = path.join(app.getPath('userData'), 'win-picker-patch.yml')
   // The "browse" interaction is a pair: host backend + client UI surface
-  // (mirrors what dsh-host-directory-picker-auto mounts when it resolves
-  // to browse). Both must be composed or the UI has no dialog to open.
+  // (what dsh-host-directory-picker-auto mounts when it resolves to browse).
+  // Both must be composed; the UI has no dialog to open otherwise.
   fs.writeFileSync(p, [
     '- id: directory-picker',
     '  disabled: true',
@@ -514,11 +507,10 @@ function pickerPatchArgs() {
 }
 
 function proxyShimLines(win) {
-  // The shims must not inherit the machine's HTTP_PROXY either — a CLI that
-  // routes differently from the GUI is exactly the confusion this whole
-  // design removes. The forwarder endpoint is only valid while the app runs
-  // (the shims are rewritten on every launch); with the app closed the shim
-  // still at least clears the inherited vars.
+  // Shims do not inherit the machine's HTTP_PROXY; CLI and GUI route the
+  // same way. The forwarder endpoint is valid only while the app runs (shims
+  // are rewritten on every launch); with the app closed the shim still
+  // clears the inherited vars.
   const lines = []
   for (const key of PROXY_ENV_KEYS) {
     for (const k of [key, key.toLowerCase()]) lines.push(win ? `set "${k}="` : `unset ${k}`)
@@ -535,9 +527,10 @@ function proxyShimLines(win) {
  * which is also prepended to the server's PATH so dsh finds pnpm.
  */
 /**
- * JavaScript entry of the bundled pnpm (cjs preferred, mjs accepted). Empty
- * string when absent — pnpm ships only with the BUNDLED runtime; stage pins
- * the 11 line because 12 is a native-binary download, not JavaScript.
+ * JavaScript entry of the bundled pnpm (cjs preferred, mjs accepted); empty
+ * string when absent. pnpm ships only with the bundled runtime. stage pins
+ * the 11 line: from 12 the npm package is a placeholder script and the
+ * native binary is downloaded by postinstall.
  */
 function pnpmEntry() {
   const bin = path.join(bundledDshDir(), 'tools', 'node_modules', 'pnpm', 'bin')
@@ -552,8 +545,8 @@ function writeCliLaunchers() {
   const binDir = path.join(app.getPath('userData'), 'bin')
   fs.mkdirSync(binDir, { recursive: true })
   const entry = dshEntry()
-  // pnpm always ships with the BUNDLED runtime (an upgraded core runtime
-  // under userData/runtimes has no tools/ directory).
+  // pnpm ships with the bundled runtime only (an upgraded core runtime under
+  // userData/runtimes has no tools/ directory).
   const pnpmCjs = pnpmEntry()
   const exe = process.execPath
   const npxShim = path.join(binDir, 'npx-shim.js')
@@ -569,39 +562,34 @@ function writeCliLaunchers() {
     fs.writeFileSync(path.join(binDir, 'node.cmd'),
       `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n${winProxy}"${exe}" %*\r\n`)
     if (fs.existsSync(pnpmCjs)) {
-      // --config.minimum-release-age=0: the bundled pnpm defaults this
-      // supply-chain gate to 24h; the dsh ecosystem ships daily rc releases,
-      // so a fresh plugin/runtime is ALWAYS "too young" — and pnpm's remove
-      // path crashes outright on the resulting violations
-      // (ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED, no handler wired).
+      // --config.minimum-release-age=0: the bundled pnpm gates new releases
+      // for 24h by default; the dsh ecosystem ships daily rc releases, and
+      // pnpm's remove path has no handler for the resulting violations
+      // (ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED).
       // --config.auto-install-peers=false: with auto-install on (pnpm's
-      // default when the profile workspace file doesn't set it), any add
-      // re-resolves the peers of EVERY installed plugin; pnpm combines the
-      // ranges of multiple dependents by an intersection that DROPS
-      // prerelease qualifiers (^0.1.0-rc.8 ∩ * → >=0.1.0 <0.2.0), and the
-      // dsh core only publishes prereleases — so a preset with @deepseek-ai
-      // peers (better-sidebar) makes every later plugin install die with
-      // ERR_PNPM_NO_MATCHING_VERSION until the preset is removed. The peers
-      // are provided by the app closure at runtime anyway; better-sidebar's
-      // own installer scripts set the same key.
-      // env/npmrc channels are ignored for these keys (verified) — the CLI
-      // flag before the subcommand is the one channel that works, and dsh
-      // resolves pnpm via PATH, i.e. through this shim.
+      // default when the profile workspace file does not set it), any add
+      // re-resolves the peers of every installed plugin; the range
+      // intersection drops prerelease qualifiers (^0.1.0-rc.8 ∩ * →
+      // >=0.1.0 <0.2.0) and the dsh core publishes prereleases only, so a
+      // preset with @deepseek-ai peers (better-sidebar) fails every later
+      // install with ERR_PNPM_NO_MATCHING_VERSION. Peers are provided by the
+      // app closure at runtime.
+      // env/npmrc channels are ignored for both keys; the CLI flag before
+      // the subcommand is the one channel that works. dsh resolves pnpm via
+      // PATH, i.e. through this shim.
       fs.writeFileSync(path.join(binDir, 'pnpm.cmd'),
         `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\n${winProxy}"${exe}" "${pnpmCjs}" --config.minimum-release-age=0 --config.auto-install-peers=false %*\r\n`)
-      // `npx`: what every MCP server README tells users to run. Routed to
-      // `pnpm dlx` through a small argv filter (npx's -y/--yes has no pnpm
-      // equivalent) so Node-based stdio MCP servers run on the embedded
-      // Node with nothing installed. cross-spawn (the MCP SDK's spawner)
-      // resolves .cmd shims on PATH, so a plain "npx" command works.
+      // `npx`: routed to `pnpm dlx` through a small argv filter (npx's
+      // -y/--yes has no pnpm equivalent), so Node-based stdio MCP servers run
+      // on the embedded Node with nothing installed. cross-spawn (the MCP
+      // SDK's spawner) resolves .cmd shims on PATH.
       fs.writeFileSync(path.join(binDir, 'npx.cmd'),
         `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\nset "DSHDESKTOP_PNPM_CJS=${pnpmCjs}"\r\n${winProxy}"${exe}" "${npxShim}" %*\r\n`)
     }
     if (uvExe) {
       // `uvx`/`uv`: bundled Python-side runtime for `uvx <pkg>` MCP servers.
-      // Caches and interpreters live under userData so nothing leaks into
-      // the user's ~/.local; env already set by the user wins (`if not
-      // defined`), e.g. UV_PYTHON_INSTALL_MIRROR for a domestic mirror.
+      // Caches and interpreters live under userData; env already set by the
+      // user wins (`if not defined`), e.g. UV_PYTHON_INSTALL_MIRROR.
       for (const name of ['uvx', 'uv']) {
         fs.writeFileSync(path.join(binDir, `${name}.cmd`),
           `@echo off\r\nset "PATH=${binDir};%PATH%"\r\n${uvEnvLines(true).join('\r\n')}\r\n${winProxy}"${path.join(uvDir, name + '.exe')}" %*\r\n`)
@@ -614,7 +602,7 @@ function writeCliLaunchers() {
     fs.writeFileSync(path.join(binDir, 'node'),
       `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\n${shProxy}exec "${exe}" "$@"\n`, { mode: 0o755 })
     if (fs.existsSync(pnpmCjs)) {
-      // see the .cmd twin above for why --config.minimum-release-age=0
+      // flags: see the .cmd twin above
       fs.writeFileSync(path.join(binDir, 'pnpm'),
         `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\n${shProxy}exec "${exe}" "${pnpmCjs}" --config.minimum-release-age=0 --config.auto-install-peers=false "$@"\n`, { mode: 0o755 })
       // see the .cmd twin above
@@ -632,9 +620,9 @@ function writeCliLaunchers() {
 }
 
 /**
- * Environment for the bundled uv: keep its cache, downloaded interpreters
- * and tool venvs under userData (uninstall-clean, no ~/.local pollution);
- * a value the user already exported wins so mirrors/overrides still apply.
+ * Environment for the bundled uv: cache, downloaded interpreters and tool
+ * venvs live under userData (removed with the app; nothing under ~/.local).
+ * A value the user already exported wins.
  */
 function uvEnvLines(win) {
   const base = path.join(app.getPath('userData'), 'uv')
@@ -644,9 +632,9 @@ function uvEnvLines(win) {
     UV_TOOL_DIR: path.join(base, 'tools'),
     UV_TOOL_BIN_DIR: path.join(base, 'bin'),
     // OS certificate store instead of uv's bundled roots: matches the proxy
-    // page's "trust the system store" default and is what makes uv work
-    // behind TLS-intercepting corporate proxies (bundled roots time out
-    // decoding the response instead of failing loudly — seen in the sandbox).
+    // page's "trust the system store" default. Behind TLS-intercepting
+    // proxies the bundled roots time out decoding the response instead of
+    // failing on the certificate.
     UV_NATIVE_TLS: '1',
   }
   return Object.entries(vars).map(([k, v]) => win
@@ -674,8 +662,8 @@ for (let i = 0; i < args.length; i++) {
 const child = spawn(process.execPath, [pnpmCjs, '--config.minimum-release-age=0', '--config.auto-install-peers=false', 'dlx', ...out], { stdio: 'inherit', windowsHide: true })
 child.on('exit', (code, signal) => process.exit(code === null ? 1 : code))
 child.on('error', (err) => { console.error('npx shim: ' + err.message); process.exit(127) })
-// dsh stops a stdio server by signalling the process it spawned — us; pass
-// it on so the real server (pnpm's child) goes down with the shim.
+// dsh stops a stdio server by signalling this process; the signal is
+// forwarded so pnpm's child goes down with the shim.
 for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => { try { child.kill(sig) } catch {} })
 `
 
@@ -686,12 +674,10 @@ for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => { try {
 function openCliTerminal() {
   const binDir = writeCliLaunchers()
   if (process.platform === 'win32') {
-    // Mirror of the macOS .command approach: write a batch file and let
-    // ShellExecute run it — that reliably allocates a visible console.
-    // A direct spawn('cmd.exe', …, { detached }) does NOT: libuv maps
-    // detached to DETACHED_PROCESS, so cmd runs without a console window
-    // ("nothing happens"). Batch is parsed in the console codepage, hence
-    // chcp 65001 before any non-ASCII line (file is saved as UTF-8).
+    // A batch file run via ShellExecute (openPath) allocates a visible
+    // console; spawn('cmd.exe', …, { detached }) does not (libuv maps
+    // detached to DETACHED_PROCESS). Batch is parsed in the console
+    // codepage: chcp 65001 precedes any non-ASCII line (file saved as UTF-8).
     const cmdFile = path.join(binDir, 'DeepSeek Harness CLI.cmd')
     fs.writeFileSync(cmdFile, [
       '@echo off',
@@ -705,7 +691,7 @@ function openCliTerminal() {
       '',
     ].join('\r\n'))
     shell.openPath(cmdFile).then((err) => {
-      if (err) dialog.showErrorBox('无法打开命令行窗口', `${err}\n\n可手动打开该文件：\n${cmdFile}`)
+      if (err) dialog.showErrorBox('无法打开命令行窗口', `${err}\n\n可手动运行该文件：\n${cmdFile}`)
     })
     return
   }
@@ -731,15 +717,12 @@ function openCliTerminal() {
 }
 
 /**
- * Full-flavor builds ship preset plugin bundles inside the runtime
- * (plugins-full.json → stage-dsh.mjs → preset-plugins.json). Being a
- * dependency of the bundled dsh app only makes a package RESOLVABLE from
- * the profile (dsh symlinks the app closure into profiles/node_modules);
- * ACTIVATION requires the profile manifest to list it in dependencies +
- * dsh.profile.bundles — verified against dsh 0.1.x. Seed those entries
- * here, once per package: a marker in userData keeps us from re-adding a
- * bundle the user deliberately removed via GUI/CLI. Cold start (no
- * profile yet) writes the same skeleton dsh itself generates.
+ * Preset plugin bundles (full flavor): plugins-full.json → stage-dsh.mjs →
+ * preset-plugins.json inside the runtime. Being a dependency of the bundled
+ * dsh app makes a package resolvable from the profile (dsh symlinks the app
+ * closure into profiles/node_modules); activation requires the profile
+ * manifest to list it in dependencies + dsh.profile.bundles. Activation is
+ * handled by syncPresetPlugins.
  */
 /** Does <base>/<name> hold a loadable copy of the package (entry file exists)? */
 function pkgUsableAt(base, name) {
@@ -752,13 +735,12 @@ function pkgUsableAt(base, name) {
 }
 
 /**
- * Is <base>/<name> an intact package for BUNDLE/dependency purposes?
- * Weaker than pkgUsableAt: a meta bundle package (e.g. dsh-skins — only a
- * manifest + cordis.patch.yml, no JS entry) is perfectly valid. Intact =
- * valid manifest and every artifact it declares (entry, bundle patch)
- * actually present; a plain lib declaring nothing needs its implicit
- * index.js. `dsh plugin remove` remnants that keep package.json but lose
- * the code fail this and are treated as trash.
+ * Is <base>/<name> an intact package for bundle/dependency purposes? Weaker
+ * than pkgUsableAt: a meta bundle package (manifest + cordis.patch.yml, no
+ * JS entry, e.g. dsh-skins) is valid. Intact = valid manifest and every
+ * declared artifact (entry, bundle patch) present; a package declaring
+ * nothing needs its implicit index.js. `dsh plugin remove` remnants that
+ * keep package.json but lose the code fail this check.
  */
 function pkgIntactAt(base, name) {
   const pkgDir = path.join(base, ...name.split('/'))
@@ -774,16 +756,14 @@ function pkgIntactAt(base, name) {
 }
 
 /**
- * The loader persists plugin entries into the profile's cordis.yml (e.g.
- * picking a skin in dsh-skins' skin center pnpm-installs the skin package
- * and records an entry). If the referenced package later stops resolving
- * (flavor switch removed it from the app closure, or the local install
- * broke), dsh refuses to boot outright (ERR_MODULE_NOT_FOUND during the
- * plugin tree load). We cannot edit user config safely — instead park a
- * no-op stub package in the profile's node_modules so the entry loads and
- * does nothing. The stub carries a marker file and retires itself the
- * moment the active runtime provides the real package again; a real
- * pnpm (re)install simply overwrites it.
+ * The loader persists plugin entries into the profile's cordis.yml (e.g. a
+ * skin picked in the skin center is pnpm-installed and recorded). An entry
+ * whose package no longer resolves (flavor switch, broken local install)
+ * makes dsh refuse to boot (ERR_MODULE_NOT_FOUND during the plugin tree
+ * load). User config is not edited; a no-op stub package is placed in the
+ * profile's node_modules so the entry loads and does nothing. The stub
+ * carries a marker file and retires itself once the active runtime provides
+ * the real package; a real pnpm (re)install overwrites it.
  */
 function healUnresolvableEntries() {
   try {
@@ -794,18 +774,16 @@ function healUnresolvableEntries() {
     for (const file of ['cordis.yml', 'cordis.patch.yml']) {
       let text = ''
       try { text = fs.readFileSync(path.join(profileDir, file), 'utf8') } catch { continue }
-      // Entry lines look like `name: "@scope/pkg"` (quotes optional).
-      // Restrict to the npm name grammar; a non-package `name:` value that
-      // slips through just fails the resolvability checks or produces an
-      // unused stub dir — harmless either way.
+      // Entry lines look like `name: "@scope/pkg"` (quotes optional),
+      // restricted to the npm name grammar. A non-package `name:` value
+      // fails the resolvability checks or yields an unused stub dir.
       for (const m of text.matchAll(/^[\s-]*name:\s*["']?((?:@[a-z0-9~][\w.-]*\/)?[a-z0-9~][\w.-]*)["']?\s*$/gim)) {
         candidates.add(m[1])
       }
     }
-    // Retire stubs FIRST, by scanning for our marker files rather than by
-    // config references — dsh rewrites cordis.yml and may drop the entry
-    // that motivated a stub, leaving it orphaned; an orphaned stub still
-    // shadows the real package once a fuller build provides it again.
+    // Retire stubs first, by scanning for marker files rather than config
+    // references: dsh rewrites cordis.yml and may drop the entry behind a
+    // stub, and an orphaned stub still shadows the real package.
     try {
       const names = []
       for (const e of fs.readdirSync(localNm)) {
@@ -840,7 +818,7 @@ function writeStubPackage(localNm, name) {
   fs.writeFileSync(path.join(stubDir, 'package.json'), JSON.stringify({ name, version: '0.0.1', main: 'index.js' }, null, 2))
   fs.writeFileSync(path.join(stubDir, 'index.js'), [
     "'use strict'",
-    `console.warn('dsh-desktop: 插件 ${name} 不在当前安装包中，已用空实现顶替（安装含该插件的版本或重新安装该插件可恢复）')`,
+    `console.warn('dsh-desktop: 插件 ${name} 不在当前安装包中，已用空实现替代；重新安装该插件或安装含该插件的版本可恢复')`,
     `module.exports = { name: ${JSON.stringify(name)}, apply() {} }`,
     '',
   ].join('\n'))
@@ -849,35 +827,31 @@ function writeStubPackage(localNm, name) {
 
 /**
  * Reactive boot healing, the backstop behind the proactive passes: parse a
- * fatal dsh boot error and repair the known classes of profile damage —
+ * fatal dsh boot error and repair the known classes of profile damage:
  * config entries referencing packages that no longer resolve (link the
- * runtime's copy in, or stub), broken local leftovers shadowing the
- * closure, and profile bundles nothing can resolve (withdraw). Proactive
- * scans can miss references (dsh persists entries in formats/places we
- * don't enumerate); the error message is authoritative. Returns true if
- * something was repaired — the caller then retries the boot.
+ * runtime's copy in, or stub), broken local leftovers shadowing the closure,
+ * and profile bundles nothing resolves (withdraw). The error message is
+ * authoritative; proactive scans do not enumerate every place dsh persists
+ * entries. Returns true when something was repaired; the caller retries.
  */
 const repairedOverlays = new Set()
 const repairedCredentials = new Set()
 function applyBootErrorFix(errText) {
   try {
     let fixed = false
-    // A broken shim injection is fatal to EVERY Node child (--require
-    // failure aborts the process before dsh runs). If the boot error blames
-    // the shim itself, disable the injection entirely and retry — losing
-    // console-hiding beats not starting at all.
+    // A failing shim injection aborts every Node child before dsh runs. When
+    // the boot error blames the shim, the injection is disabled for this run.
     if (/win-spawn-shim/i.test(errText) && spawnShimPath !== '') {
-      console.error('boot failed on win-spawn-shim injection — disabling it for this run')
+      console.error('boot failed on win-spawn-shim injection; disabled for this run')
       spawnShimPath = '' // nodePreloadArgs/withNodePreloadEnv become no-ops
       return true
     }
-    // A NEWER dsh forward-migrates ~/.dsh/.credentials.yaml (its `version`
-    // became a number); this core's parser then refuses to boot: `the value
-    // for "version" in <path> must be a string`. Step 1: quote the number in
-    // place (cheap; keeps logins if this parser accepts the schema). If boot
-    // still fails on the same file, step 2 quarantines it — the user
-    // re-logs-in instead of owning an app that will not start. The retry
-    // loop drives both steps in order.
+    // A newer dsh forward-migrates ~/.dsh/.credentials.yaml (`version`
+    // becomes a number); this core's parser refuses to boot: `the value for
+    // "version" in <path> must be a string`. Step 1 quotes the number in
+    // place (keeps logins when the schema is otherwise accepted). Step 2,
+    // when the same file fails again, quarantines it; the user logs in
+    // again. The retry loop drives both steps in order.
     const credM = /the value for "version" in ([^\n]+?) must be a string/.exec(errText)
     if (credM && credM[1].includes('.credentials')) {
       const file = credM[1].trim()
@@ -894,7 +868,7 @@ function applyBootErrorFix(errText) {
           }
         }
         fs.renameSync(file, `${file}.broken-${Date.now()}`)
-        console.log(`boot heal: quarantined ${file} — 凭据需重新登录`)
+        console.log(`boot heal: quarantined ${file}; 凭据需重新登录`)
         return true
       } catch (err2) { console.error('credentials heal failed:', err2) }
     }
@@ -921,8 +895,8 @@ function applyBootErrorFix(errText) {
       }
       if (!pkgUsableAt(localNm, name)) {
         if (pkgUsableAt(runtimeNm, name)) {
-          // runtime ships it but the profile could not resolve it (e.g. the
-          // closure heal skipped this profile) — link the runtime copy in
+          // runtime ships it but the profile did not resolve it: link the
+          // runtime copy in
           try { fs.rmSync(localDir, { recursive: true, force: true }) } catch { /* ignore */ }
           fs.mkdirSync(path.dirname(localDir), { recursive: true })
           fs.symlinkSync(path.join(runtimeNm, ...name.split('/')), localDir, 'junction')
@@ -934,12 +908,11 @@ function applyBootErrorFix(errText) {
         fixed = true
       }
     }
-    // duplicate loader entry id: a seeded preset bundle's insert collides
-    // with an entry the user's config already carries (e.g. a skin they
-    // installed via the skin center before it became a preset). Withdraw
-    // OUR bundle and keep the seeded marker so it never re-seeds — the
-    // user's own entry keeps the feature alive, resolving against the
-    // carried package in the runtime closure.
+    // duplicate loader entry id: a preset bundle's insert collides with an
+    // entry already in the user's config (e.g. a skin installed via the skin
+    // center before it became a preset). The preset bundle is withdrawn; the
+    // user's own entry keeps the feature, resolving against the carried
+    // package in the runtime closure.
     const dupIds = [...errText.matchAll(/duplicate loader entry id: ([^\s'"]+)/g)].map((m) => m[1])
     if (dupIds.length > 0) {
       let presets = {}
@@ -959,9 +932,9 @@ function applyBootErrorFix(errText) {
         if (dupIds.some((id) => new RegExp(`id:\\s*["']?${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']?\\s*$`, 'm').test(patchText))) {
           pkg.dsh.profile.bundles = pkg.dsh.profile.bundles.filter((x) => x !== name)
           if (pkg.dependencies) delete pkg.dependencies[name]
-          // exclude for THIS app version only: the colliding user entry is
-          // often dropped later by dsh's own config rewrites, and the next
-          // installed version retries automatically
+          // excluded for this app version only: dsh's config rewrites often
+          // drop the colliding user entry, and the next installed version
+          // retries
           addPresetExclusion(name)
           console.log(`boot heal: excluded preset ${name} for this version (duplicate entry id with user config)`)
           wrote = true
@@ -970,12 +943,11 @@ function applyBootErrorFix(errText) {
       }
       if (wrote) fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
     }
-    // Unparseable overlay/config file ("dsh: failed to parse overlay
-    // <path>: YAMLException: …" — e.g. a YAML row corrupted by a plugin's
-    // config writer). dsh refuses to boot outright on these; quarantine
-    // the file (rename keeps the content for manual salvage). If it was
-    // the profile patch we manage MCP config in, regenerate the managed
-    // block from the desktop's own store so MCP settings survive.
+    // Unparseable overlay/config file ("dsh: failed to parse overlay <path>:
+    // YAMLException: …", e.g. a row corrupted by a plugin's config writer).
+    // dsh refuses to boot; the file is quarantined (renamed, content kept
+    // for manual salvage). When it is the profile patch holding the managed
+    // blocks, those are regenerated from the desktop's own store.
     const dshHome = path.join(app.getPath('home'), '.dsh')
     const badConfigFiles = new Set()
     // YAML syntax errors: "dsh: failed to parse <label> <path>: YAMLException…"
@@ -984,14 +956,13 @@ function applyBootErrorFix(errText) {
     // "dsh: <label> <path> must be a top-level YAML array of loader patch entries"
     for (const m of errText.matchAll(/dsh: \w+ (.+?\.ya?ml) must be a top-level YAML array/g)) badConfigFiles.add(m[1])
     for (const file of badConfigFiles) {
-      if (!file.startsWith(dshHome)) continue // never touch files outside user dsh data
+      if (!file.startsWith(dshHome)) continue // only files under user dsh data
       if (!fs.existsSync(file)) continue
-      // Gentle first attempt, once per file per run: the most common
-      // corruption is the default flow empty list `[]` coexisting with
-      // block entries appended later by plugin config writers (invalid
-      // YAML; our own MCP writer handles this, third-party ones don't).
-      // Dropping the standalone `[]` line often makes the file valid
-      // again and preserves the user's entries. Keep a backup either way.
+      // First attempt, once per file per run: the common corruption is the
+      // default flow empty list `[]` coexisting with block entries appended
+      // by plugin config writers (invalid YAML). Dropping the standalone `[]`
+      // line usually restores validity and keeps the user's entries. A
+      // backup is kept either way.
       if (!repairedOverlays.has(file)) {
         repairedOverlays.add(file)
         try {
@@ -1052,9 +1023,9 @@ function applyBootErrorFix(errText) {
 
 /** Per-app-version duplicate-id exclusions: a preset whose entry id
  * collides with an entry already in the user's config is excluded from
- * the sync for THIS app version only — every new install retries once,
- * so a collision that has since disappeared (dsh rewrites its config
- * files liberally) heals itself instead of being lost forever. */
+ * the sync for this app version only. Every new install retries once, so
+ * a collision that has since disappeared (dsh rewrites its config files)
+ * heals itself. */
 function presetExclusionsPath() { return path.join(app.getPath('userData'), 'preset-exclusions.json') }
 function readPresetExclusions() {
   try {
@@ -1070,10 +1041,9 @@ function addPresetExclusion(name) {
 }
 
 /**
- * Manual escape hatch: clear this version's duplicate-id exclusions and
- * stale preset stubs, then relaunch — the boot sync re-applies every
- * preset the build ships. Useful when a collision was resolved by hand
- * and the user does not want to wait for the next app version's retry.
+ * Manual resync: clear this version's duplicate-id exclusions and stale
+ * preset stubs, then relaunch; the boot sync re-applies every preset the
+ * build ships.
  */
 async function restorePresetPlugins() {
   let presets = {}
@@ -1089,7 +1059,7 @@ async function restorePresetPlugins() {
   const { response } = await dialog.showMessageBox({
     type: 'question', title: 'DeepSeek Harness',
     message: '重新同步本版本的预置插件？',
-    detail: `将确保以下插件全部挂载：\n${names.join('\n')}\n\n需要重启应用。`,
+    detail: `以下插件将全部挂载：\n${names.join('\n')}\n\n需要重启应用。`,
     buttons: ['同步并重启', '取消'], defaultId: 0, cancelId: 1,
   })
   if (response !== 0) return
@@ -1108,16 +1078,14 @@ async function restorePresetPlugins() {
 }
 
 /**
- * DECLARATIVE preset sync, runs before every server boot in every flavor:
- * the preset portion of the user profile is derived data owned by the
- * installed build — make it EXACTLY match preset-plugins.json (minus
- * this version's duplicate-id exclusions and anything the active runtime
- * cannot resolve). No history bookkeeping: userData/managed-presets.json
- * only records what we currently manage, so a flavor switch or trimmed
- * manifest knows which entries are ours to remove; user-installed plugins
- * are never touched. Consequence (by design): removing a preset via the
- * GUI does not stick — it is re-synced on next launch; use the minimal
- * build to opt out of presets.
+ * Declarative preset sync, run before every server boot in every flavor:
+ * the preset portion of the user profile is owned by the installed build
+ * and is made to match preset-plugins.json exactly (minus this version's
+ * duplicate-id exclusions and anything the active runtime cannot resolve).
+ * userData/managed-presets.json records only what is currently managed, so
+ * a flavor switch or trimmed manifest knows which entries to remove;
+ * user-installed plugins are never touched. Removing a preset via the GUI
+ * does not persist across launches; the minimal build ships no presets.
  */
 function syncPresetPlugins() {
   try {
@@ -1139,9 +1107,8 @@ function syncPresetPlugins() {
     const resolvable = (name) => pkgIntactAt(localNm, name) || pkgIntactAt(runtimeNm, name)
 
     // Leftovers of preset packages in the profile's own node_modules shadow
-    // the healed closure: broken ones crash boot, and STALE-VERSION ones
-    // silently keep serving the old plugin after an overwrite install
-    // (better-sidebar stayed at 0.13.1 for exactly this reason). Clear both —
+    // the closure: broken ones crash boot, stale-version ones keep serving
+    // the old plugin after an overwrite install. Both are cleared;
     // resolution then falls back to the closure link onto the bundled copy.
     for (const name of new Set([...Object.keys(manifest), ...managed])) {
       const localDir = path.join(localNm, ...name.split('/'))
@@ -1155,7 +1122,7 @@ function syncPresetPlugins() {
         const want = manifest[name]
         if (!want) continue
         let got = null
-        try { got = JSON.parse(fs.readFileSync(path.join(localDir, 'package.json'), 'utf8')).version } catch { /* unreadable = broken-ish, leave to pkgIntactAt */ }
+        try { got = JSON.parse(fs.readFileSync(path.join(localDir, 'package.json'), 'utf8')).version } catch { /* unreadable: left to pkgIntactAt */ }
         if (got && got !== want) {
           fs.rmSync(localDir, { recursive: true, force: true })
           console.log(`cleared stale ${name}@${got} from profile node_modules (preset is ${want})`)
@@ -1191,12 +1158,9 @@ function syncPresetPlugins() {
         changed = true
       }
     }
-    // Ensure everything we want is present AT THE MANIFEST VERSION. Presets
-    // are version-owned by the installed build (declarative sync) — the old
-    // `??=` kept whatever version was seeded first, so an overwrite install
-    // never moved the profile pin forward and the UI stayed on the old
-    // plugin. A user preferring another version should use the minimal build
-    // and install the plugin themselves.
+    // Ensure every desired preset is present at the manifest version: the
+    // profile pin follows the installed build on every overwrite install.
+    // Another version of a preset is installed by hand on the minimal build.
     for (const name of desired) {
       if (pkg.dependencies[name] !== manifest[name]) {
         if (pkg.dependencies[name]) console.log(`preset sync: ${name} ${pkg.dependencies[name]} -> ${manifest[name]}`)
@@ -1237,34 +1201,33 @@ async function startServer() {
     // children (dsh's plugin command locates pnpm via PATH).
     try {
       const binDir = writeCliLaunchers()
-      // case-insensitive: on Windows the spread key is "Path" — writing
-      // "PATH" would leave the child with PATH = binDir only (git vanishes)
+      // case-insensitive: on Windows the spread key is "Path"; writing
+      // "PATH" leaves the child with PATH = binDir only
       prependEnvPath(env, binDir, path.delimiter)
     } catch { /* CLI launchers are best-effort */ }
     withProxyEnv(env)
     withNodePreloadEnv(env)
-    // Ask win-spawn-shim.js to give the server an invisible host console:
-    // the Windows sandbox spawns pwsh via CreateProcessAsUserW with no
-    // console flag (hidden-console children die under the restricted
-    // token), so without a console to inherit every sandboxed command
-    // flashes a visible one. Server only — CLI runs own a real terminal.
+    // win-spawn-shim.js gives the server an invisible host console: the
+    // Windows sandbox spawns pwsh via CreateProcessAsUserW without a console
+    // flag (hidden-console children die under the restricted token), and a
+    // sandboxed command with no console to inherit opens a visible one.
+    // Server only; CLI runs own a real terminal.
     env.DSHDESKTOP_CONSOLE_HOST = '1'
-    // Per-process console-attach trace (server + every runner) — the file
-    // to send when sandboxed pwsh still flashes. Fresh per app launch.
+    // Per-process console-attach trace (server + every runner); fresh per
+    // app launch.
     try {
       const dbgFile = path.join(app.getPath('userData'), 'console-debug.log')
       if (process.platform === 'win32') fs.writeFileSync(dbgFile, '')
       env.DSHDESKTOP_CONSOLE_DEBUG_FILE = dbgFile
     } catch { /* diagnostics are best-effort */ }
 
-    // --no-open: rc8's dsh web hands the URL to the OS default browser by
-    // default; the desktop shell IS the browser — without this flag every
-    // launch would ALSO pop the user's default browser. (rc7 does not know
-    // the flag — this argv ships together with the rc8 lock.)
-    // ORDER MATTERS: the dsh launcher consumes only its own leading flags
+    // --no-open: dsh web (rc8+) opens the OS default browser by default; the
+    // desktop shell is the browser. rc7 does not know the flag; this argv
+    // ships with the rc8 lock.
+    // Order: the dsh launcher consumes only its own leading flags
     // (--profile/--patch) and hands everything from the first unknown token
-    // onward to the app's commander — so --patch must come before app flags
-    // like --no-open/--port, or the web app rejects it as unknown.
+    // to the app's commander, so --patch precedes app flags like
+    // --no-open/--port.
     serverProc = spawn(process.execPath, ['--expose-internals', ...nodePreloadArgs(), entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--no-open', '--port', '0'], {
       env,
       cwd: app.getPath('home'),
@@ -1302,8 +1265,8 @@ async function startServer() {
 
     const thisProc = serverProc
     serverProc.on('exit', (code) => {
-      // a late exit of an already-replaced process must not clobber the
-      // current one or trigger the death dialog
+      // a late exit of an already-replaced process leaves the current one
+      // alone and shows no dialog
       if (serverProc === thisProc) serverProc = null
       if (!settled) {
         settled = true
@@ -1468,10 +1431,10 @@ function parseAllowBuildsRequests(output) {
 
 ipcMain.handle('plugins:run', async (_event, action, spec) => {
   const cleaned = String(spec || '').trim()
-  // Accept every npm install spec shape: plain names, @scope/name@range,
+  // Every npm install spec shape is accepted: plain names, @scope/name@range,
   // github:owner/repo#ref, git+https://…, https://….tgz, file:/link: paths.
-  // Args go through spawn(argv[]) — no shell — so this is hygiene, not a
-  // security boundary; just reject whitespace/control characters.
+  // Args go through spawn(argv[]) without a shell; the check rejects
+  // whitespace/control characters only.
   if (cleaned.length === 0 || cleaned.length > 300 || /[\s'"`\\]/.test(cleaned)) {
     return { code: -1, output: '无效的包名' }
   }
@@ -1484,8 +1447,8 @@ ipcMain.handle('plugins:run', async (_event, action, spec) => {
 })
 /**
  * Turn an absolute local path into a portable pnpm spec. Forward slashes
- * everywhere: npm-package-arg parses file:/link: specs as URLs and chokes
- * on raw Windows backslashes.
+ * everywhere: npm-package-arg parses file:/link: specs as URLs and rejects
+ * raw Windows backslashes.
  */
 function localSpec(protocol, absPath) {
   let p = path.resolve(absPath)
@@ -1493,11 +1456,10 @@ function localSpec(protocol, absPath) {
   return `${protocol}:${p}`
 }
 /**
- * Install a plugin from local disk, IDE-style. Directory → link: (symlink,
- * dev loop: edits picked up on app restart, the plugin manages its own
- * node_modules); .tgz (npm pack output) → file: (copied, deps installed).
- * The picker path bypasses the text-spec hygiene check on purpose — paths
- * with spaces/backslashes are fine because args go through spawn(argv[]).
+ * Install a plugin from local disk. Directory → link: (symlink; edits are
+ * picked up on app restart, the plugin manages its own node_modules); .tgz
+ * (npm pack output) → file: (copied, deps installed). Picker paths skip the
+ * text-spec hygiene check; args go through spawn(argv[]).
  */
 ipcMain.handle('plugins:installLocal', async (_event, kind) => {
   if (kind !== 'dir' && kind !== 'tgz') return { code: -1, output: '无效操作' }
@@ -1508,7 +1470,7 @@ ipcMain.handle('plugins:installLocal', async (_event, kind) => {
   if (canceled || filePaths.length === 0) return { canceled: true, code: 0, output: '' }
   const target = filePaths[0]
   if (kind === 'dir' && !fs.existsSync(path.join(target, 'package.json'))) {
-    return { code: -1, output: `所选目录没有 package.json，不是一个 npm 包：\n${target}` }
+    return { code: -1, output: `所选目录没有 package.json：\n${target}` }
   }
   const spec = localSpec(kind === 'dir' ? 'link' : 'file', target)
   const result = await runDshCli(['plugin', '--profile', 'web', 'add', spec])
@@ -1524,7 +1486,7 @@ ipcMain.handle('plugins:restart', async () => {
 /**
  * Probe an MCP server config before saving: HTTP servers get a real
  * initialize POST; stdio commands are spawned and must survive ~2.5s.
- * Returns { ok, detail } — never throws.
+ * Returns { ok, detail }; never throws.
  */
 async function testMcpServer(server, extraPath) {
   if (server.transport === 'streamable-http') {
@@ -1542,24 +1504,24 @@ async function testMcpServer(server, extraPath) {
         }),
         signal: AbortSignal.timeout(6000),
       })
-      return { ok: res.ok, detail: `HTTP ${res.status}${res.ok ? '，服务可达' : '（服务在但返回异常，检查路径/认证头）'}` }
+      return { ok: res.ok, detail: `HTTP ${res.status}${res.ok ? '，服务可达' : '（服务可达但返回异常，检查路径与认证头）'}` }
     } catch (err) {
       const msg = String(err && (err.cause?.message || err.message) || err)
       let hint = ''
       if (/certificate|SSL|TLS|wrong version number|packet length/i.test(msg)) {
-        hint = '（疑似对 http 服务用了 https——本机/内网服务通常应写 http://）'
+        hint = '（协议可能不匹配，本机/内网服务通常为 http://）'
       } else if (/ECONNREFUSED/.test(msg)) {
-        hint = '（端口没有服务在监听——确认 MCP 服务器已启动）'
+        hint = '（端口无服务监听，确认 MCP 服务器已启动）'
       } else if (/timeout|aborted/i.test(msg)) {
-        hint = '（连接超时——地址不可达或服务无响应）'
+        hint = '（连接超时，地址不可达或服务无响应）'
       }
       return { ok: false, detail: `连接失败：${msg} ${hint}` }
     }
   }
-  // stdio: spawn the command exactly the way dsh will (PATH with our
-  // launchers, proxy env, the entry's own env/cwd) and run a real MCP
-  // initialize handshake over stdin/stdout, then count tools. Generous
-  // timeout: `npx -y …` / `uvx …` download on first run.
+  // stdio: spawn the command the way dsh does (PATH with the launchers,
+  // proxy env, the entry's own env/cwd), run a real MCP initialize handshake
+  // over stdin/stdout, then count tools. Long timeout: `npx -y …` / `uvx …`
+  // download on first run.
   return new Promise((resolve) => {
     const env = withProxyEnv({ ...process.env })
     Object.assign(env, server.env || {})
@@ -1617,7 +1579,7 @@ async function testMcpServer(server, extraPath) {
       finish({ ok: false, detail: `命令在完成 MCP 握手前退出 (exit ${code})${errTail ? `：${errTail.trim()}` : ''}` })
     })
     const timer = setTimeout(() => {
-      finish({ ok: false, detail: `90 秒内未完成 MCP 握手（首次运行要下载依赖，可稍后再试；或检查命令是否为 stdio 型 MCP 服务器）${errTail ? `：${errTail.trim()}` : ''}` })
+      finish({ ok: false, detail: `90 秒内未完成 MCP 握手（首次运行需下载依赖，可稍后重试；确认命令是 stdio 型 MCP 服务器）${errTail ? `：${errTail.trim()}` : ''}` })
     }, 90_000)
     send({
       jsonrpc: '2.0', id: 1, method: 'initialize',
@@ -1628,9 +1590,9 @@ async function testMcpServer(server, extraPath) {
 
 /**
  * Resolve a stdio command the way cross-spawn (the MCP SDK's spawner) does
- * on Windows: a bare name that lands on a .cmd/.bat launcher (our npx/pnpm
- * shims, or npm-installed CLIs) cannot be spawned directly by Node and must
- * go through cmd.exe. Elsewhere the command runs as given.
+ * on Windows: a bare name that lands on a .cmd/.bat launcher (the npx/pnpm
+ * shims, npm-installed CLIs) runs through cmd.exe. Elsewhere the command
+ * runs as given.
  */
 function resolveSpawnCommand(command, args, env) {
   if (process.platform !== 'win32' || /[\\/]/.test(command) || /\.(exe|cmd|bat|com)$/i.test(command)) return { file: command, args, shell: false }
@@ -1641,8 +1603,8 @@ function resolveSpawnCommand(command, args, env) {
       const candidate = path.join(dir, command + ext)
       if (!fs.existsSync(candidate)) continue
       if (ext === '.cmd' || ext === '.bat') {
-        // cmd.exe parses the joined line: quote anything with spaces/metachars
-        // (the launcher path lives under %APPDATA%\DeepSeek Harness\bin).
+        // cmd.exe parses the joined line: anything with spaces/metachars is
+        // quoted (the launcher path lives under %APPDATA%\DeepSeek Harness\bin).
         const quote = (a) => (/[\s"&|<>^]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)
         return { file: quote(candidate), args: args.map(quote), shell: true }
       }
@@ -1684,8 +1646,8 @@ const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 ipcMain.handle('skills:list', async () => listSkills())
 ipcMain.handle('skills:open', async (_event, name) => {
   fs.mkdirSync(skillsDir(), { recursive: true })
-  // With a name: open that skill's own directory (or the folder holding a
-  // flat .md), wherever it currently lives (enabled or .disabled).
+  // With a name: open that skill's directory (or the folder holding a flat
+  // .md), wherever it lives (enabled or .disabled).
   const n = String(name || '').trim()
   if (n !== '') {
     const d = skillDetail(fs, path, skillsDir(), n)
@@ -1770,10 +1732,9 @@ ipcMain.handle('proxy:pickCa', async () => {
 })
 /**
  * End-to-end proxy probe: start a throwaway forwarder driven by the config
- * currently in the form (not the saved one), then spawn a node child with
- * EXACTLY the env the dsh server gets and fetch the target through it. Tests
- * the real mechanism, not a simulation. The target is editable so an intranet
- * address can be checked alongside an internet one — the two must both work.
+ * in the form (not the saved one), spawn a node child with the env the dsh
+ * server gets, and fetch the target through it. The target is editable so
+ * an intranet address can be checked alongside an internet one.
  */
 ipcMain.handle('proxy:test', async (_event, config, url) => {
   const target = String(url || '').trim() || 'https://registry.npmjs.org/-/ping'
@@ -1857,19 +1818,19 @@ ipcMain.handle('skills:installZip', async () => {
       return { ok: false, error: `压缩包里没有可识别的技能（需要 SKILL.md 目录包或 .md 文件）${rejected.length ? `；名称无法转为 kebab-case 的已跳过：${rejected.join(', ')}` : ''}` }
     }
     fs.mkdirSync(skillsDir(), { recursive: true })
-    // A disabled copy under .disabled/ counts as existing too: overwriting
-    // it removes the disabled copy and installs the new one enabled.
+    // A disabled copy under .disabled/ counts as existing: overwriting
+    // removes the disabled copy and installs the new one enabled.
     const exists = (name) => skillExists(fs, path, skillsDir(), name)
     const conflicts = found.filter((s) => exists(s.name)).map((s) => s.name)
 
-    // Same-name skills: ask once for the whole batch — overwrite, skip, or abort.
+    // Same-name skills: one prompt for the whole batch (overwrite, skip, or abort).
     let overwrite = false
     if (conflicts.length > 0) {
       const { response } = await dialog.showMessageBox(pluginWindow || mainWindow, {
         type: 'question',
         title: '技能已存在',
         message: `以下技能已存在：${conflicts.join('、')}`,
-        detail: '覆盖会用压缩包里的版本替换现有技能（原内容删除）；跳过则只安装不冲突的技能。',
+        detail: '覆盖：用压缩包中的版本替换现有技能，原内容删除。跳过同名：只安装不冲突的技能。',
         buttons: ['覆盖', '跳过同名', '取消安装'],
         defaultId: 1,
         cancelId: 2,
@@ -1908,9 +1869,9 @@ ipcMain.handle('skills:delete', async (_event, name) => {
     return { ok: false, error: String(err && err.message || err) }
   }
 })
-// Enable = move back to the root; disable = move under .disabled/ (see
-// runtime.js setSkillEnabled for why a move, not a flag). dsh's watcher sees
-// the rename, so the change reaches the next model step without a restart.
+// Enable = move back to the root; disable = move under .disabled/
+// (runtime.js setSkillEnabled). dsh's watcher picks up the rename without a
+// restart.
 ipcMain.handle('skills:setEnabled', async (_event, name, enabled) => {
   const n = String(name || '').trim()
   try {
@@ -1925,9 +1886,8 @@ function killServer() {
   if (serverProc) {
     try {
       if (process.platform === 'win32') {
-        // Kill the whole tree on Windows (dsh spawns its own children) and
-        // wait for it, so quitting the app never abandons lock-holding
-        // descendants (conpty agents etc.) in the install directory.
+        // Windows: kill the whole tree and wait for it; descendants (conpty
+        // agents etc.) hold locks in the install directory.
         require('child_process').spawnSync('taskkill', ['/pid', String(serverProc.pid), '/T', '/F'], { windowsHide: true, timeout: 10_000 })
       } else {
         serverProc.kill('SIGTERM')
@@ -1957,9 +1917,9 @@ async function bootServerWithHeal() {
 }
 
 /**
- * Restart the dsh server in place (no app relaunch): used when a config
- * change (proxy) must reach the server's environment. The window shows the
- * splash while the new server boots, then reloads the web UI.
+ * Restart the dsh server in place (no app relaunch), for config changes
+ * (proxy) that reach the server through its environment. The window shows
+ * the splash while the new server boots, then reloads the web UI.
  */
 let restartingServer = false
 async function restartDshServer() {
@@ -1980,9 +1940,9 @@ async function restartDshServer() {
 }
 ipcMain.handle('server:restart', async () => restartDshServer())
 
-// Supply proxy credentials when Chromium's own network layer (shell window
-// traffic) hits an authenticating proxy. The dsh child process is separate:
-// its credentials travel inside the injected HTTP(S)_PROXY URL.
+// Proxy credentials for Chromium's own network layer (shell window traffic).
+// The dsh child process goes through the forwarder, which adds
+// Proxy-Authorization itself.
 app.on('login', (event, _webContents, _details, authInfo, callback) => {
   if (!authInfo || !authInfo.isProxy) return
   const c = readProxyConfig()
@@ -2004,8 +1964,8 @@ app.whenReady().then(async () => {
       await mainWindow.loadURL(url)
     }
   } catch (err) {
-    // An upgraded core that fails to boot gets quarantined; the app
-    // relaunches on the bundled runtime automatically.
+    // An upgraded core that fails to boot is quarantined; the app relaunches
+    // on the bundled runtime.
     if (activeRuntime && !activeRuntime.bundled) {
       try { fs.renameSync(activeRuntime.dir, `${activeRuntime.dir}.broken-${Date.now()}`) } catch { /* keep going */ }
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -2035,8 +1995,8 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 
-  // Silent startup update checks (only surface a dialog when newer exists):
-  // the app itself (GitHub releases) and the dsh core (npm registry).
+  // Silent startup update checks (a dialog appears only when a newer version
+  // exists): the app itself (GitHub releases) and the dsh core (npm registry).
   setTimeout(() => { checkAppUpdates(false) }, 15_000)
   setTimeout(() => { checkCoreUpdates(false) }, 25_000)
 })
@@ -2047,13 +2007,12 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', stopServer)
 app.on('will-quit', () => {
-  // The forwarder dies with the app, but the CLI shims are persistent files:
-  // leaving HTTP_PROXY=http://127.0.0.1:<port> in them would break ALL
+  // The CLI shims are persistent files while the forwarder dies with the
+  // app: a stale HTTP_PROXY=http://127.0.0.1:<port> in them breaks all
   // network access for `dsh`/`pnpm` run from the user's own terminal while
-  // the app is closed (dead port — even in 不使用代理 mode). Rewrite them
-  // scrub-only (= direct) on the way out; the next app launch writes the
-  // fresh port back in. A crash skips this — that staleness heals on next
-  // launch and is documented in AGENTS.md.
+  // the app is closed. They are rewritten scrub-only (direct) on the way
+  // out; the next launch writes the fresh port back. A crash skips this;
+  // the next launch heals it.
   try { forwarder = null; writeCliLaunchers() } catch { /* best effort */ }
 })
 process.on('exit', stopServer)

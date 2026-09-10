@@ -1,14 +1,13 @@
 /**
- * Regenerate locks/ for a new dsh release WITHOUT a live npm resolution.
+ * Regenerate locks/ for a new dsh release without a live npm resolution.
  *
- * Live resolution of the dsh graph explodes in npm's peer backtracker
- * (observed repeatedly: 16min+ or OOM), so this script transplants the
- * known-good previous full lock instead: bump every lockstep @deepseek-ai/*
- * entry to the target version, bump the preset plugins, refresh
- * resolved/integrity from the registry, add entries newly referenced by the
- * bumped packages (deps AND peers, recursively), and widen preset-plugin
- * peer ranges that lag the target by one release so `npm ci` accepts the
- * tree. Dependency-shape drift is REPORTED, never silently absorbed.
+ * Transplants the previous full lock: bumps every lockstep @deepseek-ai/*
+ * entry to the target version, bumps the preset plugins, refreshes
+ * resolved/integrity from the registry, adds entries newly referenced by the
+ * bumped packages (deps and required peers, recursively), and widens
+ * preset-plugin peer ranges that lag the target by one release so `npm ci`
+ * accepts the tree. Dependency-shape drift is reported, never absorbed.
+ * Live resolution of the dsh graph backtracks for 16min+ or OOMs.
  *
  * Usage:
  *   node update-locks.mjs 0.1.1-rc.2 \
@@ -16,9 +15,9 @@
  *     "dsh-better-sidebar@0.15.0" \
  *     "@linxin666/dsh-ssh@0.2.8"
  *
- * Then verify: DSH_FLAVOR=full node stage-dsh.mjs (npm ci --force installs
- * the lock; the staging smoke run is the real compatibility check) and boot
- * the app headlessly per AGENTS.md. Both locks are rewritten in place.
+ * Verify with DSH_FLAVOR=full node stage-dsh.mjs (npm ci --force installs
+ * the lock; the staging smoke run is the compatibility check) and a headless
+ * app boot per AGENTS.md. Both locks are rewritten in place.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -77,18 +76,17 @@ for (const [key, entry] of Object.entries(lock.packages)) {
   bumped++
 }
 
-// Pass 2: ensure every referenced name (dep or peer) has a tree entry —
-// including a preset plugin newly ADDED to the set (nothing references it
-// yet; without the explicit seed below it would never get an entry).
-// OPTIONAL peers are NOT pulled in: npm doesn't auto-install them, and
-// following them explodes (mongodb's kerberos/aws integrations, b4a's
-// react-native — one hop dragged in 395 packages once). Optional deps ARE
-// pulled: npm installs those by default.
+// Pass 2: every referenced name (dep or required peer) gets a tree entry.
+// A preset plugin newly added to the set has no referrer; the explicit seed
+// below creates its entry. Optional peers are not followed: npm does not
+// auto-install them, and one hop through them (mongodb's kerberos/aws
+// integrations, b4a's react-native) adds hundreds of packages. Optional deps
+// are followed: npm installs them by default.
 const have = new Set(Object.keys(lock.packages).map((k) => k.replace(/^.*node_modules\//, '')))
 const added = []
-// npm's own semver, resolved out of the npm installation next to the running
-// node — a new entry must be picked BY THE REFERRER'S RANGE (mongodb ^6 must
-// not become latest 7.x; npm ci validates every edge and rejects that).
+// npm's own semver, resolved from the npm installation next to the running
+// node. A new entry is picked by the referrer's range, not latest (mongodb ^6
+// must not become 7.x; npm ci validates every edge).
 const { createRequire } = await import('node:module')
 const npmDir = path.resolve(path.dirname(process.execPath), '../lib/node_modules/npm')
 const semver = createRequire(path.join(npmDir, 'index.js'))('semver')
@@ -123,19 +121,17 @@ for (const [k, v] of [...Object.entries(lock.packages)]) {
   for (const [d, r] of requiredRefs(v)) await ensure(d, r)
 }
 
-// Root ranges, then prune entries no longer reachable from the root — this
-// is what makes removing/swapping a preset plugin work; the transplant alone
-// would leave the dropped plugin's subtree in the lock and npm ci would still
-// install it. The walk mirrors Node/npm resolution over the lock's flat keys
-// (look for `${key}/node_modules/${dep}`, then walk up), so nested entries
-// are kept exactly when their owner is kept, and follows the same edge set
-// as pass 2 (optional peers excluded): an entry kept alive ONLY by an
-// optional peer is a zombie — better-locale@0.1.0's optional presence once
-// pinned the rc.2 dsh-client-runtime/host-apiproxy (both deleted in rc.1)
-// into an rc.1 closure. Runs here so the passes below never spend registry
-// calls on zombies, and again at the end for anything they orphaned. NOT
-// delegated to `npm install --package-lock-only`: that would rewrite peer
-// ranges from registry metadata and undo pass 3's widening.
+// Root ranges, then prune entries unreachable from the root. A removed or
+// swapped preset plugin leaves its subtree in the transplanted lock; pruning
+// drops it. The walk mirrors Node/npm resolution over the lock's flat keys
+// (`${key}/node_modules/${dep}`, then up), so nested entries are kept exactly
+// when their owner is kept, and follows the same edge set as pass 2
+// (optional peers excluded): an entry reachable only through an optional
+// peer would pin packages the target release no longer ships. Runs here so
+// the passes below spend no registry calls on such entries, and again at the
+// end for anything they orphaned. Not delegated to
+// `npm install --package-lock-only`: that rewrites peer ranges from registry
+// metadata and undoes pass 3's widening.
 lock.packages[''].dependencies = {
   '@deepseek-ai/dsh': `^${target}`,
   ...Object.fromEntries(Object.entries(pluginBumps).map(([n, v]) => [n, `^${v}`])),
@@ -166,14 +162,13 @@ function prune() {
 }
 const prunedEarly = prune()
 
-// Pass 2b: re-resolve NON-lockstep entries that some referrer's range no
+// Pass 2b: re-resolve non-lockstep entries that some referrer's range no
 // longer accepts, when a published version satisfying every referrer exists.
-// A core release routinely raises its floor on its own support packages
-// (0.1.2-rc.1 moved @deepseek-ai/cordis to ^4.0.2 while the lock carried
-// 4.0.1); those are neither lockstep-versioned nor plugin seeds, so pass 1
-// leaves them alone — and letting pass 3 merely WIDEN the range would ship
-// an old cordis under a core that requires the new one. Iterates because a
-// bump can pull in new references or new ranges.
+// A core release raises the floor on its support packages (e.g.
+// @deepseek-ai/cordis ^4.0.2 while the lock carries 4.0.1); those are neither
+// lockstep-versioned nor plugin seeds, and widening the range in pass 3 would
+// ship the old version under a core that requires the new one. Iterates
+// because a bump can add references or ranges.
 const refreshed = []
 const isLockstep = (name, entry) => name.startsWith('@deepseek-ai/') && entry.version === target
 for (let round = 0; round < 3; round++) {
@@ -194,7 +189,7 @@ for (let round = 0; round < 3; round++) {
     if (wanted.every((r) => semver.satisfies(e.version, r))) continue
     const doc = await reg(name)
     const fits = Object.keys(doc.versions).filter((v) => wanted.every((r) => semver.satisfies(v, r)))
-    if (fits.length === 0) continue // truly unsatisfiable — left for pass 3 widening
+    if (fits.length === 0) continue // unsatisfiable; pass 3 widens the range
     const pick = semver.rsort(fits)[0]
     if (pick === e.version) continue
     const v = doc.versions[pick]
@@ -213,10 +208,9 @@ for (let round = 0; round < 3; round++) {
 
 // Pass 2c: nest a private copy where a referrer's range and the hoisted
 // entry are irreconcilable (compression@1.8 wants debug ^2.6 while the tree
-// hoists debug 4.x) — exactly what npm's installer would do; npm ci
-// otherwise fails with "Missing: debug@2.6.9 from lock file". Optional
-// peers are excluded (npm doesn't auto-install them). Iterates because a
-// nested copy brings its own edges.
+// hoists debug 4.x), as npm's installer does; npm ci otherwise fails with
+// "Missing: debug@2.6.9 from lock file". Optional peers are excluded.
+// Iterates because a nested copy brings its own edges.
 const nested = []
 for (let round = 0; round < 4; round++) {
   let changed = 0
@@ -225,10 +219,10 @@ for (let round = 0; round < 4; round++) {
     for (const [d, r] of requiredRefs(e)) {
       const hit = resolveKey(k, d)
       if (hit !== undefined && semver.satisfies(lock.packages[hit].version, r)) continue
-      if (hit === undefined) continue // never happens after pass 2, keep defensive
+      if (hit === undefined) continue // pass 2 guarantees an entry; defensive
       const doc = await reg(d)
       const pick = semver.maxSatisfying(Object.keys(doc.versions), r)
-      if (pick === null) continue // unsatisfiable: pass 3 widening territory
+      if (pick === null) continue // unsatisfiable; pass 3 widens the range
       const v = doc.versions[pick]
       const key = `${k}/node_modules/${d}`
       lock.packages[key] = {
@@ -247,14 +241,12 @@ for (let round = 0; round < 4; round++) {
   if (changed === 0) break
 }
 
-// Pass 3: widen unsatisfied peers so the lock is self-consistent (npm ci
-// validates every peer edge — optional ones included, whenever the name
-// happens to be present in the tree). Two real cases: plugins pinning one
-// or two rc's behind the core (better-sidebar ^0.1.0-rc.8 while core is
-// 0.1.1-rc.2), and an optional peer of a plugin dep colliding with a
-// DIFFERENT major already in the dsh graph (mongodb's gcp-metadata ^5.2.0
-// vs google-auth-library's 8.x). Widening the recorded range is the lock's
-// decision record; real compatibility is what the staging smoke verifies.
+// Pass 3: widen unsatisfied peers so the lock is self-consistent. npm ci
+// validates every peer edge, optional ones included whenever the name is
+// present in the tree. Two cases: plugins pinning one or two rc's behind the
+// core, and an optional peer of a plugin dep colliding with a different major
+// already in the dsh graph (gcp-metadata ^5.2.0 vs 8.x). The widened range is
+// the lock's decision record; the staging smoke run verifies compatibility.
 let widened = 0
 for (const entry of Object.values(lock.packages)) {
   for (const [n, r] of Object.entries(entry?.peerDependencies ?? {})) {
@@ -266,13 +258,13 @@ for (const entry of Object.values(lock.packages)) {
   }
 }
 
-// Pass 4: prune entries no longer reachable from the root (see prune()).
+// Pass 4: prune entries unreachable from the root (prune()).
 const pruned = prune()
 fs.writeFileSync(fullPath, JSON.stringify(lock, null, 2))
 
-// Derive minimal by pruning with npm (all versions pre-pinned: seconds, no
-// backtracking; core-only tree has no lagging peers, so npm's rewrite of
-// peer metadata is harmless here).
+// Derive minimal by pruning with npm. All versions are pinned, so there is no
+// backtracking; the core-only tree has no lagging peers, so npm's rewrite of
+// peer metadata changes nothing.
 const tmp = fs.mkdtempSync('/tmp/lockmin-')
 const minimal = structuredClone(lock)
 minimal.packages[''].dependencies = { '@deepseek-ai/dsh': `^${target}` }
@@ -285,5 +277,5 @@ console.log(`bumped ${bumped} (from ${prevDsh} to ${target}); added ${added.leng
 console.log(`re-resolved by referrer ranges: ${refreshed.length}${refreshed.length > 0 ? ' (' + refreshed.join(', ') + ')' : ''}`)
 console.log(`nested private copies: ${nested.length}${nested.length > 0 ? ' (' + nested.join(', ') + ')' : ''}`)
 console.log(`widened lagging plugin peers: ${widened}; pruned unreachable: ${prunedEarly.length + pruned.length}${[...prunedEarly, ...pruned].length > 0 ? ' (' + [...prunedEarly, ...pruned].map((k) => k.replace(/^.*node_modules\//, '')).join(', ') + ')' : ''}`)
-console.log(drift.length ? `依赖形状变化 ${drift.length} 条（人工确认）：\n  ` + drift.join('\n  ') : '依赖形状零漂移')
-console.log('locks/ 已重写；接着跑 DSH_FLAVOR=full node stage-dsh.mjs + 无头冒烟验证')
+console.log(drift.length ? `依赖形状变化 ${drift.length} 条，需人工确认：\n  ` + drift.join('\n  ') : '依赖形状无变化')
+console.log('locks/ 已重写。下一步：DSH_FLAVOR=full node stage-dsh.mjs，再做无头冒烟验证')

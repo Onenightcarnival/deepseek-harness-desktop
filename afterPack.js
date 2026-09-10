@@ -3,9 +3,9 @@ const path = require('path')
 const fs = require('fs')
 
 /**
- * electron-builder afterPack hook: copy the platform's staged dsh runtime
- * into the packed app's resources directory. Run `node stage-dsh.mjs`
- * before building so `staging/<platform>-<arch>/dsh` exists.
+ * electron-builder afterPack hook: copies the platform's staged dsh runtime
+ * into the packed app's resources directory. Requires
+ * `staging/<platform>-<arch>/dsh` from `node stage-dsh.mjs`.
  */
 module.exports = async function afterPack(context) {
   const platform = context.electronPlatformName // 'win32' | 'darwin' | 'linux'
@@ -17,7 +17,7 @@ module.exports = async function afterPack(context) {
     path.join(__dirname, '..', 'staging', key, 'dsh'),
   ]
   const src = candidates.find((p) => fs.existsSync(p))
-  if (!src) throw new Error(`staged dsh runtime missing; run "node stage-dsh.mjs" first (looked in: ${candidates.join(', ')})`)
+  if (!src) throw new Error(`staged dsh runtime not found in ${candidates.join(', ')}. Run "node stage-dsh.mjs" first.`)
 
   let resDir
   if (platform === 'darwin') {

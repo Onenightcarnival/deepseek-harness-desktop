@@ -1,31 +1,26 @@
 'use strict'
 /**
- * Preloaded (--require) into every Node child the shell spawns — the dsh
- * server, the dsh CLI runner, pnpm — to stop console windows flashing on
+ * Preloaded (--require) into every Node child the shell spawns (dsh server,
+ * dsh CLI runner, pnpm) to suppress console windows on Windows.
+ *
+ * The host processes are GUI-subsystem (Electron); a console-subsystem
+ * descendant (pwsh/cmd/git) spawned without windowsHide gets a new visible
+ * console host on every shell command. The preload defaults
+ * `windowsHide: true` on all child_process entry points of the process.
+ *
+ * Only a missing windowsHide is filled in; an explicit `windowsHide: false`
+ * is preserved. node-pty terminals (native ConPTY) are unaffected. No-op off
  * Windows.
- *
- * Why: our processes are GUI-subsystem (Electron), so any console-subsystem
- * grandchild (pwsh/cmd/git) spawned WITHOUT windowsHide gets a brand-new
- * visible console host — a black window that pops up and vanishes on every
- * shell command dsh runs. In a terminal nobody notices (children inherit the
- * console); packaged as a GUI app it is a constant flicker. We cannot patch
- * dsh's own spawn call sites, but we are the ones launching dsh's Node, so a
- * preload can default `windowsHide: true` for the whole process.
- *
- * Only a MISSING windowsHide is filled in; an explicit `windowsHide: false`
- * (something intentionally showing a window) is preserved. node-pty terminals
- * are unaffected (native ConPTY, not child_process). No-op off Windows.
  */
 
 /**
- * Whether this process sits on the shell's invisible host console (set once
- * setupHiddenConsole attached). Then console INHERITANCE beats
- * CREATE_NO_WINDOW: a windowsHide child has no console at all, so any
- * console app IT spawns gets a brand-new visible window — uv → python for a
- * `uvx` MCP server, for instance. Inheriting the invisible console keeps the
- * whole native subtree windowless. Only an explicit `windowsHide: true` is
- * flipped (a missing value is still filled the same way), never a detached
- * spawn (DETACHED_PROCESS drops the console anyway).
+ * True once setupHiddenConsole attached this process to the shell's
+ * invisible host console. Console inheritance then replaces CREATE_NO_WINDOW:
+ * a windowsHide child has no console, so any console app it spawns (uv ->
+ * python for a `uvx` MCP server) gets a new visible window; inheriting the
+ * invisible console keeps the whole subtree windowless. An explicit
+ * `windowsHide: true` is flipped and a missing value is filled the same way;
+ * a detached spawn is left alone (DETACHED_PROCESS drops the console).
  */
 let hostConsole = false
 
@@ -40,7 +35,7 @@ function withHide(args) {
       else if (v.windowsHide === true && hostConsole && !v.detached) a[i] = { ...v, windowsHide: false }
       return a
     }
-    if (typeof v === 'function') break // callback reached — no options given
+    if (typeof v === 'function') break // callback reached; no options given
   }
   const opts = { windowsHide: want }
   if (typeof a[a.length - 1] === 'function') a.splice(a.length - 1, 0, opts)
@@ -49,10 +44,10 @@ function withHide(args) {
 }
 
 /**
- * Patch spawn/exec-family on a child_process-like object. Exported separately
- * so plain-node unit tests can drive it against a mock on any platform.
- * (exec/execFile call the module-internal spawn, not the export, so every
- * public entry point must be wrapped individually.)
+ * Patch the spawn/exec family on a child_process-like object. Exported for
+ * plain-node unit tests against a mock on any platform. exec/execFile call
+ * the module-internal spawn, not the export; every public entry point is
+ * wrapped individually.
  */
 function patchChildProcess(cp) {
   const custom = require('util').promisify.custom
@@ -60,16 +55,15 @@ function patchChildProcess(cp) {
     const orig = cp[name]
     if (typeof orig !== 'function') continue
     const wrapped = function (...args) { return orig.apply(this, withHide(args)) }
-    // Keep own symbols/props (util.promisify.custom on exec/execFile —
-    // losing it silently changes promisify(exec)'s resolved value).
+    // Carry over own symbols/props; util.promisify.custom on exec/execFile
+    // determines promisify(exec)'s resolved value.
     for (const key of Reflect.ownKeys(orig)) {
       if (key === 'length' || key === 'name' || key === 'prototype' || key === custom) continue
       try { Object.defineProperty(wrapped, key, Object.getOwnPropertyDescriptor(orig, key)) } catch { /* non-configurable */ }
     }
-    // The original custom promisified closes over the ORIGINAL function, so
-    // promisify(exec) would bypass the wrapper — rebuild it on top of the
-    // wrapped one, mirroring Node's semantics ({stdout, stderr}; rejection
-    // carries stdout/stderr on the error).
+    // The original custom promisified closes over the original function and
+    // bypasses the wrapper. Rebuilt on the wrapped one with Node's semantics:
+    // resolves {stdout, stderr}; rejection carries stdout/stderr on the error.
     if (orig[custom]) {
       Object.defineProperty(wrapped, custom, {
         configurable: true, enumerable: false,
@@ -88,35 +82,32 @@ function patchChildProcess(cp) {
 }
 
 /**
- * The second, sneakier console-flash source: dsh's Windows SANDBOX launches
- * pwsh via raw CreateProcessAsUserW (koffi FFI), bypassing child_process
- * entirely — and it deliberately passes no console flag, because a
- * CREATE_NO_WINDOW child dies with STATUS_DLL_INIT_FAILED under the
- * restricted token; the child is expected to SHARE THE HOST CONSOLE. Run
- * from a terminal that console exists and nothing is visible; under the GUI
- * shell there is no console, so Windows allocates a fresh VISIBLE one per
- * pwsh call.
+ * Give this process an invisible console for the sandbox to share.
  *
- * Fix: give this process an invisible console to share. AllocConsole would
- * flash (and may open a Windows Terminal tab), so instead: spawn a tiny cmd
- * helper with CREATE_NO_WINDOW — its console never has a window — attach to
- * it with AttachConsole, then kill the helper (a console lives while any
- * process is attached). koffi is resolved out of the dsh runtime's own tree;
- * everything is best-effort — on any failure behavior is simply today's.
+ * dsh's Windows sandbox launches pwsh via CreateProcessAsUserW (koffi FFI),
+ * bypassing child_process, with no console flag: a CREATE_NO_WINDOW child
+ * dies with STATUS_DLL_INIT_FAILED under the restricted token, so the child
+ * shares the host console. Under the GUI shell there is no console and
+ * Windows allocates a visible one per pwsh call.
+ *
+ * AllocConsole shows a window (and may open a Windows Terminal tab). Instead:
+ * spawn a cmd helper with CREATE_NO_WINDOW (its console has no window),
+ * AttachConsole to it, then kill the helper; a console lives while any
+ * process is attached. koffi resolves from the dsh runtime's own tree. Every
+ * step is best-effort; on failure the process keeps the default behavior.
  * Gated on DSHDESKTOP_CONSOLE_HOST=1 (main.js sets it for the dsh server
- * only) and skipped when a console already exists (CLI usage in a real
- * terminal — never touch the user's console).
+ * only); skipped when a console already exists (CLI usage in a terminal).
  */
 function setupHiddenConsole(deps = {}) {
   const env = deps.env || process.env
   const platform = deps.platform || process.platform
   if (platform !== 'win32' || env.DSHDESKTOP_CONSOLE_HOST !== '1') return false
-  // Per-process trace appended to userData/console-debug.log (path passed in
-  // env by main.js): pid + which step attached or which Win32 code failed —
-  // the one artifact that makes this remotely debuggable. Size-capped.
+  // Per-process trace appended to userData/console-debug.log (path from env,
+  // set by main.js): pid, the step that attached, or the failing Win32 code.
+  // Size-capped.
   const dbg = deps.dbg || ((msg) => {
-    // fallback: the shim lives in userData, next to the file main.js
-    // truncates — env-independent so a scrubbed child env still traces
+    // Fallback path: the shim lives in userData next to the log file main.js
+    // truncates, so a scrubbed child env still traces.
     const file = env.DSHDESKTOP_CONSOLE_DEBUG_FILE || require('path').join(__dirname, 'console-debug.log')
     if (!file) return
     try {
@@ -132,9 +123,9 @@ function setupHiddenConsole(deps = {}) {
       const fs = require('fs')
       const entry = process.argv[1]
       const bases = entry ? [path.dirname(entry)] : []
-      // npm-installed (bundled) runtimes have koffi at top level; pnpm-installed
-      // (upgraded) ones hide it under .pnpm — resolve from a package that
-      // depends on it.
+      // npm-installed (bundled) runtimes have koffi at top level;
+      // pnpm-installed (upgraded) ones keep it under .pnpm, resolved through
+      // a package that depends on it.
       try {
         const acl = require.resolve('@deepseek-ai/dsh-sandbox-windows-acl/package.json', { paths: bases })
         bases.push(path.dirname(fs.realpathSync(acl)))
@@ -152,20 +143,19 @@ function setupHiddenConsole(deps = {}) {
     const GetLastError = kernel32.func('uint32_t __stdcall GetLastError()')
     const GetStdHandle = kernel32.func('void* __stdcall GetStdHandle(uint32_t nStdHandle)')
     const SetStdHandle = kernel32.func('int __stdcall SetStdHandle(uint32_t nStdHandle, void* hHandle)')
-    if (GetConsoleCP() !== 0) { dbg('already has a console — untouched'); return false }
+    if (GetConsoleCP() !== 0) { dbg('already has a console; untouched'); return false }
     // Attaching rewrites the process's std-handle table to console handles.
-    // The sandbox runner reads GetStdHandle FRESH to pass the caller's pipes
-    // through to pwsh — restore the exact values or tool output would leak
-    // into the invisible console. (Node's own stdio is unaffected: libuv
-    // cached its handles at startup.)
+    // The sandbox runner reads GetStdHandle at spawn time to pass the
+    // caller's pipes to pwsh; the exact values are restored after attach.
+    // Node's own stdio is unaffected: libuv cached its handles at startup.
     const STD = [0xFFFFFFF6, 0xFFFFFFF5, 0xFFFFFFF4] // -10 stdin, -11 stdout, -12 stderr
     const saved = STD.map((h) => { try { return GetStdHandle(h) } catch { return null } })
     const restoreStd = () => { STD.forEach((h, i) => { try { if (saved[i] !== null) SetStdHandle(h, saved[i]) } catch { /* keep rest */ } }) }
-    // Step 1 — synchronous parent attach: the sandbox launches pwsh from a
-    // TRANSIENT runner (node runner.js -- pwsh…) that calls
-    // CreateProcessAsUserW immediately after load; anything asynchronous
-    // loses that race. The runner's parent is the dsh server, which carries
-    // the invisible console.
+    // Step 1: synchronous parent attach. The sandbox launches pwsh from a
+    // transient runner (node runner.js -- pwsh ...) that calls
+    // CreateProcessAsUserW immediately after load; the attach must complete
+    // synchronously. The runner's parent is the dsh server, which carries the
+    // invisible console.
     try {
       if (AttachConsole(0xFFFFFFFF) !== 0) { // ATTACH_PARENT_PROCESS
         restoreStd()
@@ -174,22 +164,21 @@ function setupHiddenConsole(deps = {}) {
       }
       dbg(`parent attach failed (GetLastError=${GetLastError()})`)
     } catch (e) { dbg('parent attach threw: ' + e) }
-    // Step 2 — helper console, ALSO synchronous now: spawn a CREATE_NO_WINDOW
-    // cmd (its console never has a window), then poll AttachConsole with a
-    // blocking sleep. Everything after this shim (including the sandbox
-    // spawn) must only run once the console exists — an unref'd timer left
-    // a window where pwsh was spawned console-less. Worst case blocks load
-    // for ~2s, then gives up to today's behavior.
+    // Step 2: helper console, also synchronous. Spawn a CREATE_NO_WINDOW cmd
+    // (its console has no window), then poll AttachConsole with a blocking
+    // sleep. Everything after this shim, including the sandbox spawn, runs
+    // only once the console exists. Worst case blocks load for ~2s, then
+    // keeps the default behavior.
     const spawnHelper = deps.spawnHelper || (() => require('child_process').spawn(
       env.ComSpec || 'cmd.exe', ['/d', '/q', '/c', 'pause'],
-      // stdin is a pipe we never write: `pause` blocks forever, keeping the
-      // console alive until we have attached. CREATE_NO_WINDOW via windowsHide.
+      // stdin is an unwritten pipe: `pause` blocks and keeps the console
+      // alive until the attach completes. CREATE_NO_WINDOW via windowsHide.
       { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true }
     ))
     const sleep = deps.sleep || ((ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) } catch { /* spin-free fallback: give up */ } })
     const helper = spawnHelper()
     if (!helper || !helper.pid) { dbg('helper spawn failed'); return false }
-    if (helper.on) helper.on('error', () => { /* swallowed — cosmetic feature */ })
+    if (helper.on) helper.on('error', () => { /* best effort */ })
     let attached = false
     let lastErr = 0
     for (let i = 0; i < 40 && !attached; i++) {
@@ -202,13 +191,13 @@ function setupHiddenConsole(deps = {}) {
     try { helper.kill() } catch { /* already gone */ }
     if (attached) { restoreStd(); dbg('attached via helper') } else { dbg(`helper attach failed after 40 tries (GetLastError=${lastErr})`) }
     return attached
-  } catch (e) { dbg('setup threw: ' + e); return false /* never break the host process */ }
+  } catch (e) { dbg('setup threw: ' + e); return false /* host process unaffected */ }
 }
 
 if (process.platform === 'win32') {
-  try { patchChildProcess(require('child_process')) } catch { /* never break the host process */ }
-  // Attach first, then decide the spawn policy for the rest of the process.
-  // DSHDESKTOP_INHERIT_CONSOLE=0 is the escape hatch back to CREATE_NO_WINDOW.
+  try { patchChildProcess(require('child_process')) } catch { /* host process unaffected */ }
+  // Attach first, then set the spawn policy for the rest of the process.
+  // DSHDESKTOP_INHERIT_CONSOLE=0 restores CREATE_NO_WINDOW.
   if (setupHiddenConsole() && process.env.DSHDESKTOP_INHERIT_CONSOLE !== '0') hostConsole = true
 }
 

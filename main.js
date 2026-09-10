@@ -12,7 +12,8 @@ const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath,
-  COMMON_SETTINGS, validateCommonSettings, buildSettingsBlock,
+  COMMON_SETTINGS, validateCommonSettings, buildSettingsBlock, groupCommonSettings,
+  listSkillStore, skillExists, removeSkill, setSkillEnabled, skillDetail, readSkillFile,
   applyProxyEnv, PROXY_ENV_KEYS } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
 
@@ -486,30 +487,7 @@ function validateMcpServer(s, seen) {
 
 function skillsDir() { return path.join(app.getPath('home'), '.dsh', 'skills') }
 
-function listSkills() {
-  const dir = skillsDir()
-  const out = []
-  let entries = []
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return out }
-  const describe = (mdPath) => {
-    try {
-      const text = fs.readFileSync(mdPath, 'utf8').slice(0, 4000)
-      const fm = text.match(/^description:\s*(.+)$/m)
-      if (fm) return fm[1].trim().replace(/^['"]|['"]$/g, '')
-      const para = text.split('\n').find((l) => l.trim() && !l.startsWith('#') && !l.startsWith('---'))
-      return (para || '').trim().slice(0, 120)
-    } catch { return '' }
-  }
-  for (const e of entries) {
-    if (e.name.startsWith('.')) continue
-    if (e.isDirectory() && fs.existsSync(path.join(dir, e.name, 'SKILL.md'))) {
-      out.push({ name: e.name, kind: 'bundle', description: describe(path.join(dir, e.name, 'SKILL.md')) })
-    } else if (e.isFile() && e.name.endsWith('.md')) {
-      out.push({ name: e.name.slice(0, -3), kind: 'flat', description: describe(path.join(dir, e.name)) })
-    }
-  }
-  return out
-}
+function listSkills() { return listSkillStore(fs, path, skillsDir()) }
 
 /**
  * On Windows the bundled dsh's native folder dialog (a koffi child process
@@ -1704,9 +1682,31 @@ ipcMain.handle('app:openLog', async () => {
 
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 ipcMain.handle('skills:list', async () => listSkills())
-ipcMain.handle('skills:open', async () => {
+ipcMain.handle('skills:open', async (_event, name) => {
   fs.mkdirSync(skillsDir(), { recursive: true })
+  // With a name: open that skill's own directory (or the folder holding a
+  // flat .md), wherever it currently lives (enabled or .disabled).
+  const n = String(name || '').trim()
+  if (n !== '') {
+    const d = skillDetail(fs, path, skillsDir(), n)
+    if (d) { shell.openPath(d.dir); return }
+  }
   shell.openPath(skillsDir())
+})
+// Detail view: frontmatter summary + file tree; file reads are fenced to the
+// skill's own directory, text-only and size-capped (runtime.js).
+ipcMain.handle('skills:detail', async (_event, name) => {
+  const d = skillDetail(fs, path, skillsDir(), String(name || '').trim())
+  return d ? { ok: true, detail: d } : { ok: false, error: '技能不存在' }
+})
+ipcMain.handle('skills:readFile', async (_event, name, rel) => {
+  const d = skillDetail(fs, path, skillsDir(), String(name || '').trim())
+  if (!d) return { error: '技能不存在' }
+  try {
+    return readSkillFile(fs, path, d.dir, String(rel || ''))
+  } catch (err) {
+    return { error: String(err && err.message || err) }
+  }
 })
 /** Extract a zip with OS-native tooling (no runtime deps). Throws on failure. */
 function extractZip(zipPath, destDir) {
@@ -1819,6 +1819,7 @@ ipcMain.handle('proxy:test', async (_event, config, url) => {
 // ---- common settings ----
 ipcMain.handle('settings:get', async () => ({
   options: COMMON_SETTINGS.map(({ key, label, hint, type, def }) => ({ key, label, hint, type, def })),
+  groups: groupCommonSettings().map((g) => ({ entryId: g.entryId, label: g.label, hint: g.hint, keys: g.options.map((o) => o.key) })),
   values: readCommonSettings(),
 }))
 ipcMain.handle('settings:save', async (_event, values) => {
@@ -1856,7 +1857,9 @@ ipcMain.handle('skills:installZip', async () => {
       return { ok: false, error: `压缩包里没有可识别的技能（需要 SKILL.md 目录包或 .md 文件）${rejected.length ? `；名称无法转为 kebab-case 的已跳过：${rejected.join(', ')}` : ''}` }
     }
     fs.mkdirSync(skillsDir(), { recursive: true })
-    const exists = (name) => fs.existsSync(path.join(skillsDir(), name)) || fs.existsSync(path.join(skillsDir(), `${name}.md`))
+    // A disabled copy under .disabled/ counts as existing too: overwriting
+    // it removes the disabled copy and installs the new one enabled.
+    const exists = (name) => skillExists(fs, path, skillsDir(), name)
     const conflicts = found.filter((s) => exists(s.name)).map((s) => s.name)
 
     // Same-name skills: ask once for the whole batch — overwrite, skip, or abort.
@@ -1881,10 +1884,7 @@ ipcMain.handle('skills:installZip', async () => {
     for (const s of found) {
       const conflicted = exists(s.name)
       if (conflicted && !overwrite) { skipped.push(s.name); continue }
-      if (conflicted) {
-        fs.rmSync(path.join(skillsDir(), s.name), { recursive: true, force: true })
-        fs.rmSync(path.join(skillsDir(), `${s.name}.md`), { force: true })
-      }
+      if (conflicted) removeSkill(fs, path, skillsDir(), s.name)
       const dest = path.join(skillsDir(), s.kind === 'bundle' ? s.name : `${s.name}.md`)
       if (s.kind === 'bundle') fs.cpSync(s.src, dest, { recursive: true })
       else fs.copyFileSync(s.src, dest)
@@ -1901,13 +1901,20 @@ ipcMain.handle('skills:installZip', async () => {
 ipcMain.handle('skills:delete', async (_event, name) => {
   const n = String(name || '').trim()
   if (!SKILL_NAME_RE.test(n) || n.length > 64) return { ok: false, error: '技能名无效' }
-  const bundle = path.join(skillsDir(), n)
-  const flat = path.join(skillsDir(), `${n}.md`)
   try {
-    if (fs.existsSync(path.join(bundle, 'SKILL.md'))) fs.rmSync(bundle, { recursive: true })
-    else if (fs.existsSync(flat)) fs.rmSync(flat)
-    else return { ok: false, error: '技能不存在' }
+    if (!removeSkill(fs, path, skillsDir(), n)) return { ok: false, error: '技能不存在' }
     return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) }
+  }
+})
+// Enable = move back to the root; disable = move under .disabled/ (see
+// runtime.js setSkillEnabled for why a move, not a flag). dsh's watcher sees
+// the rename, so the change reaches the next model step without a restart.
+ipcMain.handle('skills:setEnabled', async (_event, name, enabled) => {
+  const n = String(name || '').trim()
+  try {
+    return setSkillEnabled(fs, path, skillsDir(), n, enabled === true)
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) }
   }

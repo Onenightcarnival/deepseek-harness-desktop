@@ -14,7 +14,14 @@ main.js             主进程全部逻辑：服务拉起/守护、菜单、更�
                     （dsh/pnpm/node/npx/uvx/uv 六个 shim）、配置中心 IPC（插件/MCP/技能）
 runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目录选择（升级版优先+损坏回退）、
                     engines 粗校验、cordis patch 托管区块编辑（upsertManagedBlock/buildMcpBlock）、
-                    zip 技能包内容识别（collectSkills）、代理环境变量清场与注入
+                    zip 技能包内容识别（collectSkills）、SKILL.md frontmatter 解析
+                    （parseSkillFrontmatter：标量 + metadata 一层，够 dsh 自己认的
+                    字段用）、技能详情（skillDetail 文件树封顶 400 条、readSkillFile
+                    路径围栏在技能目录内且只读文本 ≤256 KB）、用户技能目录的启用/关闭
+                    （listSkillStore/setSkillEnabled：关闭 = 搬进 ~/.dsh/skills/.disabled/，
+                    dsh 的文件系统 provider 只扫根目录顶层且没有任何按名禁用的配置，
+                    搬目录是唯一不改用户文件内容的做法；已对真实内核验证目录
+                    监视 2 秒内让技能进出目录，无需重启）、代理环境变量清场与注入
                     （PROXY_ENV_KEYS/scrubProxyEnv/applyProxyEnv）与例外列表匹配
                     （bypassPatterns/isBypassed）—— 刻意抽出来以便普通 node 直接单测
 win-spawn-shim.js   预载进整棵 Node 子进程树（argv --require 只到直接子进程；另经
@@ -42,8 +49,11 @@ plugins.html        配置中心窗口（左侧导航五页：插件 / MCP 服�
                     buildSettingsBlock 生成 `- id: X` + `config:` 逐键覆盖条目，
                     经 upsertManagedBlock 写进用户 patch 层第二个托管区块
                     'settings'（与 MCP 块并存互不干扰，隔离自愈重建时一并再生）；
-                    值存 userData/common-settings.json。加一个配置项 = 在注册表
-                    加一行。代理页见下）
+                    值存 userData/common-settings.json。页面按插件分成网格卡片：
+                    SETTING_GROUPS 按条目 id 声明卡片标题与顺序，groupCommonSettings
+                    据此归类，没声明分组的条目自动落到末尾"其他（id）"卡片。加一个
+                    配置项 = 在注册表加一行；新插件的第一项再给 SETTING_GROUPS 加
+                    一行标题。代理页见下）
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动等待页
 stage-dsh.mjs       构建期：npm 安装 dsh + plugins.json 预置插件到 staging/<platform>-<arch>/dsh，

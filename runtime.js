@@ -187,22 +187,34 @@ module.exports.buildMcpBlock = buildMcpBlock
  * `def` mirrors the upstream default purely for display; an empty value in
  * the GUI removes the override so upstream defaults keep applying.
  */
+/**
+ * Plugin groups the settings page renders as sections: one row per composed
+ * entry id, in display order. An option's `entryId` (or its first target's)
+ * picks the group; options whose entry has no row here land in a trailing
+ * "其他" section, so adding a setting never requires touching this table.
+ */
+const SETTING_GROUPS = [
+  { entryId: 'goal', label: 'goal 目标模式', hint: '让 agent 围绕一个目标自动多轮续跑的内置插件。' },
+  { entryId: 'compaction-basic', label: '上下文自动压缩', hint: '会话接近上下文上限时把较早内容压缩成摘要的内置插件。' },
+]
+module.exports.SETTING_GROUPS = SETTING_GROUPS
+
 const COMMON_SETTINGS = [
   {
     key: 'goalMaxRounds', entryId: 'goal', configKey: 'defaultMaxGoalRounds',
-    type: 'posInt', def: 256, label: 'goal 目标模式：轮数上限',
+    type: 'posInt', def: 256, label: '轮数上限',
     hint: '单个目标最多自动续跑的轮数（上游默认 256）。预算耗尽后目标停住不再续跑；创建目标时也可单独指定。留空恢复默认。',
   },
   {
     // the web profile ships this entry disabled — the switch toggles the
     // entry's `disabled` field (kind: 'enable' = value true means enabled)
     key: 'compactionEnabled', entryId: 'compaction-basic', kind: 'enable',
-    type: 'bool', def: false, label: '上下文自动压缩',
+    type: 'bool', def: false, label: '启用自动压缩',
     hint: '会话接近上下文上限时自动把较早内容压缩成摘要，腾出空间继续对话（rc8 起可用；web 端默认关闭）。开启后配合下面的触发阈值使用。',
   },
   {
     key: 'compactionThreshold', entryId: 'compaction-basic', configKey: 'thresholdRatio',
-    type: 'ratio', def: 0.8, label: '压缩触发阈值（上下文占比）',
+    type: 'ratio', def: 0.8, label: '触发阈值（上下文占比）',
     hint: '上下文用量达到该比例时触发自动压缩（上游默认 0.8）。仅在开启自动压缩后生效。',
   },
 ]
@@ -213,6 +225,33 @@ function settingTargets(opt) {
   return Array.isArray(opt.targets) ? opt.targets : [{ entryId: opt.entryId, configKey: opt.configKey }]
 }
 module.exports.settingTargets = settingTargets
+
+/** Group id of one option: its own entryId, else its first target's. */
+function settingGroupId(opt) {
+  return opt.entryId || settingTargets(opt)[0].entryId
+}
+
+/**
+ * Options arranged for the settings page: SETTING_GROUPS order, each with
+ * its options in registry order; entries without a declared group trail as
+ * one "其他" section keyed by their entry id.
+ */
+function groupCommonSettings(options = COMMON_SETTINGS) {
+  const groups = SETTING_GROUPS.map((g) => ({ ...g, options: [] }))
+  const byId = new Map(groups.map((g) => [g.entryId, g]))
+  for (const opt of options) {
+    const id = settingGroupId(opt)
+    let g = byId.get(id)
+    if (!g) {
+      g = { entryId: id, label: `其他（${id}）`, hint: '', options: [] }
+      byId.set(id, g)
+      groups.push(g)
+    }
+    g.options.push(opt)
+  }
+  return groups.filter((g) => g.options.length > 0)
+}
+module.exports.groupCommonSettings = groupCommonSettings
 
 /** Validate a {key: value} map against the registry; error string or null. */
 function validateCommonSettings(values) {
@@ -295,6 +334,263 @@ function collectSkills(fsLike, rootDir, fallbackName, pathLike) {
 }
 
 module.exports.collectSkills = collectSkills
+
+// ---- user skill store (~/.dsh/skills) with an enable/disable switch ----
+//
+// dsh has no per-skill disable config: its filesystem provider scans only the
+// TOP LEVEL of each root (`<name>/SKILL.md` or `<name>.md`, never nested) and a
+// top-level directory without SKILL.md is skipped silently. So "disabled" is a
+// location, not a flag: the skill is moved under `<root>/.disabled/`, where the
+// scanner cannot see it, and moved back to enable it. File contents are never
+// touched, so a reinstall naturally lands enabled, and the root watcher picks
+// the rename up without a restart.
+
+const SKILL_DISABLED_DIR = '.disabled'
+module.exports.SKILL_DISABLED_DIR = SKILL_DISABLED_DIR
+
+/** kebab-case skill name (mirrors dsh's grammar). */
+const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+module.exports.SKILL_NAME_RE = SKILL_NAME_RE
+
+/**
+ * Parse a SKILL.md's YAML frontmatter into a flat object. Only the subset
+ * dsh's own parser cares about needs to be exact (scalar `key: value`
+ * pairs, quoted or bare, plus `metadata:` one level of indented scalars);
+ * anything fancier (block sequences, multi-line scalars) is kept as raw
+ * text so the detail view can still show it. Returns undefined when the
+ * file has no leading `---` block.
+ */
+function parseSkillFrontmatter(text) {
+  const m = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text)
+  if (!m) return undefined
+  const out = { raw: m[1], fields: {}, metadata: {} }
+  const unquote = (v) => {
+    const t = v.trim()
+    if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) return t.slice(1, -1)
+    return t
+  }
+  const lines = m[1].split(/\r?\n/)
+  let current = null // top-level key whose nested block we are inside
+  let block = []
+  const flush = () => {
+    if (current === null) return
+    if (current === 'metadata') {
+      for (const l of block) {
+        const mm = /^\s+([A-Za-z0-9_.-]+):\s*(.*)$/.exec(l)
+        if (mm) out.metadata[mm[1]] = unquote(mm[2])
+      }
+    } else if (block.length) {
+      out.fields[current] = block.map((l) => l.trim()).filter(Boolean).join('\n')
+    }
+    current = null; block = []
+  }
+  for (const line of lines) {
+    if (/^\s*#/.test(line) || line.trim() === '') continue
+    const top = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line)
+    if (top) {
+      flush()
+      const [, key, value] = top
+      if (value.trim() === '' || value.trim() === '|' || value.trim() === '>') { current = key; continue }
+      out.fields[key] = unquote(value)
+      continue
+    }
+    if (current !== null) block.push(line)
+  }
+  flush()
+  return out
+}
+module.exports.parseSkillFrontmatter = parseSkillFrontmatter
+
+/** Frontmatter summary for one skill file: what the list and detail views show. */
+function readSkillSummary(fsLike, mdPath) {
+  let text = ''
+  try { text = fsLike.readFileSync(mdPath, 'utf8') } catch { return { description: '' } }
+  const fm = parseSkillFrontmatter(text)
+  if (!fm) {
+    const para = text.split('\n').find((l) => l.trim() && !l.startsWith('#') && !l.startsWith('---'))
+    return { description: (para || '').trim().slice(0, 200), frontmatter: null }
+  }
+  const f = fm.fields
+  const version = f.version || fm.metadata.version || ''
+  const flag = (v) => (typeof v === 'string' ? /^(true|yes|on|1)$/i.test(v) : false)
+  return {
+    description: f.description || '',
+    version,
+    whenToUse: f.whenToUse || f['when-to-use'] || '',
+    modelInvocation: !flag(f['disable-model-invocation']),
+    userInvocable: !(typeof f['user-invocable'] === 'string' && /^(false|no|off|0)$/i.test(f['user-invocable'])),
+    frontmatter: { fields: f, metadata: fm.metadata, raw: fm.raw },
+  }
+}
+
+/** First `description:` frontmatter value, else the first prose line (bounded). */
+function describeSkillFile(fsLike, mdPath) {
+  return readSkillSummary(fsLike, mdPath).description
+}
+
+/** Skills at the top level of one directory: {name, kind: 'bundle'|'flat', description}. */
+function scanSkillDir(fsLike, pathLike, dir) {
+  const out = []
+  let entries = []
+  try { entries = fsLike.readdirSync(dir, { withFileTypes: true }) } catch { return out }
+  for (const e of entries) {
+    if (e.name.startsWith('.')) continue
+    if (e.isDirectory() && fsLike.existsSync(pathLike.join(dir, e.name, 'SKILL.md'))) {
+      const { frontmatter, ...summary } = readSkillSummary(fsLike, pathLike.join(dir, e.name, 'SKILL.md'))
+      out.push({ name: e.name, kind: 'bundle', ...summary })
+    } else if (e.isFile() && e.name.endsWith('.md')) {
+      const { frontmatter, ...summary } = readSkillSummary(fsLike, pathLike.join(dir, e.name))
+      out.push({ name: e.name.slice(0, -3), kind: 'flat', ...summary })
+    }
+  }
+  return out
+}
+
+/** Max entries a detail tree lists (a skill bundling a node_modules must not hang the page). */
+const SKILL_TREE_MAX = 400
+/** Largest file the detail viewer reads. */
+const SKILL_FILE_MAX_BYTES = 256 * 1024
+
+/** Recursive file tree of one skill directory: [{path, type: 'file'|'dir', size}], depth-first, capped. */
+function skillTree(fsLike, pathLike, dir, max = SKILL_TREE_MAX) {
+  const out = []
+  let truncated = false
+  const walk = (rel) => {
+    let entries = []
+    try { entries = fsLike.readdirSync(pathLike.join(dir, rel), { withFileTypes: true }) } catch { return }
+    entries.sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
+    for (const e of entries) {
+      if (out.length >= max) { truncated = true; return }
+      const p = rel ? `${rel}/${e.name}` : e.name
+      if (e.isDirectory()) {
+        out.push({ path: p, type: 'dir' })
+        if (e.name !== 'node_modules' && e.name !== '.git') walk(p)
+      } else if (e.isFile()) {
+        let size = 0
+        try { size = fsLike.statSync(pathLike.join(dir, p)).size } catch { /* keep 0 */ }
+        out.push({ path: p, type: 'file', size })
+      }
+    }
+  }
+  walk('')
+  return { entries: out, truncated }
+}
+module.exports.skillTree = skillTree
+
+/** Resolve a relative file path inside a skill directory, refusing escapes. */
+function fencedSkillPath(pathLike, dir, rel) {
+  const clean = String(rel || '').replace(/\\/g, '/')
+  if (clean === '' || clean.startsWith('/') || clean.split('/').some((seg) => seg === '..' || seg === '')) return undefined
+  const base = pathLike.resolve(dir)
+  const target = pathLike.resolve(base, clean)
+  if (target !== base && !target.startsWith(base + pathLike.sep)) return undefined
+  return target
+}
+
+/** Read one text file from a skill directory: {text, size, truncated} or {error}. */
+function readSkillFile(fsLike, pathLike, dir, rel, maxBytes = SKILL_FILE_MAX_BYTES) {
+  const target = fencedSkillPath(pathLike, dir, rel)
+  if (!target) return { error: '路径无效' }
+  let stat
+  try { stat = fsLike.statSync(target) } catch { return { error: '文件不存在' } }
+  if (!stat.isFile()) return { error: '不是文件' }
+  const fd = fsLike.openSync(target, 'r')
+  try {
+    const len = Math.min(stat.size, maxBytes)
+    const buf = Buffer.alloc(len)
+    fsLike.readSync(fd, buf, 0, len, 0)
+    for (let i = 0; i < Math.min(len, 8192); i++) if (buf[i] === 0) return { error: '二进制文件，无法预览', size: stat.size }
+    return { text: buf.toString('utf8'), size: stat.size, truncated: stat.size > maxBytes }
+  } finally {
+    fsLike.closeSync(fd)
+  }
+}
+module.exports.readSkillFile = readSkillFile
+
+/** Full detail for one user skill (enabled or disabled), or undefined. */
+function skillDetail(fsLike, pathLike, root, name) {
+  if (!SKILL_NAME_RE.test(name) || name.length > 64) return undefined
+  for (const [dir, enabled] of [[root, true], [pathLike.join(root, SKILL_DISABLED_DIR), false]]) {
+    const hit = locateSkill(fsLike, pathLike, dir, name)
+    if (!hit) continue
+    const mdPath = hit.kind === 'bundle' ? pathLike.join(hit.path, 'SKILL.md') : hit.path
+    const summary = readSkillSummary(fsLike, mdPath)
+    const dirPath = hit.kind === 'bundle' ? hit.path : dir
+    const tree = hit.kind === 'bundle' ? skillTree(fsLike, pathLike, hit.path) : { entries: [{ path: pathLike.basename(hit.path), type: 'file', size: 0 }], truncated: false }
+    return { name, kind: hit.kind, enabled, path: hit.path, dir: dirPath, entryFile: hit.kind === 'bundle' ? 'SKILL.md' : pathLike.basename(hit.path), ...summary, tree }
+  }
+  return undefined
+}
+module.exports.skillDetail = skillDetail
+
+/**
+ * Enabled skills (root) followed by disabled ones (root/.disabled), each row
+ * carrying `enabled`. A name present in both places is reported once, as
+ * enabled — the live copy is the one dsh sees.
+ */
+function listSkillStore(fsLike, pathLike, root) {
+  const enabled = scanSkillDir(fsLike, pathLike, root).map((s) => ({ ...s, enabled: true }))
+  const seen = new Set(enabled.map((s) => s.name))
+  const disabled = scanSkillDir(fsLike, pathLike, pathLike.join(root, SKILL_DISABLED_DIR))
+    .filter((s) => !seen.has(s.name))
+    .map((s) => ({ ...s, enabled: false }))
+  return [...enabled, ...disabled]
+}
+module.exports.listSkillStore = listSkillStore
+
+/** Where a named skill lives inside one directory, or undefined. */
+function locateSkill(fsLike, pathLike, dir, name) {
+  const bundle = pathLike.join(dir, name)
+  if (fsLike.existsSync(pathLike.join(bundle, 'SKILL.md'))) return { kind: 'bundle', path: bundle }
+  const flat = pathLike.join(dir, `${name}.md`)
+  if (fsLike.existsSync(flat)) return { kind: 'flat', path: flat }
+  return undefined
+}
+
+/** Whether a name is taken in the root or its .disabled folder. */
+function skillExists(fsLike, pathLike, root, name) {
+  return locateSkill(fsLike, pathLike, root, name) !== undefined
+    || locateSkill(fsLike, pathLike, pathLike.join(root, SKILL_DISABLED_DIR), name) !== undefined
+}
+module.exports.skillExists = skillExists
+
+/** Remove a skill wherever it lives (enabled or disabled). */
+function removeSkill(fsLike, pathLike, root, name) {
+  let removed = false
+  for (const dir of [root, pathLike.join(root, SKILL_DISABLED_DIR)]) {
+    const hit = locateSkill(fsLike, pathLike, dir, name)
+    if (!hit) continue
+    fsLike.rmSync(hit.path, { recursive: true, force: true })
+    removed = true
+  }
+  return removed
+}
+module.exports.removeSkill = removeSkill
+
+/**
+ * Move a skill between the root and its .disabled folder. Returns
+ * {ok, error?, enabled}. A same-name skill already at the destination refuses
+ * the move (never clobber), and an already-in-place skill is a no-op success.
+ */
+function setSkillEnabled(fsLike, pathLike, root, name, enabled) {
+  if (!SKILL_NAME_RE.test(name) || name.length > 64) return { ok: false, error: '技能名无效' }
+  const disabledDir = pathLike.join(root, SKILL_DISABLED_DIR)
+  const from = enabled ? disabledDir : root
+  const to = enabled ? root : disabledDir
+  const src = locateSkill(fsLike, pathLike, from, name)
+  if (!src) {
+    if (locateSkill(fsLike, pathLike, to, name)) return { ok: true, enabled }
+    return { ok: false, error: '技能不存在' }
+  }
+  if (locateSkill(fsLike, pathLike, to, name)) {
+    return { ok: false, error: enabled ? `技能目录里已有同名的「${name}」，先删除其中一个` : `.disabled 里已有同名的「${name}」，先删除其中一个` }
+  }
+  fsLike.mkdirSync(to, { recursive: true })
+  const dest = pathLike.join(to, src.kind === 'bundle' ? name : `${name}.md`)
+  fsLike.renameSync(src.path, dest)
+  return { ok: true, enabled }
+}
+module.exports.setSkillEnabled = setSkillEnabled
 
 /**
  * Prepend a directory to the PATH entry of a plain env object,

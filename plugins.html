@@ -51,6 +51,44 @@
   .item-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; }
   .item-row:hover { background: #20202a; }
   .item-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item-row.dim .grow { opacity: .5; }
+  /* skills: card list */
+  .sk-list { display: flex; flex-direction: column; gap: 10px; }
+  .sk-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: #1a1a21; border: 1px solid #26262e; border-radius: 10px; }
+  .sk-card.dim .sk-main { opacity: .5; }
+  .sk-icon { width: 36px; height: 36px; flex: none; border-radius: 9px; background: #23232b; color: #7ea0ff; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  .sk-main { flex: 1; min-width: 0; cursor: pointer; }
+  .sk-main:hover .sk-name { color: #7ea0ff; }
+  .sk-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
+  .sk-badge { font-size: 11px; font-weight: 400; color: #9a9aa6; background: #23232b; border-radius: 999px; padding: 1px 8px; }
+  .sk-desc-line { color: #8a8a96; font-size: 12px; line-height: 1.5; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .sk-actions { display: flex; align-items: center; gap: 10px; flex: none; }
+  /* skills: detail overlay */
+  .sk-overlay { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .sk-overlay[hidden] { display: none; }
+  .sk-detail { width: min(1040px, 100%); height: min(760px, 100%); background: #16161c; border: 1px solid #2a2a34; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .sk-detail-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid #26262e; }
+  .sk-detail-title { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 15px; }
+  .sk-detail-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sk-detail-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; overflow: hidden; }
+  .sk-desc { color: #c8c8d0; font-size: 13px; line-height: 1.6; }
+  .sk-fm { border-collapse: collapse; font-size: 12px; flex: none; }
+  .sk-fm td { padding: 3px 10px 3px 0; vertical-align: top; color: #c8c8d0; white-space: pre-wrap; }
+  .sk-fm td:first-child { color: #8a8a96; white-space: nowrap; width: 1%; padding-right: 18px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .sk-files { flex: 1; min-height: 0; display: flex; border: 1px solid #26262e; border-radius: 10px; overflow: hidden; }
+  .sk-tree { width: 240px; flex: none; overflow: auto; border-right: 1px solid #26262e; padding: 6px 0; font-size: 12.5px; }
+  .sk-tree div { padding: 4px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; color: #c8c8d0; }
+  .sk-tree div[data-file] { cursor: pointer; }
+  .sk-tree div[data-file]:hover { background: #20202a; }
+  .sk-tree div[data-active] { background: #2a2c3a; color: #fff; }
+  .sk-tree div[data-dir] { color: #8a8a96; }
+  .sk-viewer { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .sk-viewer-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; color: #9a9aa6; border-bottom: 1px solid #26262e; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .sk-pre { flex: 1; min-height: 0; margin: 0; padding: 12px 14px; overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: #d4d4dc; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .sk-pre .sk-h { color: #fff; font-weight: 700; }
+  .sk-pre .sk-code { background: #1e1e26; display: block; padding: 6px 8px; border-radius: 6px; margin: 4px 0; }
+  .sk-pre .sk-fmblk { color: #8a8a96; }
+  .item-row .tag { margin-left: 8px; font-size: 11px; color: #9a9aa6; background: #23232b; border-radius: 4px; padding: 1px 6px; }
   .meta { color: #7a7a86; font-size: 11.5px; }
   .tag { color: #7ea0ff; background: #232a45; border-radius: 5px; font-size: 10.5px; padding: 2px 6px; }
 
@@ -79,6 +117,12 @@
   .srv .off { color: #7a7a86; font-size: 10.5px; }
   #mcp-empty { color: #7a7a86; font-size: 12px; text-align: center; padding: 30px 12px; }
   #mcp-detail { flex: 1; overflow: auto; padding: 18px 22px; }
+  .cs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; align-items: start; }
+  .cs-card { background: #1a1a21; border: 1px solid #26262e; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; min-width: 0; }
+  .cs-card-title { color: #e6e6ec; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .cs-card-id { color: #7a7a86; font-weight: 400; font-size: 11px; background: #23232b; padding: 1px 6px; border-radius: 4px; }
+  .cs-card > .meta { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #26262e; }
+  .cs-card .field:last-child { margin-bottom: 0; }
   .field { margin-bottom: 14px; }
   .field label { display: block; color: #9a9aa6; font-size: 12px; margin-bottom: 6px; }
   .kv-row { display: flex; gap: 6px; margin-bottom: 6px; }
@@ -181,20 +225,49 @@
   <!-- ============ 技能 ============ -->
   <div class="pane single" id="pane-skills">
     <h2>技能</h2>
-    <p class="sub">给模型的可选指令包，按名称与描述自动调用；安装/删除即时生效。zip 可为单个技能（根目录含 SKILL.md）或多技能合集（每个子目录一个技能）。</p>
+    <p class="sub">给模型的可选指令包，按名称与描述自动调用；列表展示 SKILL.md 的 frontmatter 信息，点名称查看全部字段与源文件。安装/删除/开关即时生效。关闭的技能移入技能目录的 .disabled 子目录，模型看不到，随时可再打开。zip 可为单个技能（根目录含 SKILL.md）或多技能合集（每个子目录一个技能）。</p>
     <div class="row" style="margin-bottom:12px">
       <button id="s-install" class="primary">安装技能（.zip）</button>
       <button id="s-open">打开技能目录</button>
     </div>
-    <div class="card" id="skills-list">加载中…</div>
+    <div class="sk-list" id="skills-list">加载中…</div>
     <div class="msg" id="skills-msg"></div>
+
+    <!-- 技能详情：frontmatter 摘要 + 源文件树 + 只读预览 -->
+    <div class="sk-overlay" id="sk-overlay" hidden>
+      <div class="sk-detail" role="dialog" aria-modal="true">
+        <div class="sk-detail-head">
+          <div class="sk-detail-title">
+            <b id="skd-name"></b>
+            <span class="sk-badge" id="skd-version" hidden></span>
+            <span class="tag" id="skd-state"></span>
+          </div>
+          <span class="spacer"></span>
+          <label class="toggle" title="启用/关闭"><input type="checkbox" id="skd-enabled"><span class="knob"></span></label>
+          <button id="skd-open">打开目录</button>
+          <button class="danger" id="skd-delete">删除</button>
+          <button class="ghost" id="skd-close" title="关闭">✕</button>
+        </div>
+        <div class="sk-detail-body">
+          <div class="sk-desc" id="skd-desc"></div>
+          <table class="sk-fm" id="skd-fm"></table>
+          <div class="sk-files">
+            <div class="sk-tree" id="skd-tree"></div>
+            <div class="sk-viewer">
+              <div class="sk-viewer-head"><span id="skd-file"></span><span class="spacer"></span><span class="meta" id="skd-file-meta"></span></div>
+              <pre class="sk-pre" id="skd-pre"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ============ 常用设置 ============ -->
   <div class="pane single" id="pane-settings">
     <h2>常用设置</h2>
     <p class="sub">内置插件的常用配置项，写入你的用户配置层的托管区块（不碰手写内容），保存即生效；留空保存即恢复 dsh 默认值。这里没有的配置项可手动编辑 ~/.dsh/profiles/web/cordis.patch.yml（按条目 id 覆盖 config，语法见仓库 desktop-patch.yml 注释）。</p>
-    <div class="card" id="cs-fields">加载中…</div>
+    <div class="cs-grid" id="cs-fields">加载中…</div>
     <div class="row" style="margin-top:16px"><span class="spacer"></span><button class="primary" id="cs-save">保存</button></div>
     <div class="msg" id="cs-msg"></div>
   </div>
@@ -497,25 +570,165 @@
   }
 
   // ================= 技能 =================
+  // 列表只展示 SKILL.md frontmatter 里的信息（名字、版本、描述、调用面），
+  // 点卡片进详情：frontmatter 全部字段 + 源文件树 + 只读预览。
+  const SKILL_ICON = '✦'
+  function skillBadges(s) {
+    const tags = []
+    if (s.modelInvocation === false) tags.push('仅人工调用')
+    if (s.userInvocable === false) tags.push('仅模型调用')
+    if (s.kind === 'flat') tags.push('单文件')
+    return tags
+  }
   async function refreshSkills() {
     const skills = await pluginApi.skillsList()
     const box = $('skills-list')
     if (skills.length === 0) { box.textContent = '还没有用户技能，点「安装技能」导入一个'; return }
     box.innerHTML = ''
     for (const s of skills) {
-      const div = document.createElement('div'); div.className = 'item-row'
-      const label = document.createElement('span'); label.className = 'grow'
-      label.innerHTML = `<b>${s.name}</b> <span class="meta">${s.description || ''}</span>`
-      const rm = document.createElement('button'); rm.className = 'danger'; rm.style.padding = '3px 10px'
-      rm.textContent = '删除'
-      rm.onclick = async () => {
-        if (!confirm(`删除技能 "${s.name}"？`)) return
-        const res = await pluginApi.skillsDelete(s.name)
+      const card = document.createElement('div'); card.className = 'sk-card'
+      if (!s.enabled) card.classList.add('dim')
+      const icon = document.createElement('div'); icon.className = 'sk-icon'; icon.textContent = SKILL_ICON
+      const main = document.createElement('div'); main.className = 'sk-main'; main.title = '查看详情'
+      const nameRow = document.createElement('div'); nameRow.className = 'sk-name'
+      const name = document.createElement('span'); name.textContent = s.name
+      nameRow.appendChild(name)
+      if (s.version) { const v = document.createElement('span'); v.className = 'sk-badge'; v.textContent = s.version; nameRow.appendChild(v) }
+      for (const t of skillBadges(s)) { const tag = document.createElement('span'); tag.className = 'tag'; tag.style.margin = '0'; tag.textContent = t; nameRow.appendChild(tag) }
+      if (!s.enabled) { const tag = document.createElement('span'); tag.className = 'tag'; tag.style.margin = '0'; tag.textContent = '已关闭'; nameRow.appendChild(tag) }
+      const desc = document.createElement('div'); desc.className = 'sk-desc-line'; desc.textContent = s.description || '（SKILL.md 没有 description）'
+      main.append(nameRow, desc)
+      main.onclick = () => openSkillDetail(s.name)
+      const actions = document.createElement('div'); actions.className = 'sk-actions'
+      // 启用/关闭：关闭 = 搬到技能目录的 .disabled/ 下（dsh 只扫顶层，看不见），
+      // 启用 = 搬回来；文件内容不动，dsh 的目录监视会即时生效。
+      const toggle = document.createElement('label'); toggle.className = 'toggle'
+      toggle.title = s.enabled ? '已启用，点击关闭（移入 .disabled，模型不再看到）' : '已关闭，点击启用'
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!s.enabled
+      const knob = document.createElement('span'); knob.className = 'knob'
+      toggle.append(cb, knob)
+      cb.onchange = async () => {
+        cb.disabled = true
+        const res = await pluginApi.skillsSetEnabled(s.name, cb.checked)
         $('skills-msg').textContent = res.ok ? '' : res.error
         refreshSkills()
       }
-      div.appendChild(label); div.appendChild(rm); box.appendChild(div)
+      const rm = document.createElement('button'); rm.className = 'danger'; rm.style.padding = '3px 10px'
+      rm.textContent = '删除'
+      rm.onclick = () => deleteSkill(s.name)
+      actions.append(toggle, rm)
+      card.append(icon, main, actions); box.appendChild(card)
     }
+  }
+  async function deleteSkill(name) {
+    if (!confirm(`删除技能 "${name}"？`)) return false
+    const res = await pluginApi.skillsDelete(name)
+    $('skills-msg').textContent = res.ok ? '' : res.error
+    refreshSkills()
+    return res.ok
+  }
+
+  // ---- 详情 ----
+  let skdName = ''
+  function closeSkillDetail() { $('sk-overlay').hidden = true; skdName = '' }
+  $('skd-close').onclick = closeSkillDetail
+  $('sk-overlay').onmousedown = (e) => { if (e.target === $('sk-overlay')) closeSkillDetail() }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('sk-overlay').hidden) closeSkillDetail() })
+  $('skd-open').onclick = () => pluginApi.skillsOpen(skdName)
+  $('skd-delete').onclick = async () => { if (await deleteSkill(skdName)) closeSkillDetail() }
+  $('skd-enabled').onchange = async () => {
+    const res = await pluginApi.skillsSetEnabled(skdName, $('skd-enabled').checked)
+    if (!res.ok) { $('skills-msg').textContent = res.error }
+    refreshSkills()
+    openSkillDetail(skdName, true)
+  }
+  const FM_LABELS = { name: '名称', description: '描述', version: '版本', whenToUse: '何时使用', 'when-to-use': '何时使用', 'disable-model-invocation': '禁止模型调用', 'user-invocable': '允许人工调用', license: '许可', author: '作者', metadata: '元数据' }
+  async function openSkillDetail(name, keepFile) {
+    const res = await pluginApi.skillsDetail(name)
+    if (!res.ok) { $('skills-msg').textContent = res.error; return }
+    const d = res.detail
+    skdName = d.name
+    $('skd-name').textContent = d.name
+    $('skd-version').hidden = !d.version
+    $('skd-version').textContent = d.version || ''
+    $('skd-state').textContent = d.enabled ? '已启用' : '已关闭'
+    $('skd-enabled').checked = d.enabled
+    $('skd-desc').textContent = d.description || '（SKILL.md 没有 description）'
+    // frontmatter 表：除 name/description 外的所有字段 + metadata 子项
+    const fm = $('skd-fm'); fm.innerHTML = ''
+    const rows = []
+    const fields = (d.frontmatter && d.frontmatter.fields) || {}
+    for (const [k, v] of Object.entries(fields)) if (k !== 'name' && k !== 'description') rows.push([FM_LABELS[k] || k, v])
+    for (const [k, v] of Object.entries((d.frontmatter && d.frontmatter.metadata) || {})) rows.push(['metadata.' + k, v])
+    rows.push(['来源', d.kind === 'bundle' ? '目录包' : '单文件', ])
+    rows.push(['路径', d.path])
+    for (const [k, v] of rows) {
+      const tr = document.createElement('tr')
+      const td1 = document.createElement('td'); td1.textContent = k
+      const td2 = document.createElement('td'); td2.textContent = v
+      tr.append(td1, td2); fm.appendChild(tr)
+    }
+    // 文件树
+    const tree = $('skd-tree'); tree.innerHTML = ''
+    const activeFile = keepFile && $('skd-file').textContent ? $('skd-file').textContent : d.entryFile
+    for (const e of d.tree.entries) {
+      const row = document.createElement('div')
+      const depth = e.path.split('/').length - 1
+      row.style.paddingLeft = (10 + depth * 14) + 'px'
+      row.textContent = (e.type === 'dir' ? '▸ ' : '') + e.path.split('/').pop()
+      row.title = e.path
+      if (e.type === 'dir') row.dataset.dir = ''
+      else {
+        row.dataset.file = e.path
+        row.onclick = () => showSkillFile(d.name, e.path, e.size)
+        if (e.path === activeFile) row.dataset.active = ''
+      }
+      tree.appendChild(row)
+    }
+    if (d.tree.truncated) { const more = document.createElement('div'); more.className = 'meta'; more.textContent = '…（文件过多，未全部列出）'; tree.appendChild(more) }
+    $('sk-overlay').hidden = false
+    const entry = d.tree.entries.find((e) => e.path === activeFile) || d.tree.entries.find((e) => e.type === 'file')
+    if (entry) showSkillFile(d.name, entry.path, entry.size)
+    else { $('skd-file').textContent = ''; $('skd-pre').textContent = '' }
+  }
+  function fmtSize(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB' }
+  async function showSkillFile(name, rel, size) {
+    for (const row of $('skd-tree').children) { if (row.dataset.file === rel) row.dataset.active = ''; else delete row.dataset.active }
+    $('skd-file').textContent = rel
+    $('skd-file-meta').textContent = size ? fmtSize(size) : ''
+    $('skd-pre').textContent = '读取中…'
+    const res = await pluginApi.skillsReadFile(name, rel)
+    if (res.error) { $('skd-pre').textContent = res.error; return }
+    $('skd-file-meta').textContent = fmtSize(res.size) + (res.truncated ? '（只显示前 256 KB）' : '')
+    renderSkillText($('skd-pre'), res.text, /\.md$/i.test(rel))
+  }
+  // 只读预览：markdown 只做最轻的观感处理（frontmatter 变灰、标题加粗、
+  // 围栏代码块加底色），其余原样，避免为一个预览引入渲染库。
+  function renderSkillText(pre, text, isMd) {
+    pre.innerHTML = ''
+    if (!isMd) { pre.textContent = text; return }
+    const lines = text.split('\n')
+    let i = 0
+    if (lines[0] === '---') {
+      const end = lines.indexOf('---', 1)
+      if (end > 0) {
+        const span = document.createElement('span'); span.className = 'sk-fmblk'
+        span.textContent = lines.slice(0, end + 1).join('\n') + '\n'
+        pre.appendChild(span); i = end + 1
+      }
+    }
+    let code = null
+    for (; i < lines.length; i++) {
+      const line = lines[i]
+      if (/^\s*```/.test(line)) {
+        if (code) { pre.appendChild(code); code = null } else { code = document.createElement('span'); code.className = 'sk-code' }
+        continue
+      }
+      if (code) { code.textContent += line + '\n'; continue }
+      if (/^#{1,6}\s/.test(line)) { const h = document.createElement('span'); h.className = 'sk-h'; h.textContent = line + '\n'; pre.appendChild(h); continue }
+      pre.appendChild(document.createTextNode(line + '\n'))
+    }
+    if (code) pre.appendChild(code)
   }
   $('s-install').onclick = async () => {
     $('s-install').disabled = true
@@ -538,11 +751,37 @@
   let csOptions = []
   function csMsg(text, cls) { const m = $('cs-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
   async function loadCommonSettings() {
-    const { options, values } = await pluginApi.settingsGet()
+    const { options, values, groups } = await pluginApi.settingsGet()
     csOptions = options
     const box = $('cs-fields')
     box.innerHTML = ''
-    for (const o of options) {
+    const byKey = new Map(options.map((o) => [o.key, o]))
+    // 按插件分组：每组一个标题 + 该插件的字段；主进程按 SETTING_GROUPS 排好序。
+    const sections = (groups && groups.length ? groups : [{ label: '', hint: '', keys: options.map((o) => o.key) }])
+    // 每个插件一张卡片，网格自动换列（窄窗口单列）。
+    for (const g of sections) {
+      const card = document.createElement('div')
+      card.className = 'cs-card'
+      if (g.label) {
+        const title = document.createElement('div')
+        title.className = 'cs-card-title'
+        title.textContent = g.label
+        const idTag = document.createElement('code')
+        idTag.className = 'cs-card-id'
+        idTag.textContent = g.entryId
+        title.appendChild(idTag)
+        card.appendChild(title)
+        if (g.hint) {
+          const sub = document.createElement('div')
+          sub.className = 'meta'
+          sub.textContent = g.hint
+          card.appendChild(sub)
+        }
+      }
+      box.appendChild(card)
+      for (const key of g.keys) {
+      const o = byKey.get(key)
+      if (!o) continue
       const field = document.createElement('div')
       field.className = 'field'
       const label = document.createElement('label')
@@ -571,7 +810,8 @@
       hint.style.marginTop = '4px'
       hint.textContent = o.hint
       field.append(label, input, hint)
-      box.appendChild(field)
+      card.appendChild(field)
+      }
     }
   }
   loadCommonSettings().catch((e) => csMsg('加载失败：' + e, 'err'))

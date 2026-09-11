@@ -1647,7 +1647,7 @@ ipcMain.handle('skills:list', async () => listSkills())
 ipcMain.handle('skills:open', async (_event, name) => {
   fs.mkdirSync(skillsDir(), { recursive: true })
   // With a name: open that skill's directory (or the folder holding a flat
-  // .md), wherever it lives (enabled or .disabled).
+  // .md), wherever it lives (enabled or disabled_skills).
   const n = String(name || '').trim()
   if (n !== '') {
     const d = skillDetail(fs, path, skillsDir(), n)
@@ -1818,7 +1818,7 @@ ipcMain.handle('skills:installZip', async () => {
       return { ok: false, error: `压缩包里没有可识别的技能（需要 SKILL.md 目录包或 .md 文件）${rejected.length ? `；名称无法转为 kebab-case 的已跳过：${rejected.join(', ')}` : ''}` }
     }
     fs.mkdirSync(skillsDir(), { recursive: true })
-    // A disabled copy under .disabled/ counts as existing: overwriting
+    // A disabled copy under disabled_skills/ counts as existing: overwriting
     // removes the disabled copy and installs the new one enabled.
     const exists = (name) => skillExists(fs, path, skillsDir(), name)
     const conflicts = found.filter((s) => exists(s.name)).map((s) => s.name)
@@ -1869,7 +1869,7 @@ ipcMain.handle('skills:delete', async (_event, name) => {
     return { ok: false, error: String(err && err.message || err) }
   }
 })
-// Enable = move back to the root; disable = move under .disabled/
+// Enable = move back to ~/.dsh/skills; disable = move to ~/.dsh/disabled_skills/
 // (runtime.js setSkillEnabled). dsh's watcher picks up the rename without a
 // restart.
 ipcMain.handle('skills:setEnabled', async (_event, name, enabled) => {

@@ -333,14 +333,40 @@ module.exports.collectSkills = collectSkills
 // ---- user skill store (~/.dsh/skills) with an enable/disable switch ----
 //
 // dsh has no per-skill disable config; its filesystem provider scans only the
-// top level of each root (`<name>/SKILL.md` or `<name>.md`) and skips a
-// top-level directory without SKILL.md. Disabled is a location: the skill is
-// moved under `<root>/.disabled/` and moved back to enable it. File contents
-// are not touched; a reinstall lands enabled; the root watcher picks the
-// rename up without a restart.
+// top level of each root (`<name>/SKILL.md` or `<name>.md`). Disabled is a
+// location: the skill is moved to `<dsh home>/disabled_skills/` (a sibling of
+// the skills root, outside every scanned root) and moved back to enable it.
+// File contents are not touched; a reinstall lands enabled; the root watcher
+// picks the rename up without a restart.
 
-const SKILL_DISABLED_DIR = '.disabled'
+const SKILL_DISABLED_DIR = 'disabled_skills'
 module.exports.SKILL_DISABLED_DIR = SKILL_DISABLED_DIR
+
+/** The disabled-skills folder for a skills root: `<parent of root>/disabled_skills`. */
+function disabledSkillsDir(pathLike, root) {
+  return pathLike.join(pathLike.dirname(root), SKILL_DISABLED_DIR)
+}
+module.exports.disabledSkillsDir = disabledSkillsDir
+
+/**
+ * One-time migration from the earlier `<root>/.disabled/` location: every
+ * entry is moved to the sibling folder (same-name entries stay behind), and
+ * the old folder is removed once empty.
+ */
+function migrateLegacyDisabledSkills(fsLike, pathLike, root) {
+  const legacy = pathLike.join(root, '.disabled')
+  let entries = []
+  try { entries = fsLike.readdirSync(legacy) } catch { return }
+  const target = disabledSkillsDir(pathLike, root)
+  fsLike.mkdirSync(target, { recursive: true })
+  for (const name of entries) {
+    const dest = pathLike.join(target, name)
+    if (fsLike.existsSync(dest)) continue
+    try { fsLike.renameSync(pathLike.join(legacy, name), dest) } catch { /* left in place */ }
+  }
+  try { if (fsLike.readdirSync(legacy).length === 0) fsLike.rmSync(legacy, { recursive: true }) } catch { /* keep */ }
+}
+module.exports.migrateLegacyDisabledSkills = migrateLegacyDisabledSkills
 
 /** kebab-case skill name (mirrors dsh's grammar). */
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -503,7 +529,7 @@ module.exports.readSkillFile = readSkillFile
 /** Full detail for one user skill (enabled or disabled), or undefined. */
 function skillDetail(fsLike, pathLike, root, name) {
   if (!SKILL_NAME_RE.test(name) || name.length > 64) return undefined
-  for (const [dir, enabled] of [[root, true], [pathLike.join(root, SKILL_DISABLED_DIR), false]]) {
+  for (const [dir, enabled] of [[root, true], [disabledSkillsDir(pathLike, root), false]]) {
     const hit = locateSkill(fsLike, pathLike, dir, name)
     if (!hit) continue
     const mdPath = hit.kind === 'bundle' ? pathLike.join(hit.path, 'SKILL.md') : hit.path
@@ -517,14 +543,15 @@ function skillDetail(fsLike, pathLike, root, name) {
 module.exports.skillDetail = skillDetail
 
 /**
- * Enabled skills (root) followed by disabled ones (root/.disabled), each row
+ * Enabled skills (root) followed by disabled ones (disabled_skills), each row
  * carrying `enabled`. A name present in both places is reported once, as
  * enabled; dsh loads the root copy.
  */
 function listSkillStore(fsLike, pathLike, root) {
+  migrateLegacyDisabledSkills(fsLike, pathLike, root)
   const enabled = scanSkillDir(fsLike, pathLike, root).map((s) => ({ ...s, enabled: true }))
   const seen = new Set(enabled.map((s) => s.name))
-  const disabled = scanSkillDir(fsLike, pathLike, pathLike.join(root, SKILL_DISABLED_DIR))
+  const disabled = scanSkillDir(fsLike, pathLike, disabledSkillsDir(pathLike, root))
     .filter((s) => !seen.has(s.name))
     .map((s) => ({ ...s, enabled: false }))
   return [...enabled, ...disabled]
@@ -540,17 +567,17 @@ function locateSkill(fsLike, pathLike, dir, name) {
   return undefined
 }
 
-/** Whether a name is taken in the root or its .disabled folder. */
+/** Whether a name is taken in the root or in disabled_skills. */
 function skillExists(fsLike, pathLike, root, name) {
   return locateSkill(fsLike, pathLike, root, name) !== undefined
-    || locateSkill(fsLike, pathLike, pathLike.join(root, SKILL_DISABLED_DIR), name) !== undefined
+    || locateSkill(fsLike, pathLike, disabledSkillsDir(pathLike, root), name) !== undefined
 }
 module.exports.skillExists = skillExists
 
 /** Remove a skill wherever it lives (enabled or disabled). */
 function removeSkill(fsLike, pathLike, root, name) {
   let removed = false
-  for (const dir of [root, pathLike.join(root, SKILL_DISABLED_DIR)]) {
+  for (const dir of [root, disabledSkillsDir(pathLike, root)]) {
     const hit = locateSkill(fsLike, pathLike, dir, name)
     if (!hit) continue
     fsLike.rmSync(hit.path, { recursive: true, force: true })
@@ -561,13 +588,13 @@ function removeSkill(fsLike, pathLike, root, name) {
 module.exports.removeSkill = removeSkill
 
 /**
- * Move a skill between the root and its .disabled folder. Returns
+ * Move a skill between the root and disabled_skills. Returns
  * {ok, error?, enabled}. A same-name skill at the destination refuses the
  * move; a skill already in place is a no-op success.
  */
 function setSkillEnabled(fsLike, pathLike, root, name, enabled) {
   if (!SKILL_NAME_RE.test(name) || name.length > 64) return { ok: false, error: '技能名无效' }
-  const disabledDir = pathLike.join(root, SKILL_DISABLED_DIR)
+  const disabledDir = disabledSkillsDir(pathLike, root)
   const from = enabled ? disabledDir : root
   const to = enabled ? root : disabledDir
   const src = locateSkill(fsLike, pathLike, from, name)
@@ -576,7 +603,7 @@ function setSkillEnabled(fsLike, pathLike, root, name, enabled) {
     return { ok: false, error: '技能不存在' }
   }
   if (locateSkill(fsLike, pathLike, to, name)) {
-    return { ok: false, error: enabled ? `技能目录里已有同名的「${name}」，请先删除其中一个` : `.disabled 里已有同名的「${name}」，请先删除其中一个` }
+    return { ok: false, error: enabled ? `技能目录里已有同名的「${name}」，请先删除其中一个` : `disabled_skills 里已有同名的「${name}」，请先删除其中一个` }
   }
   fsLike.mkdirSync(to, { recursive: true })
   const dest = pathLike.join(to, src.kind === 'bundle' ? name : `${name}.md`)

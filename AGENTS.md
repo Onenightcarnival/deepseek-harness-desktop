@@ -147,7 +147,7 @@ NSIS 安装器可在 Linux 全流程实跑：`apt install wine64`，`WINEARCH=wi
 - CLI 启动器 dsh / pnpm / node 三件套缺一不可（pnpm 生命周期脚本裸调 `node`），外加给 stdio MCP 用的 npx / uvx / uv。
 - 常用设置只能覆盖 web 组合树里的条目；agent 预设（config/agent-presets/*.yml）不经过 cordis.patch.yml。compaction-basic 在 web 组合里默认 `disabled: true`，「上下文自动压缩」项走注册表的 `kind: 'enable'`，与同条目的 config 键合并成一个覆盖条目。
 - MCP 的 GUI 配置写入 `~/.dsh/profiles/web/cordis.patch.yml` 的标记托管区块（`# >>> dsh-desktop mcp >>>`），dsh 热加载、dsh-mcp-client 支持配置热替换，保存即生效。只改标记区块，保留用户手写条目；文件默认内容是 flow 空列表 `[]`，与块列表不能共存，upsertManagedBlock 已处理。移除条目时经 `pnpm dlx` 启动的旧 MCP 进程可能残留到应用退出。
-- 技能启用/关闭是目录搬移：dsh 的文件系统 provider 只扫根目录顶层，没有按名禁用的配置；关闭 = 移入 `~/.dsh/skills/.disabled/`，目录监视 2 秒内生效。同名在两边同时存在时拒绝搬移。
+- 技能启用/关闭是目录搬移：dsh 的文件系统 provider 只扫根目录顶层，没有按名禁用的配置；关闭 = 移入 `~/.dsh/disabled_skills/`（技能根目录的同级，不在任何扫描根之内，agent 列技能目录也看不到），目录监视 2 秒内生效。同名在两边同时存在时拒绝搬移。旧位置 `~/.dsh/skills/.disabled/` 在首次列表时自动迁移。
 - CLI 启动器里的转发器端口只在应用运行期间有效；应用关闭后 shim 的清场部分仍有效，代理部分不再有效。
 
 ## 文档维护

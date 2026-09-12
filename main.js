@@ -13,7 +13,7 @@ const path = require('path')
 const fs = require('fs')
 const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath,
   COMMON_SETTINGS, validateCommonSettings, buildSettingsBlock, groupCommonSettings,
-  listSkillStore, skillExists, removeSkill, setSkillEnabled, skillDetail, readSkillFile,
+  listSkillStore, skillExists, removeSkill, setSkillEnabled, skillDetail, readSkillFile, SKILL_DISABLED_DIR,
   applyProxyEnv, PROXY_ENV_KEYS } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
 
@@ -480,7 +480,9 @@ function validateMcpServer(s, seen) {
 
 function skillsDir() { return path.join(app.getPath('home'), '.dsh', 'skills') }
 
-function listSkills() { return listSkillStore(fs, path, skillsDir()) }
+/** Disabled skills live in the app's data directory, outside ~/.dsh. */
+function disabledSkillsRoot() { return path.join(app.getPath('userData'), SKILL_DISABLED_DIR) }
+function listSkills() { return listSkillStore(fs, path, skillsDir(), disabledSkillsRoot()) }
 
 /**
  * Windows: the bundled dsh's native folder dialog (a koffi child process
@@ -1647,10 +1649,10 @@ ipcMain.handle('skills:list', async () => listSkills())
 ipcMain.handle('skills:open', async (_event, name) => {
   fs.mkdirSync(skillsDir(), { recursive: true })
   // With a name: open that skill's directory (or the folder holding a flat
-  // .md), wherever it lives (enabled or disabled_skills).
+  // .md), wherever it lives (enabled or disabled).
   const n = String(name || '').trim()
   if (n !== '') {
-    const d = skillDetail(fs, path, skillsDir(), n)
+    const d = skillDetail(fs, path, skillsDir(), n, disabledSkillsRoot())
     if (d) { shell.openPath(d.dir); return }
   }
   shell.openPath(skillsDir())
@@ -1658,11 +1660,11 @@ ipcMain.handle('skills:open', async (_event, name) => {
 // Detail view: frontmatter summary + file tree; file reads are fenced to the
 // skill's own directory, text-only and size-capped (runtime.js).
 ipcMain.handle('skills:detail', async (_event, name) => {
-  const d = skillDetail(fs, path, skillsDir(), String(name || '').trim())
+  const d = skillDetail(fs, path, skillsDir(), String(name || '').trim(), disabledSkillsRoot())
   return d ? { ok: true, detail: d } : { ok: false, error: '技能不存在' }
 })
 ipcMain.handle('skills:readFile', async (_event, name, rel) => {
-  const d = skillDetail(fs, path, skillsDir(), String(name || '').trim())
+  const d = skillDetail(fs, path, skillsDir(), String(name || '').trim(), disabledSkillsRoot())
   if (!d) return { error: '技能不存在' }
   try {
     return readSkillFile(fs, path, d.dir, String(rel || ''))
@@ -1818,9 +1820,9 @@ ipcMain.handle('skills:installZip', async () => {
       return { ok: false, error: `压缩包里没有可识别的技能（需要 SKILL.md 目录包或 .md 文件）${rejected.length ? `；名称无法转为 kebab-case 的已跳过：${rejected.join(', ')}` : ''}` }
     }
     fs.mkdirSync(skillsDir(), { recursive: true })
-    // A disabled copy under disabled_skills/ counts as existing: overwriting
+    // A disabled copy counts as existing: overwriting
     // removes the disabled copy and installs the new one enabled.
-    const exists = (name) => skillExists(fs, path, skillsDir(), name)
+    const exists = (name) => skillExists(fs, path, skillsDir(), name, disabledSkillsRoot())
     const conflicts = found.filter((s) => exists(s.name)).map((s) => s.name)
 
     // Same-name skills: one prompt for the whole batch (overwrite, skip, or abort).
@@ -1845,7 +1847,7 @@ ipcMain.handle('skills:installZip', async () => {
     for (const s of found) {
       const conflicted = exists(s.name)
       if (conflicted && !overwrite) { skipped.push(s.name); continue }
-      if (conflicted) removeSkill(fs, path, skillsDir(), s.name)
+      if (conflicted) removeSkill(fs, path, skillsDir(), s.name, disabledSkillsRoot())
       const dest = path.join(skillsDir(), s.kind === 'bundle' ? s.name : `${s.name}.md`)
       if (s.kind === 'bundle') fs.cpSync(s.src, dest, { recursive: true })
       else fs.copyFileSync(s.src, dest)
@@ -1863,19 +1865,19 @@ ipcMain.handle('skills:delete', async (_event, name) => {
   const n = String(name || '').trim()
   if (!SKILL_NAME_RE.test(n) || n.length > 64) return { ok: false, error: '技能名无效' }
   try {
-    if (!removeSkill(fs, path, skillsDir(), n)) return { ok: false, error: '技能不存在' }
+    if (!removeSkill(fs, path, skillsDir(), n, disabledSkillsRoot())) return { ok: false, error: '技能不存在' }
     return { ok: true }
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) }
   }
 })
-// Enable = move back to ~/.dsh/skills; disable = move to ~/.dsh/disabled_skills/
+// Enable = move back to ~/.dsh/skills; disable = move to userData/disabled-skills/
 // (runtime.js setSkillEnabled). dsh's watcher picks up the rename without a
 // restart.
 ipcMain.handle('skills:setEnabled', async (_event, name, enabled) => {
   const n = String(name || '').trim()
   try {
-    return setSkillEnabled(fs, path, skillsDir(), n, enabled === true)
+    return setSkillEnabled(fs, path, skillsDir(), n, enabled === true, disabledSkillsRoot())
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) }
   }

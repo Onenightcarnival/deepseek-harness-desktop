@@ -224,7 +224,7 @@
   <!-- ============ 技能 ============ -->
   <div class="pane single" id="pane-skills">
     <h2>技能</h2>
-    <p class="sub">模型按名称与描述自动调用的指令包。点名称查看全部字段与源文件；安装、删除、开关即时生效。关闭的技能移入 ~/.dsh/disabled_skills。zip 可为单个技能或多技能合集。</p>
+    <p class="sub">模型按名称与描述自动调用的指令包。点名称查看全部字段与源文件；安装、删除、开关即时生效。关闭的技能移出 dsh 目录，存放在应用数据目录。zip 可为单个技能或多技能合集。</p>
     <div class="row" style="margin-bottom:12px">
       <button id="s-install" class="primary">安装技能（.zip）</button>
       <button id="s-open">打开技能目录</button>
@@ -595,7 +595,7 @@
       main.append(nameRow, desc)
       main.onclick = () => openSkillDetail(s.name)
       const actions = document.createElement('div'); actions.className = 'sk-actions'
-      // 关闭 = 移入 ~/.dsh/disabled_skills/，启用 = 移回；dsh 的目录监视即时生效。
+      // 关闭 = 移到应用数据目录的 disabled-skills/，启用 = 移回；dsh 的目录监视即时生效。
       const toggle = document.createElement('label'); toggle.className = 'toggle'
       toggle.title = s.enabled ? '已启用' : '已关闭'
       const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!s.enabled

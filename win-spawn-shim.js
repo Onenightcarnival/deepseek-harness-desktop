@@ -10,7 +10,9 @@
  *
  * Only a missing windowsHide is filled in; an explicit `windowsHide: false`
  * is preserved. node-pty terminals (native ConPTY) are unaffected. No-op off
- * Windows.
+ * Windows. Children started with this process's own executable get the shim
+ * on their argv as well (withPreload), so a runner that strips NODE_OPTIONS
+ * still loads it.
  */
 
 /**
@@ -44,17 +46,40 @@ function withHide(args) {
 }
 
 /**
+ * Carry the shim into a Node child by argv. NODE_OPTIONS reaches most
+ * descendants, but dsh's subprocess runner (Glob/Grep, the Win32 Job
+ * launcher) drops every NODE_* variable from its own environment; that
+ * runner is a GUI-subsystem Electron binary, so it starts without a
+ * console and the ripgrep it creates through CreateProcessW opens a visible
+ * one. With the shim on its argv the runner attaches to the parent's
+ * invisible console first. Applies to children started with this process's
+ * executable and an argv array (spawn/spawnSync/execFile/execFileSync);
+ * `--require` is a Node option and leaves process.argv unchanged.
+ */
+const SHIM_PATH = __filename
+function withPreload(args, execPath) {
+  const a = Array.prototype.slice.call(args)
+  // `--` first means a single-file (pkg) runtime that takes no Node options.
+  if (a[0] !== execPath || !Array.isArray(a[1]) || a[1][0] === '--' || a[1].includes(SHIM_PATH)) return a
+  a[1] = ['--require', SHIM_PATH, ...a[1]]
+  return a
+}
+
+/**
  * Patch the spawn/exec family on a child_process-like object. Exported for
  * plain-node unit tests against a mock on any platform. exec/execFile call
  * the module-internal spawn, not the export; every public entry point is
  * wrapped individually.
  */
-function patchChildProcess(cp) {
+function patchChildProcess(cp, execPath = process.execPath) {
   const custom = require('util').promisify.custom
+  const argvEntry = new Set(['spawn', 'spawnSync', 'execFile', 'execFileSync'])
   for (const name of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync']) {
     const orig = cp[name]
     if (typeof orig !== 'function') continue
-    const wrapped = function (...args) { return orig.apply(this, withHide(args)) }
+    const wrapped = argvEntry.has(name)
+      ? function (...args) { return orig.apply(this, withHide(withPreload(args, execPath))) }
+      : function (...args) { return orig.apply(this, withHide(args)) }
     // Carry over own symbols/props; util.promisify.custom on exec/execFile
     // determines promisify(exec)'s resolved value.
     for (const key of Reflect.ownKeys(orig)) {
@@ -201,4 +226,4 @@ if (process.platform === 'win32') {
   if (setupHiddenConsole() && process.env.DSHDESKTOP_INHERIT_CONSOLE !== '0') hostConsole = true
 }
 
-module.exports = { patchChildProcess, withHide, setupHiddenConsole, _setHostConsole: (v) => { hostConsole = !!v } }
+module.exports = { patchChildProcess, withHide, withPreload, setupHiddenConsole, _setHostConsole: (v) => { hostConsole = !!v } }

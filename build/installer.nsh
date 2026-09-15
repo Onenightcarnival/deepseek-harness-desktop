@@ -24,6 +24,36 @@
 !include "getProcessInfo.nsh"
 Var customPid
 
+# Progress detail. The stock template hides the details list
+# (ShowInstDetails nevershow) and silences DetailPrint (SetDetailsPrint none),
+# leaving a bare progress bar for a multi-minute install. Both are re-enabled
+# at the start of the install/uninstall section: DetailPrint then drives the
+# status line above the progress bar and the list below it, and each phase
+# announces itself. Control ids on the MUI InstFiles page: 1016 details list,
+# 1027 "Show details" button. Silent runs are left alone.
+!macro customShowDetails
+  ${IfNot} ${Silent}
+    SetDetailsPrint both
+    FindWindow $R9 "#32770" "" $HWNDPARENT
+    GetDlgItem $R8 $R9 1016
+    ShowWindow $R8 5
+    GetDlgItem $R8 $R9 1027
+    ShowWindow $R8 0
+  ${endIf}
+!macroend
+
+# Phase line in the installer's UI language: Simplified Chinese (2052) or
+# English for every other language. LangString is not used: the stock build
+# compiles with warnings as errors, and a LangString left undefined for any
+# of the bundled languages is a warning.
+!macro customDetail zh en
+  ${If} $LANGUAGE == 2052
+    DetailPrint "${zh}"
+  ${Else}
+    DetailPrint "${en}"
+  ${EndIf}
+!macroend
+
 !macro customKillPasses
   # Tree-kill by image name: the Electron main process, the dsh server
   # child (same image, run-as-node), and all their descendants.
@@ -44,6 +74,8 @@ Var customPid
 !macroend
 
 !macro customCheckAppRunning
+  !insertmacro customShowDetails
+  !insertmacro customDetail "正在检查运行中的实例…" "Checking for running instances..."
   !insertmacro IS_POWERSHELL_AVAILABLE
   ${GetProcessInfo} 0 $customPid $1 $2 $3 $4
 
@@ -56,7 +88,7 @@ Var customPid
   ${endIf}
 
   customDoSweep:
-  DetailPrint "$(appClosing)"
+  !insertmacro customDetail "正在关闭运行中的 ${PRODUCT_NAME}…" "Closing running ${PRODUCT_NAME}..."
   StrCpy $R1 0
   customKillLoop:
     !insertmacro customKillPasses
@@ -74,7 +106,7 @@ Var customPid
         nsExec::Exec `"$PowerShellPath" -C "Get-Date | Out-File -Encoding utf8 -Append '$DESKTOP\dsh-install-debug.txt'; Get-CimInstance -ClassName Win32_Process | ? {$$_.Path -and $$_.Path.StartsWith('$INSTDIR', 'CurrentCultureIgnoreCase')} | Select-Object ProcessId,Name,Path | Format-List | Out-File -Encoding utf8 -Append '$DESKTOP\dsh-install-debug.txt'"`
         Pop $0
       ${endIf}
-      DetailPrint "close check inconclusive - proceeding (see dsh-install-debug.txt on the desktop)"
+      !insertmacro customDetail "运行检查无法确定，继续安装（详情见桌面上的 dsh-install-debug.txt）" "Close check inconclusive, proceeding (see dsh-install-debug.txt on the desktop)"
     ${endIf}
 
 !ifndef BUILD_UNINSTALLER
@@ -89,7 +121,7 @@ Var customPid
     ReadRegStr $R7 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
     ${if} $R7 != ""
     ${andIf} ${FileExists} "$R7\${UNINSTALL_FILENAME}"
-      DetailPrint "正在卸载旧版本…"
+      !insertmacro customDetail "正在卸载旧版本…" "Uninstalling the previous version..."
       InitPluginsDir
       CopyFiles /SILENT "$R7\${UNINSTALL_FILENAME}" "$PLUGINSDIR\pre-old-uninstaller.exe"
       ExecWait '"$PLUGINSDIR\pre-old-uninstaller.exe" /S /KEEP_APP_DATA /currentuser --updated _?=$R7' $R6
@@ -98,7 +130,7 @@ Var customPid
         # entries the template's uninstall step self-skips; clearing the
         # payload dirs keeps stale files out of the new install (the same
         # set the uninstaller deletes).
-        DetailPrint "旧版卸载器异常退出，绕过并清理旧文件…"
+        !insertmacro customDetail "旧版卸载器异常退出，绕过并清理旧文件…" "The previous uninstaller failed; bypassing it and removing old files..."
         DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY}"
         DeleteRegKey HKCU "${INSTALL_REGISTRY_KEY}"
         RMDir /r "$R7\resources"
@@ -107,5 +139,22 @@ Var customPid
       ${endIf}
     ${endIf}
   ${endIf}
+  # Next in the stock section: the embedded 7z payload is written to the
+  # plugins dir, decompressed (Nsis7z drives the progress bar), and copied
+  # into $INSTDIR. One phase line covers the three steps.
+  !insertmacro customDetail "正在解压程序文件（几百 MB，需要一到两分钟）…" "Extracting program files (a few hundred MB, one to two minutes)..."
 !endif
 !macroend
+
+!ifndef BUILD_UNINSTALLER
+# Runs right after the payload landed in $INSTDIR. The stock section then
+# keeps a copy of the installer in LocalAppData (for the updater), writes the
+# uninstaller, registry entries and shortcuts.
+!macro customFiles_x64
+  !insertmacro customDetail "正在保存安装包副本、创建卸载程序和快捷方式…" "Keeping a copy of the installer, creating the uninstaller and shortcuts..."
+!macroend
+
+!macro customInstall
+  !insertmacro customDetail "安装完成。" "Installation complete."
+!macroend
+!endif

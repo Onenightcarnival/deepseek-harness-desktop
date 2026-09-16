@@ -262,6 +262,7 @@ async function installCoreRuntime(version) {
     child.stderr.on('data', onChunk)
     child.on('exit', (code) => {
       if (code === 0 && runtimeVersion(dir) === version) {
+        ensureDesktopPlugins(dir)
         // Presets are dependencies of the dsh app manifest (same as
         // stage-dsh.mjs): the profile resolves plugins from the app's
         // dependency closure, not from the runtime root manifest.
@@ -485,27 +486,97 @@ function disabledSkillsRoot() { return path.join(app.getPath('userData'), SKILL_
 function listSkills() { return listSkillStore(fs, path, skillsDir(), disabledSkillsRoot()) }
 
 /**
- * Windows: the bundled dsh's native folder dialog (a koffi child process
- * re-spawning process.execPath) does not run under the Electron-as-node
- * packaging; the in-app "browse" directory picker is pinned via a patch overlay.
+ * Workspace directory picker: the shell's own backend (plugins/
+ * dsh-desktop-directory-picker) paired with dsh's native client surface,
+ * composed in place of directory-picker-auto. A pick request arrives over the
+ * server's IPC channel and the shell opens the OS folder dialog modal to the
+ * app window (dialog.showOpenDialog). dsh's own native backend is not used:
+ * on Windows it spawns a koffi dialog child on process.execPath, which does
+ * not run under the Electron-as-node packaging; on Linux it depends on
+ * zenity/kdialog.
  */
 function pickerPatchArgs() {
-  if (process.platform !== 'win32') return []
-  const p = path.join(app.getPath('userData'), 'win-picker-patch.yml')
-  // The "browse" interaction is a pair: host backend + client UI surface
-  // (what dsh-host-directory-picker-auto mounts when it resolves to browse).
-  // Both must be composed; the UI has no dialog to open otherwise.
+  const p = path.join(app.getPath('userData'), 'desktop-picker-patch.yml')
   fs.writeFileSync(p, [
     '- id: directory-picker',
     '  disabled: true',
     '- insert:',
-    '    - id: directory-picker-browse',
-    "      name: '@deepseek-ai/dsh-host-directory-picker-browse'",
-    '    - id: directory-picker-browse-ui',
-    "      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'",
+    '    - id: directory-picker-desktop',
+    `      name: '${DESKTOP_PICKER_PLUGIN}'`,
+    '    - id: directory-picker-native-ui',
+    "      name: '@deepseek-ai/dsh-client-ui-directory-picker-native'",
     '',
   ].join('\n'))
   return ['--patch', p]
+}
+
+const DESKTOP_PICKER_PLUGIN = 'dsh-desktop-directory-picker'
+const PICK_REQUEST = 'dsh-desktop:pick-directory'
+const PICK_RESULT = 'dsh-desktop:pick-directory-result'
+const PICK_CANCEL = 'dsh-desktop:pick-directory-cancel'
+
+/** Source directory of the shell's plugin packages (extraResources when packaged, the repo in dev). */
+function desktopPluginsSourceDir() {
+  const packaged = path.join(process.resourcesPath || '', 'plugins')
+  return fs.existsSync(packaged) ? packaged : path.join(__dirname, 'plugins')
+}
+
+/**
+ * Put the shell's plugin packages into a runtime tree and register them in
+ * the dsh app manifest (what stage-dsh.mjs does for the bundled runtime).
+ * Runs before every server start and after a runtime upgrade, so upgraded
+ * runtimes and runtimes installed by older app versions carry the current
+ * copies. Files are overwritten; a failure leaves the runtime as it was.
+ */
+function ensureDesktopPlugins(runtimeDir) {
+  try {
+    const srcRoot = desktopPluginsSourceDir()
+    const names = fs.readdirSync(srcRoot).filter((n) => fs.existsSync(path.join(srcRoot, n, 'package.json')))
+    for (const name of names) {
+      const dest = path.join(runtimeDir, 'node_modules', name)
+      fs.rmSync(dest, { recursive: true, force: true })
+      fs.cpSync(path.join(srcRoot, name), dest, { recursive: true })
+    }
+    const appManifestPath = path.join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+    const appManifest = JSON.parse(fs.readFileSync(appManifestPath, 'utf8'))
+    appManifest.dependencies ??= {}
+    let changed = false
+    for (const name of names) {
+      if (appManifest.dependencies[name] === undefined) { appManifest.dependencies[name] = '*'; changed = true }
+    }
+    if (changed) fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2))
+  } catch (err) {
+    console.error('desktop plugins not installed into runtime:', String((err && err.message) || err))
+  }
+}
+
+/** The pick dialog title and button in the app language. */
+function pickerStrings() {
+  const zh = String(app.getLocale() || '').toLowerCase().startsWith('zh')
+  return zh ? { title: '选择工作区目录', buttonLabel: '选择' } : { title: 'Select Workspace Directory', buttonLabel: 'Select' }
+}
+
+/**
+ * Serve one pick request from the dsh server: open the OS folder dialog
+ * modal to the main window and answer with the chosen path (null when
+ * cancelled). A cancel notice from the server drops the answer.
+ */
+const cancelledPicks = new Set()
+function onServerMessage(proc, message) {
+  if (message === null || typeof message !== 'object') return
+  if (message.type === PICK_CANCEL) { cancelledPicks.add(message.id); return }
+  if (message.type !== PICK_REQUEST) return
+  const id = message.id
+  const reply = (payload) => {
+    if (cancelledPicks.delete(id)) return
+    if (proc.connected) { try { proc.send({ type: PICK_RESULT, id, ...payload }) } catch { /* server gone */ } }
+  }
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+  const { title, buttonLabel } = pickerStrings()
+  const options = { title, buttonLabel, defaultPath: app.getPath('home'), properties: ['openDirectory', 'createDirectory'] }
+  ;(win ? dialog.showOpenDialog(win, options) : dialog.showOpenDialog(options))
+    .then((result) => { reply({ path: result.canceled ? null : (result.filePaths[0] || null) }) })
+    .catch((err) => { reply({ path: null, error: String((err && err.message) || err) }) })
 }
 
 function proxyShimLines(win) {
@@ -1193,6 +1264,7 @@ async function startServer() {
       reject(new Error(`bundled dsh not found at ${entry}`))
       return
     }
+    ensureDesktopPlugins(activeRuntime.dir)
     syncPresetPlugins()
     healUnresolvableEntries()
 
@@ -1230,12 +1302,15 @@ async function startServer() {
     // (--profile/--patch) and hands everything from the first unknown token
     // to the app's commander, so --patch precedes app flags like
     // --no-open/--port.
+    // fd 3 is the Node IPC channel the directory picker plugin answers on.
     serverProc = spawn(process.execPath, ['--expose-internals', ...nodePreloadArgs(), entry, 'web', ...desktopPatchArgs(), ...pickerPatchArgs(), '--no-open', '--port', '0'], {
       env,
       cwd: app.getPath('home'),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       windowsHide: true,
     })
+    const thisProc = serverProc
+    serverProc.on('message', (message) => { onServerMessage(thisProc, message) })
 
     const lf = logFile()
     const logStream = lf ? fs.createWriteStream(lf, { flags: 'w' }) : null
@@ -1265,7 +1340,6 @@ async function startServer() {
     serverProc.stdout.on('data', onChunk)
     serverProc.stderr.on('data', onChunk)
 
-    const thisProc = serverProc
     serverProc.on('exit', (code) => {
       // a late exit of an already-replaced process leaves the current one
       // alone and shows no dialog

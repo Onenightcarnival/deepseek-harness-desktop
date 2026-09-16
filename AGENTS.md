@@ -23,6 +23,8 @@ win-spawn-shim.js   经 --require 与 NODE_OPTIONS 预载进整棵 Node 子进�
                     DSHDESKTOP_CONSOLE_HOST=1 时配隐形宿主控制台（setupHiddenConsole），附着后
                     子进程改为继承该控制台。非 Windows 空操作。asar 内文件普通 Node 读不到，
                     启动时拷到 userData 再注入
+plugins/            壳自带的 dsh 插件包：dsh-desktop-directory-picker（工作区目录选择走壳的
+                    系统对话框，见下文）
 proxy-forward.js    进程内转发代理（无 Electron 依赖，resolveSystem 由 main.js 注入）：
                     createForwarder 起 127.0.0.1 随机端口，处理 CONNECT 隧道与明文 HTTP，
                     每条连接经 routeFor 决定直连或上游代理
@@ -97,7 +99,8 @@ NSIS 安装器可在 Linux 全流程实跑：`dpkg --add-architecture i386 && ap
 ### 启动与运行时
 
 - Electron-as-node 跑 dsh 必须加 `--expose-internals`：cordis 加载器依赖 Node internals 做模块解析，缺失时 HMR 相关加载随机失败。
-- Windows 目录选择器固定为 browse 组合（`pickerPatchArgs`）：dsh 原生 Win32 弹窗靠子进程重新 spawn `process.execPath`，打包后的 Electron 环境起不来。dsh 的交互插件是 host + client-ui 成对的，patch 只挂一半时界面不出现。
+- 工作区目录选择器（全平台）：`pickerPatchArgs` 停用 directory-picker-auto，挂 `plugins/dsh-desktop-directory-picker`（host，`native` 能力）+ dsh 自带的 `@deepseek-ai/dsh-client-ui-directory-picker-native`（client-ui）。dsh 服务以 `stdio[3]='ipc'` 启动，插件把 pick 请求经 `process.send` 发给壳，壳用 `dialog.showOpenDialog` 在主窗口上开系统目录对话框（Windows 即资源管理器弹窗）后回传路径；取消回 null；调用方 abort 时插件发 cancel，壳丢弃结果。不用 dsh 自带的 native 后端：Windows 上它用 koffi 子进程重新 spawn `process.execPath` 开 Win32 对话框，打包后的 Electron 环境起不来；Linux 依赖 zenity/kdialog。dsh 的交互插件是 host + client-ui 成对的，patch 只挂一半时界面不出现。
+- `plugins/<name>` 是壳自带的 dsh 插件包（纯 JS，不打包）：stage 把它们拷进运行时 node_modules 并登记进 dsh 应用清单（与预置同一解析路径）；打包后放 extraResources 的 `plugins/`，`ensureDesktopPlugins` 在每次启动前和内核升级后把当前拷贝写进活动运行时，不进 profile、不进 preset-plugins.json。
 - `--patch` 启动参数层在用户 profile 配置层之后应用，desktop-patch.yml 里的条目用户无法覆盖。
 - dsh launcher 只解析 argv 开头属于自己的旗标（`--profile`/`--patch`），遇到第一个陌生 token 就把剩余交给应用层。`--no-open`/`--port` 等应用旗标必须放在全部 patch 参数之后。
 - rc8 起 `dsh web` 默认打开系统浏览器，壳必须传 `--no-open`。

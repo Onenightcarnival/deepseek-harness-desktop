@@ -76,6 +76,13 @@
       {
         "from": "desktop-patch.yml",
         "to": "desktop-patch.yml"
+      },
+      {
+        "from": "plugins",
+        "to": "plugins",
+        "filter": [
+          "**/*"
+        ]
       }
     ]
   },

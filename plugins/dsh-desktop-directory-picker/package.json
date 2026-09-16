@@ -1,0 +1,15 @@
+{
+  "name": "dsh-desktop-directory-picker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Workspace directory picker for DeepSeek Harness Desktop: the OS folder dialog opened by the Electron shell, parented to the app window.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-host-directory-picker": "*"
+  }
+}

@@ -118,6 +118,27 @@ if (!useLock) {
   }
 }
 
+// ---- desktop-owned plugins ----
+// Plain packages kept in the repo under plugins/<name>: copied into the
+// runtime tree and registered in the dsh app manifest, so the profile resolves
+// them through the same closure as presets. They are composed by main.js
+// patch overlays, never seeded into the profile; main.js repeats the copy for
+// upgraded runtimes (ensureDesktopPlugins).
+const desktopPluginNames = fs.readdirSync(path.join(here, 'plugins')).filter((n) => fs.existsSync(path.join(here, 'plugins', n, 'package.json')))
+for (const name of desktopPluginNames) {
+  const dest = path.join(dir, 'node_modules', name)
+  fs.rmSync(dest, { recursive: true, force: true })
+  fs.cpSync(path.join(here, 'plugins', name), dest, { recursive: true })
+}
+{
+  const appManifestPath = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+  const appManifest = JSON.parse(fs.readFileSync(appManifestPath, 'utf8'))
+  appManifest.dependencies ??= {}
+  for (const name of desktopPluginNames) appManifest.dependencies[name] ??= '*'
+  fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2))
+  console.log(`desktop plugins in runtime: ${desktopPluginNames.join(', ')}`)
+}
+
 if (extraPackages.length > 0) {
 
   // Register the preset plugins as dependencies of the bundled dsh app. At

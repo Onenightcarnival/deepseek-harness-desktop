@@ -60,13 +60,13 @@ jobs:
           fi
           npx electron-builder ${{ matrix.args }} --publish never "${EXTRA[@]}"
 
-      # *.yml（latest.yml / full.yml）与 *.blockmap 是应用内更新的元数据与差分索引，随安装包一起发布。
+      # *.yml（latest.yml / full.yml）是应用内更新的元数据，随安装包一起发布。
+      # NSIS 差分已关闭（nsis.differentialPackage=false），更新整包下载，不产出 .exe.blockmap。
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}-${{ matrix.flavor }}
           path: |
             dist/*.exe
-            dist/*.exe.blockmap
             dist/*.dmg
             dist/*.yml
             !dist/builder-debug.yml
@@ -97,7 +97,7 @@ jobs:
             - 常规版：只含官方 dsh。
             - `-full`：预置任务看板、SSH 远程连接与 dsh-better-sidebar 工作台。
 
-            Windows 版支持应用内更新：帮助 → 检查应用更新，后台下载后重启即完成安装（`latest.yml` / `full.yml` 与 `.blockmap` 为更新元数据）。
+            Windows 版支持应用内更新：帮助 → 检查应用更新，后台下载后重启即完成安装（`latest.yml` / `full.yml` 为更新元数据）。
 
             安装包未签名：
             - Windows：SmartScreen 提示时点「更多信息 → 仍要运行」。

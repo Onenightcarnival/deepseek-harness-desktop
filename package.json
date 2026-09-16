@@ -60,7 +60,8 @@
       "createDesktopShortcut": true,
       "shortcutName": "DeepSeek Harness",
       "artifactName": "DeepSeek-Harness-Setup-${version}-win-${arch}.${ext}",
-      "include": "build/installer.nsh"
+      "include": "build/installer.nsh",
+      "differentialPackage": false
     },
     "mac": {
       "target": [

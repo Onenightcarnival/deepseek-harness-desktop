@@ -6,7 +6,7 @@
 
 ## 文件
 
-- `main.js` — 主进程：启动与守护 dsh 服务、窗口与菜单、更新检查、配置中心、CLI 启动器。Windows 上通过 `--patch` 覆盖层把目录选择器固定为 browse 组合。
+- `main.js` — 主进程：启动与守护 dsh 服务、窗口与菜单、更新检查与应用内更新、配置中心、CLI 启动器。工作区目录选择通过 `--patch` 覆盖层换成壳自带的插件（`plugins/`），弹系统目录对话框。
 - `splash.html` — 启动页。
 - `stage-dsh.mjs` — 把 `@deepseek-ai/dsh` 安装进 `staging/<platform>-<arch>/dsh` 并裁剪，再放入内置 pnpm（11 线）与 uv（钉版、sha256 校验）。
 - `afterPack.js` — electron-builder 钩子，把 staging 运行时拷进应用 resources。
@@ -48,7 +48,7 @@ Windows 与 macOS runner 各自原生构建，产物与 SHA256SUMS.txt 一起发
 
 ## 更新
 
-- **应用更新**：启动后检查 GitHub Release（`package.json` 的 `updateRepo`），有新版时提示下载；菜单「帮助 → 检查应用更新…」手动检查。
+- **应用更新**：启动后检查 GitHub Release（`package.json` 的 `updateRepo`），菜单「帮助 → 检查应用更新…」手动检查。Windows 上有新版时可选「后台下载」，下载完成后提示「立即重启」，重启即完成安装（静默运行新安装包后自动拉起）；选「稍后」则在下次退出应用时安装。下载对上一次安装保留的安装包副本做差分。更新元数据是 Release 里的 `latest.yml`（常规版）/ `full.yml`（full 版）与 `.blockmap`，由发布流程随安装包一起上传。macOS 版未签名，保持跳转下载页。
 - **内核更新**：启动后检查 npm 上的 `@deepseek-ai/dsh`，可一键升级到用户数据目录的 `runtimes/<版本>/`，重启生效；升级失败自动回退到内置版本。只在同一版本线内升级（如 0.1.5-rc.1 → rc.2），跨线需下载新安装包。菜单「帮助 → 检查内核更新…」手动检查，「帮助」菜单第一项显示当前内核版本。
 
 ## 配置中心与命令行

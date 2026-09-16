@@ -26,13 +26,146 @@ const STARTUP_TIMEOUT_MS = 90_000
 const UPDATE_REPO = (() => {
   try { return require('./package.json').updateRepo || null } catch { return null }
 })()
+/** Build flavor stamped by the release workflow (extraMetadata.flavor): "full" or "minimal". */
+const APP_FLAVOR = (() => {
+  try { return require('./package.json').flavor === 'full' ? 'full' : 'minimal' } catch { return 'minimal' }
+})()
+
+/**
+ * In-place updates (Windows): electron-updater against the GitHub Releases of
+ * UPDATE_REPO. The release carries `latest.yml` (minimal) or `full.yml`
+ * (full flavor) next to the installer and its blockmap; the updater picks the
+ * file for this build's flavor, downloads the new installer in the
+ * background (differential against the copy the last install kept in
+ * LocalAppData) and, on the operator's word, quits and runs it silently
+ * (`/S --updated`), which relaunches the app. macOS has no code signature, a
+ * requirement of Squirrel.Mac, so it keeps the download-page flow.
+ */
+let appUpdater = null
+let appUpdateState = 'idle' // idle | checking | available | downloading | downloaded
+let appUpdateInfo = null
+function getAppUpdater() {
+  if (process.platform !== 'win32' || !UPDATE_REPO || !app.isPackaged) return null
+  if (appUpdater) return appUpdater
+  try {
+    const { autoUpdater } = require('electron-updater')
+    autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = true
+    // The channel setter turns allowDowngrade on; it is reset right after.
+    autoUpdater.channel = APP_FLAVOR === 'full' ? 'full' : 'latest'
+    autoUpdater.allowDowngrade = false
+    autoUpdater.logger = { info: (m) => console.log('[updater]', m), warn: (m) => console.warn('[updater]', m), error: (m) => console.error('[updater]', m), debug: () => {} }
+    autoUpdater.on('download-progress', (p) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(Math.max(0, Math.min(1, p.percent / 100)))
+    })
+    autoUpdater.on('update-downloaded', (info) => {
+      appUpdateState = 'downloaded'
+      appUpdateInfo = info
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(-1)
+      buildMenu()
+      offerRestartForUpdate(info)
+    })
+    autoUpdater.on('error', (err) => {
+      if (appUpdateState === 'downloading' && mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(-1)
+      if (appUpdateState === 'downloading') {
+        appUpdateState = 'available'
+        buildMenu()
+        dialog.showMessageBox({ type: 'warning', title: 'DeepSeek Harness', message: '更新下载失败', detail: String((err && err.message) || err), buttons: ['好'] })
+      }
+    })
+    appUpdater = autoUpdater
+  } catch (err) {
+    console.error('electron-updater unavailable:', String((err && err.message) || err))
+    return null
+  }
+  return appUpdater
+}
+
+/** Start the background download of an available update. */
+async function downloadAppUpdate() {
+  const updater = getAppUpdater()
+  if (!updater || appUpdateState === 'downloading' || appUpdateState === 'downloaded') return
+  appUpdateState = 'downloading'
+  buildMenu()
+  try {
+    await updater.downloadUpdate()
+  } catch {
+    // reported through the updater's error event
+  }
+}
+
+/** Downloaded update: restart now (silent install, relaunch) or keep it for the next quit. */
+async function offerRestartForUpdate(info) {
+  const version = (info && info.version) || (appUpdateInfo && appUpdateInfo.version) || ''
+  const { response } = await dialog.showMessageBox({
+    type: 'info',
+    title: 'DeepSeek Harness',
+    message: `v${version} 已下载完成`,
+    detail: '重启后完成安装。选择「稍后」则在下次退出应用时安装。',
+    buttons: ['立即重启', '稍后'],
+    defaultId: 0,
+    cancelId: 1,
+  })
+  if (response === 0) restartForUpdate()
+}
+
+function restartForUpdate() {
+  const updater = getAppUpdater()
+  if (!updater || appUpdateState !== 'downloaded') return
+  stopServer()
+  setImmediate(() => { updater.quitAndInstall(true, true) })
+}
 
 /**
  * Check the GitHub releases of UPDATE_REPO for a newer app version.
+ * Windows: offer a background download that installs on restart; other
+ * platforms and any updater failure: offer the release page.
  * @param interactive - also report "already up to date" / errors via dialog.
  */
 async function checkAppUpdates(interactive) {
   if (!UPDATE_REPO) return
+  if (appUpdateState === 'downloaded') { await offerRestartForUpdate(appUpdateInfo); return }
+  if (appUpdateState === 'downloading') {
+    if (interactive) await dialog.showMessageBox({ type: 'info', title: 'DeepSeek Harness', message: '更新正在后台下载', detail: '下载完成后会提示重启。', buttons: ['好'] })
+    return
+  }
+  const updater = getAppUpdater()
+  if (updater) {
+    try {
+      appUpdateState = 'checking'
+      const result = await updater.checkForUpdates()
+      const info = result && result.updateInfo
+      const latest = info ? String(info.version || '') : ''
+      if (latest && compareVersions(latest, app.getVersion()) > 0) {
+        appUpdateState = 'available'
+        appUpdateInfo = info
+        buildMenu()
+        const { response } = await dialog.showMessageBox({
+          type: 'info',
+          title: 'DeepSeek Harness',
+          message: `发现新版本 v${latest}（当前 v${app.getVersion()}）`,
+          detail: '在后台下载，完成后重启即可更新。',
+          buttons: ['后台下载', '前往下载页', '取消'],
+          defaultId: 0,
+          cancelId: 2,
+        })
+        if (response === 0) await downloadAppUpdate()
+        else if (response === 1) shell.openExternal(`https://github.com/${UPDATE_REPO}/releases/tag/v${latest}`)
+        return
+      }
+      appUpdateState = 'idle'
+      if (interactive) {
+        await dialog.showMessageBox({
+          type: 'info', title: 'DeepSeek Harness',
+          message: `当前已是最新版本（v${app.getVersion()}）`, buttons: ['好'],
+        })
+      }
+      return
+    } catch (err) {
+      appUpdateState = 'idle'
+      console.error('[updater] check failed, falling back to the release page:', String((err && err.message) || err))
+    }
+  }
   try {
     const res = await electronNet.fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
       headers: { accept: 'application/vnd.github+json', 'user-agent': 'dsh-desktop' },
@@ -1430,7 +1563,11 @@ function buildMenu() {
       submenu: [
         { label: `内核版本：v${(activeRuntime && activeRuntime.version) || '?'}${activeRuntime && !activeRuntime.bundled ? '（已升级）' : ''}`, enabled: false },
         { label: '检查内核更新…', click: () => { checkCoreUpdates(true) } },
-        { label: '检查应用更新…', click: () => { checkAppUpdates(true) } },
+        appUpdateState === 'downloaded'
+          ? { label: `重启以更新到 v${(appUpdateInfo && appUpdateInfo.version) || ''}…`, click: () => { offerRestartForUpdate(appUpdateInfo) } }
+          : appUpdateState === 'downloading'
+            ? { label: '正在下载应用更新…', enabled: false }
+            : { label: '检查应用更新…', click: () => { checkAppUpdates(true) } },
         { type: 'separator' },
         { label: 'GitHub 仓库', click: () => { if (UPDATE_REPO) shell.openExternal(`https://github.com/${UPDATE_REPO}`) } },
       ],

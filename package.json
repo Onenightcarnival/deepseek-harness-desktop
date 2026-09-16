@@ -38,7 +38,11 @@
     "asar": true,
     "npmRebuild": false,
     "afterPack": "./afterPack.js",
-    "publish": null,
+    "publish": {
+      "provider": "github",
+      "owner": "Onenightcarnival",
+      "repo": "deepseek-harness-desktop"
+    },
     "win": {
       "target": [
         {
@@ -91,5 +95,8 @@
     "url": "https://github.com/deepseek-ai/deepseek-harness.git"
   },
   "packageManager": "npm@10.9.3",
-  "updateRepo": "Onenightcarnival/deepseek-harness-desktop"
+  "updateRepo": "Onenightcarnival/deepseek-harness-desktop",
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
 }

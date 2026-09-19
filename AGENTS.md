@@ -106,6 +106,7 @@ NSIS 安装器可在 Linux 全流程实跑：`dpkg --add-architecture i386 && ap
 - dsh launcher 只解析 argv 开头属于自己的旗标（`--profile`/`--patch`），遇到第一个陌生 token 就把剩余交给应用层。`--no-open`/`--port` 等应用旗标必须放在全部 patch 参数之后。
 - rc8 起 `dsh web` 默认打开系统浏览器，壳必须传 `--no-open`。
 - 0.1.2-rc.1 起就绪行带一次性 token，裸 origin 回 401，`/api` 受浏览器信任围栏保护。READY_RE 捕获整条 URL（含 query）并原样 loadURL；每次启动 token 不同。CLI 形态为 `dsh --profile web`，子命令形态 `dsh web` 仍接受。
+- dsh 每个服务实例下发一个名字随机的 `dsh-auth-<随机>` cookie（30 天过期）。cookie 按 host 不按端口隔离，每次启动都在 `127.0.0.1` 下多留一个且全部随请求发出；约 65 个时 Cookie 头近 16 KB，加上 2.8 KB 的首屏组合 bundle URL 超过 Node 的请求头上限，服务回 431，界面报 "Failed to load plugins … bundle script … failed to load"（短 URL 的请求仍正常，curl 与外部浏览器不复现）。`loadWebUi` 在每次 loadURL 前清掉该 host 下全部 `dsh-auth-*`。排查壳窗口内的请求：`--remote-debugging-port=<端口>` 启动应用后走 CDP。
 - 升级 Electron 前确认内置 Node 满足 dsh 的 engines（当前 `^22.19 || >=24`）；`runtime.js` 的 `satisfiesNode` 在应用内内核升级前做同样检查，失败自动隔离回退（`.broken-` 目录后缀）。
 - 应用内内核升级只允许同版本线（`releaseLine`：去掉预发布标签的 major.minor.patch）。第三方插件按线适配，跨线组合无法启动；跨线时静默检查不打扰，手动检查引导下载新安装包。
 - 新内核会把 `~/.dsh/.credentials.yaml` 的 version 迁移为数字，旧内核要求字符串，降级方向拒绝启动。applyBootErrorFix 先把数字加引号（留 .bak），再失败则整体隔离（.broken-*）。该自愈只覆盖带此逻辑的版本。

@@ -2130,6 +2130,26 @@ async function bootServerWithHeal() {
 }
 
 /**
+ * Load the web UI from a fresh ready URL. Each dsh server instance sets its
+ * own `dsh-auth-<random>` cookie (30-day expiry), and cookies are scoped by
+ * host, not port: every launch adds one more to 127.0.0.1 and all of them are
+ * sent on every request. Around 65 of them the Cookie header alone nears
+ * Node's 16 KB header limit and the long combo bundle URL gets a 431
+ * ("Failed to load plugins"). Cookies of previous instances are dead weight
+ * (their tokens died with the server), so they are dropped before loading.
+ */
+async function loadWebUi(url) {
+  try {
+    const jar = session.defaultSession.cookies
+    const host = new URL(url).hostname
+    for (const c of await jar.get({ domain: host })) {
+      if (c.name.startsWith('dsh-auth-')) await jar.remove(`http://${host}${c.path || '/'}`, c.name)
+    }
+  } catch { /* stale cookies only matter once they pile up */ }
+  if (mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(url)
+}
+
+/**
  * Restart the dsh server in place (no app relaunch), for config changes
  * (proxy) that reach the server through its environment. The window shows
  * the splash while the new server boots, then reloads the web UI.
@@ -2143,7 +2163,7 @@ async function restartDshServer() {
     killServer()
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadFile(path.join(__dirname, 'splash.html'))
     const url = await bootServerWithHeal()
-    if (mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(url)
+    await loadWebUi(url)
     return { ok: true }
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err).slice(0, 500) }
@@ -2173,9 +2193,7 @@ app.whenReady().then(async () => {
   createWindow()
   try {
     const url = await bootServerWithHeal()
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      await mainWindow.loadURL(url)
-    }
+    await loadWebUi(url)
   } catch (err) {
     // An upgraded core that fails to boot is quarantined; the app relaunches
     // on the bundled runtime.

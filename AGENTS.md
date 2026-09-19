@@ -38,7 +38,7 @@ plugins.html        配置中心窗口：插件 / MCP 服务器 / 技能 / 常�
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动页
 stage-dsh.mjs       构建期：npm ci 从 locks/ 安装 dsh + 预置插件到 staging/<platform>-<arch>/dsh，
-                    裁剪，安装 pnpm（11 线）到 dsh/tools/，从 GitHub 拉钉版 uv（sha256 校验）到
+                    裁剪运行时不读的文件（见下文"安装耗时"），安装 pnpm（11 线）到 dsh/tools/，从 GitHub 拉钉版 uv（sha256 校验）到
                     dsh/tools/uv/，把预置插件注册进 dsh 应用依赖清单，写 preset-plugins.json
 afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh
 desktop-patch.yml   随包分发的插件组合覆盖层（默认空）
@@ -142,6 +142,7 @@ NSIS 安装器可在 Linux 全流程实跑：`dpkg --add-architecture i386 && ap
 - GUI 进程树里不带 `windowsHide:true` 的控制台子进程（pwsh/cmd/git）会闪窗。`win-spawn-shim.js` 经 `--require` 与 NODE_OPTIONS 预载，给 child_process 全家默认补 windowsHide（exec/execFile 的 `promisify.custom` 必须在包装函数上重建）。node-pty（ConPTY）不走 child_process，不受影响。
 - windowsHide 治不了沙箱 pwsh：dsh-sandbox-windows-acl 用 koffi 直接调 CreateProcessAsUserW 起 pwsh，受限令牌下 CREATE_NO_WINDOW 的子进程以 STATUS_DLL_INIT_FAILED (0xC0000142) 退出，语义是共享宿主控制台。setupHiddenConsole（DSHDESKTOP_CONSOLE_HOST=1）给 dsh 服务进程配隐形宿主控制台：spawn 一个 CREATE_NO_WINDOW 的 cmd，AttachConsole 后杀掉它（控制台在还有进程附着时存活）。不用 AllocConsole（闪窗，Win11 可能开 Windows Terminal 标签）。已附着真实终端时不介入。koffi 从 dsh 运行时闭包解析。
 - dsh 的 subprocess 服务（Glob / Grep 起 ripgrep，`dsh-subprocess-local` 的 Win32 Job runner）给 runner 自己的环境删掉一切 `NODE_*` 变量，NODE_OPTIONS 到不了 runner；runner 是 GUI 子系统的 Electron 进程，本身不继承控制台，它经 CreateProcessW 起的 rg 就会开一个可见窗口。shim 在包装 spawn / spawnSync / execFile / execFileSync 时，对以本进程 `process.execPath` 启动且带 argv 数组的子进程在 argv 前插入 `--require <shim>`（withPreload），runner 由此加载 shim 并附着父进程的隐形控制台；argv 首项为 `--` 的单文件运行时不插。`--require` 是 Node 选项，不改变子进程的 process.argv。
+- 安装耗时由文件数决定：NSIS 模板把 7z 解到临时目录再 CopyFiles 进 $INSTDIR，每个文件落盘两次并各被 Defender 扫一次。stage 的裁剪把运行时从约 2.1 万个文件减到约 1.1 万（307 MB → 190 MB）：sourcemap / .pdb、全部 `*.d.ts`（运行时不读，dsh 的服务/类型查询走 typert 运行时反射，不读声明文件）、第三方包的 README / CHANGELOG 类 prose（@deepseek-ai 与插件包的 README 保留；其他 .md 一律保留——agent-preset 的 SKILL.md、skill-badge 资源是运行时读的）、第三方包**顶层**的 test / docs / examples / .github 目录（只在 package.json 同级，嵌套同名目录可能是运行时模块：yaml 的 dist/doc/）。验证：`node stage-dsh.mjs` 后起服务走 GUI 流程，再用一段脚本 import 全部 `@deepseek-ai/*` 入口查 Cannot find module，并扫描所有 js 的相对 import 是否指向已删文件。`nsis.useZip` 能省掉 CopyFiles 那一遍，但同一运行时的安装包从 106 MB 涨到 177 MB，不采用。
 - 安装进度明细：stock 模板 `ShowInstDetails nevershow` + `SetDetailsPrint none`，InstFiles 页只剩进度条。`build/installer.nsh` 的 customShowDetails 在安装 / 卸载段开头 `SetDetailsPrint both` 并 `ShowWindow` 明细列表（MUI InstFiles 页控件 id：1016 列表、1027 "显示细节"按钮），之后 DetailPrint 同时写进度条上方状态行与列表；各阶段用 customDetail 宏按 `$LANGUAGE`（2052 中文，其余英文）打一行。不用 LangString：任一内置语言缺定义即警告，`-WX` 下编译失败。可挂钩的位置：customCheckAppRunning（解压前）、customFiles_x64（拷贝进 $INSTDIR 之后、保存安装包副本 / 写卸载器 / 注册表 / 快捷方式之前）、customInstall（全部完成后）。
 - 有隐形宿主控制台时，子进程改为继承控制台而非 CREATE_NO_WINDOW（shim 的 hostConsole 策略）：`windowsHide:true` 的子进程没有控制台，它再起的控制台程序会得到新的可见窗口（`uvx` MCP 服务器为 uv → python 两级，MCP SDK 硬编码 windowsHide:true）。无隐形控制台（CLI 场景）时维持 windowsHide 默认。逃生口 `DSHDESKTOP_INHERIT_CONSOLE=0`。
 - 控制变量不能用 `DSH_` 前缀：dsh 的 subprocess 服务给每个子进程做环境清洗，除敏感名（KEY/PASSWORD/SECRET/TOKEN）外删除一切 `DSH_` 开头的变量。现名 `DSHDESKTOP_*`；`NODE_OPTIONS` 不在清洗名单。诊断日志 userData/console-debug.log 记录每个进程的附着路径与 GetLastError（6 = 目标进程无控制台，5 = 自己已有控制台）。

@@ -2208,10 +2208,8 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 
-  // Silent startup update checks (a dialog appears only when a newer version
-  // exists): the app itself (GitHub releases) and the dsh core (npm registry).
-  setTimeout(() => { checkAppUpdates(false) }, 15_000)
-  setTimeout(() => { checkCoreUpdates(false) }, 25_000)
+  // Update checks run only from the Help menu; nothing contacts GitHub or
+  // the npm registry at startup.
 })
 
 app.on('window-all-closed', () => {

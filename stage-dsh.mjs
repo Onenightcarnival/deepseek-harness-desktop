@@ -258,15 +258,55 @@ if (fs.existsSync(pty)) {
 // sharp: the native @img package is used; the wasm fallback is dropped.
 rm(path.join(nm, '@img', 'sharp-wasm32'))
 
-// Sourcemaps and .pdb debug symbols.
+// Files the runtime never opens. Install time on Windows scales with the
+// file count (each file is created twice by the NSIS template and scanned by
+// Defender), so every class removed here shortens the install directly:
+// - sourcemaps and .pdb debug symbols;
+// - TypeScript declarations (*.d.ts / *.d.mts / *.d.cts): the runtime is
+//   built JavaScript; declarations serve plugin authors compiling against
+//   their own node_modules, not the app;
+// - package prose (README / CHANGELOG / HISTORY / CONTRIBUTING / SECURITY /
+//   CODE_OF_CONDUCT) of third-party packages. Every other .md stays: dsh
+//   loads some at runtime (agent-preset SKILL.md, skill-badge assets), and
+//   @deepseek-ai / plugin packages keep their README. LICENSE files stay;
+// - top-level test / docs / examples / .github directories of third-party
+//   packages. @deepseek-ai packages are left whole.
+const PROSE_MD = /^(readme|changelog|changes|history|contributing|security|code_of_conduct|governance|maintainers|authors)(\.|$)/i
+// Only at a package's top level (next to its package.json): nested dirs of
+// these names can be runtime modules (yaml ships dist/doc/).
+const JUNK_DIRS = new Set(['test', 'tests', '__tests__', 'docs', 'example', 'examples', '.github'])
+let pruned = 0
+const isDeepseek = (p) => p.split(path.sep).includes('@deepseek-ai')
+// Plugin packages keep their prose too: a plugin's README is user-facing.
+const pluginRoots = new Set([...extraPackages, ...desktopPluginNames].map((n) => path.join(nm, ...n.split('/'))))
+const inPluginPkg = (p) => { for (const root of pluginRoots) if (p === root || p.startsWith(root + path.sep)) return true; return false }
+const countFiles = (p) => {
+  let n = 0
+  for (const entry of fs.readdirSync(p, { withFileTypes: true })) n += entry.isDirectory() ? countFiles(path.join(p, entry.name)) : 1
+  return n
+}
 const walk = (p) => {
   for (const entry of fs.readdirSync(p, { withFileTypes: true })) {
     const full = path.join(p, entry.name)
-    if (entry.isDirectory()) walk(full)
-    else if (entry.name.endsWith('.map') || entry.name.endsWith('.pdb')) fs.rmSync(full)
+    if (entry.isDirectory()) {
+      if (JUNK_DIRS.has(entry.name) && !isDeepseek(full) && fs.existsSync(path.join(p, 'package.json'))) {
+        pruned += countFiles(full)
+        rm(full)
+        continue
+      }
+      walk(full)
+    } else if (
+      entry.name.endsWith('.map') || entry.name.endsWith('.pdb') ||
+      /\.d\.(ts|mts|cts)$/.test(entry.name) ||
+      (entry.name.endsWith('.md') && PROSE_MD.test(entry.name) && !isDeepseek(full) && !inPluginPkg(full))
+    ) {
+      fs.rmSync(full)
+      pruned++
+    }
   }
 }
 walk(nm)
+console.log(`pruned ${pruned} files the runtime never opens`)
 
 // Required pieces. node-pty ships prebuilds for win32/darwin (the packaged
 // targets) only; a linux staging run skips that assertion.
@@ -288,4 +328,4 @@ const du = (p) => {
   }
   return total
 }
-console.log(`staged ${key}: ${(du(dir) / 1024 / 1024).toFixed(0)} MB`)
+console.log(`staged ${key}: ${(du(dir) / 1024 / 1024).toFixed(0)} MB, ${countFiles(dir)} files`)

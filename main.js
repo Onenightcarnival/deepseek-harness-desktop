@@ -7,14 +7,14 @@
  */
 'use strict'
 
-const { app, BrowserWindow, dialog, shell, Menu, ipcMain, session, net: electronNet } = require('electron')
+const { app, BrowserWindow, dialog, shell, Menu, Tray, nativeImage, powerSaveBlocker, ipcMain, session, net: electronNet } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath,
   COMMON_SETTINGS, validateCommonSettings, buildSettingsBlock, groupCommonSettings,
   listSkillStore, skillExists, removeSkill, setSkillEnabled, skillDetail, readSkillFile, SKILL_DISABLED_DIR,
-  applyProxyEnv, PROXY_ENV_KEYS } = require('./runtime.js')
+  applyProxyEnv, PROXY_ENV_KEYS, normalizeGeneralSettings, hideToTrayEffective } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
 
 // The ready line carries a one-time browser-trust token (dsh 0.1.2-rc.1+);
@@ -204,15 +204,14 @@ let serverProc = null
 let mainWindow = null
 let quitting = false
 
-if (!app.requestSingleInstanceLock()) {
+// A second launch hands over to the running instance (which shows its
+// window) and exits. `app.quit()` is asynchronous: `ready` still fires in
+// the losing process, so the startup path checks the lock again.
+const hasInstanceLock = app.requestSingleInstanceLock()
+if (!hasInstanceLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
-    }
-  })
+  app.on('second-instance', () => { showMainWindow() })
 }
 
 /** The runtime shipped inside the installer (or the dev staging dir). */
@@ -638,12 +637,16 @@ function pickerPatchArgs() {
     `      name: '${DESKTOP_PICKER_PLUGIN}'`,
     '    - id: directory-picker-native-ui',
     "      name: '@deepseek-ai/dsh-client-ui-directory-picker-native'",
+    '    - id: desktop-activity',
+    `      name: '${DESKTOP_ACTIVITY_PLUGIN}'`,
     '',
   ].join('\n'))
   return ['--patch', p]
 }
 
 const DESKTOP_PICKER_PLUGIN = 'dsh-desktop-directory-picker'
+const DESKTOP_ACTIVITY_PLUGIN = 'dsh-desktop-activity'
+const ACTIVITY_MESSAGE = 'dsh-desktop:activity'
 const PICK_REQUEST = 'dsh-desktop:pick-directory'
 const PICK_RESULT = 'dsh-desktop:pick-directory-result'
 const PICK_CANCEL = 'dsh-desktop:pick-directory-cancel'
@@ -697,6 +700,7 @@ function pickerStrings() {
 const cancelledPicks = new Set()
 function onServerMessage(proc, message) {
   if (message === null || typeof message !== 'object') return
+  if (message.type === ACTIVITY_MESSAGE) { setServerBusy(message.busy === true); return }
   if (message.type === PICK_CANCEL) { cancelledPicks.add(message.id); return }
   if (message.type !== PICK_REQUEST) return
   const id = message.id
@@ -1476,7 +1480,7 @@ async function startServer() {
     serverProc.on('exit', (code) => {
       // a late exit of an already-replaced process leaves the current one
       // alone and shows no dialog
-      if (serverProc === thisProc) serverProc = null
+      if (serverProc === thisProc) { serverProc = null; setServerBusy(false) }
       if (!settled) {
         settled = true
         clearTimeout(timer)
@@ -1484,6 +1488,7 @@ async function startServer() {
       } else if (!quitting && !restartingServer && serverProc === null) {
         // Server died while the app is open.
         if (mainWindow && !mainWindow.isDestroyed()) {
+          showMainWindow()
           dialog.showMessageBox(mainWindow, {
             type: 'error',
             title: 'DeepSeek Harness',
@@ -1504,7 +1509,8 @@ function createWindow() {
     minHeight: 600,
     title: 'DeepSeek Harness',
     backgroundColor: '#101014',
-    show: true,
+    // 「启动时最小化到托盘」: the window loads hidden and the tray brings it back
+    show: !(generalSettings.startMinimized && hideToTrayEffective(generalSettings, process.platform)),
     icon: process.platform === 'linux' ? path.join(__dirname, 'build', 'icon.png') : undefined,
     webPreferences: {
       contextIsolation: true,
@@ -1530,8 +1536,108 @@ function createWindow() {
     }
   })
 
+  // 「关闭时最小化到托盘」: closing hides the window; the dsh server and its
+  // running work continue. Quit comes from the tray menu, the app menu or
+  // the OS (before-quit sets `quitting`).
+  mainWindow.on('close', (e) => {
+    if (quitting || !hideToTrayEffective(generalSettings, process.platform)) return
+    e.preventDefault()
+    mainWindow.hide()
+  })
   mainWindow.on('closed', () => { mainWindow = null })
 }
+
+// ---- 通用配置: tray, close/start to tray, login item, keep awake ----
+function generalStorePath() { return path.join(app.getPath('userData'), 'general.json') }
+function readGeneralSettings() {
+  try { return normalizeGeneralSettings(JSON.parse(fs.readFileSync(generalStorePath(), 'utf8'))) } catch { return normalizeGeneralSettings({}) }
+}
+let generalSettings = normalizeGeneralSettings({})
+
+/** Show the main window (restoring a hidden or minimized one; recreating a closed one). */
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    if (currentWebUrl) loadWebUi(currentWebUrl)
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+let tray = null
+function trayImage() {
+  const src = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png'))
+  if (src.isEmpty()) return src
+  const img = nativeImage.createEmpty()
+  img.addRepresentation({ scaleFactor: 1, buffer: src.resize({ width: 16, height: 16 }).toPNG() })
+  img.addRepresentation({ scaleFactor: 2, buffer: src.resize({ width: 32, height: 32 }).toPNG() })
+  return img
+}
+function syncTray() {
+  if (generalSettings.trayIcon && tray === null) {
+    tray = new Tray(trayImage())
+    tray.setToolTip('DeepSeek Harness')
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: '打开 DeepSeek Harness', click: () => { showMainWindow() } },
+      { label: '配置中心…', click: () => { openPluginManager() } },
+      { type: 'separator' },
+      { label: '退出', click: () => { app.quit() } },
+    ]))
+    // Windows / Linux: a click on the icon opens the window; macOS opens the menu.
+    tray.on('click', () => { if (process.platform !== 'darwin') showMainWindow() })
+    tray.on('double-click', () => { showMainWindow() })
+  } else if (!generalSettings.trayIcon && tray !== null) {
+    tray.destroy()
+    tray = null
+    // without a tray a hidden window has no way back on Windows / Linux
+    if (process.platform !== 'darwin' && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show()
+  }
+}
+
+function syncLoginItem() {
+  if (!app.isPackaged || (process.platform !== 'win32' && process.platform !== 'darwin')) return
+  try {
+    app.setLoginItemSettings({ openAtLogin: generalSettings.openAtLogin, openAsHidden: generalSettings.startMinimized })
+  } catch (err) { console.error('login item not updated:', String((err && err.message) || err)) }
+}
+
+// 「运行任务时保持系统唤醒」: the dsh-desktop-activity plugin reports the
+// server's work state over IPC; a power-save blocker runs while there is
+// work and the option is on.
+let serverBusy = false
+let awakeBlocker = null
+function setServerBusy(busy) {
+  if (busy !== serverBusy) console.log(`dsh server ${busy ? 'busy' : 'idle'}`)
+  serverBusy = busy
+  syncKeepAwake()
+}
+function syncKeepAwake() {
+  const want = generalSettings.keepAwake && serverBusy
+  if (want && awakeBlocker === null) awakeBlocker = powerSaveBlocker.start('prevent-app-suspension')
+  else if (!want && awakeBlocker !== null) { powerSaveBlocker.stop(awakeBlocker); awakeBlocker = null }
+}
+
+/** Apply the current settings to the running app (startup and every save). */
+function applyGeneralSettings() {
+  syncTray()
+  syncLoginItem()
+  syncKeepAwake()
+}
+
+ipcMain.handle('general:get', async () => ({ settings: generalSettings, platform: process.platform }))
+ipcMain.handle('general:save', async (_event, values) => {
+  const next = normalizeGeneralSettings(values)
+  try {
+    fs.writeFileSync(generalStorePath(), JSON.stringify(next, null, 2))
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) }
+  }
+  generalSettings = next
+  applyGeneralSettings()
+  return { ok: true, settings: generalSettings }
+})
 
 function buildMenu() {
   const isMac = process.platform === 'darwin'
@@ -2138,7 +2244,9 @@ async function bootServerWithHeal() {
  * ("Failed to load plugins"). Cookies of previous instances are dead weight
  * (their tokens died with the server), so they are dropped before loading.
  */
+let currentWebUrl = null
 async function loadWebUi(url) {
+  currentWebUrl = url
   try {
     const jar = session.defaultSession.cookies
     const host = new URL(url).hostname
@@ -2186,11 +2294,14 @@ app.on('login', (event, _webContents, _details, authInfo, callback) => {
 })
 
 app.whenReady().then(async () => {
+  if (!hasInstanceLock) return
   resolveActiveRuntime()
   applyChromiumProxy(readProxyConfig())
   await startForwarder()
+  generalSettings = readGeneralSettings()
   buildMenu()
   createWindow()
+  applyGeneralSettings()
   try {
     const url = await bootServerWithHeal()
     await loadWebUi(url)
@@ -2222,9 +2333,7 @@ app.whenReady().then(async () => {
     app.quit()
   }
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+  app.on('activate', () => { showMainWindow() })
 
   // Update checks run only from the Help menu; nothing contacts GitHub or
   // the npm registry at startup.

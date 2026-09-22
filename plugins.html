@@ -101,6 +101,12 @@
   .toggle input:checked + .knob::after { left: 17px; }
 
   /* ---- MCP master-detail ---- */
+  .g-rows { display: flex; flex-direction: column; }
+  .g-row { display: flex; align-items: center; gap: 16px; padding: 13px 0; border-bottom: 1px solid #26262e; }
+  .g-row:last-child { border-bottom: none; padding-bottom: 2px; }
+  .g-row .g-text { flex: 1; min-width: 0; }
+  .g-row .g-label { color: #e6e6ec; font-size: 13px; }
+  .g-row.off { opacity: .55; }
   #pane-mcp { flex-direction: row; }
   #mcp-side { width: 220px; flex: none; border-right: 1px solid #26262e; display: flex; flex-direction: column; }
   #mcp-side .side-head { padding: 16px 14px 10px; display: flex; align-items: center; justify-content: space-between; }
@@ -144,7 +150,8 @@
     <button data-pane="plugins" class="active"><span class="icon">◫</span>插件</button>
     <button data-pane="mcp"><span class="icon">⇄</span>MCP 服务器</button>
     <button data-pane="skills"><span class="icon">✦</span>技能</button>
-    <button data-pane="settings"><span class="icon">⚙</span>常用设置</button>
+    <button data-pane="settings"><span class="icon">⚙</span>内置插件</button>
+    <button data-pane="general"><span class="icon">☰</span>通用</button>
     <button data-pane="proxy"><span class="icon">⇌</span>代理</button>
   </nav>
 
@@ -262,13 +269,23 @@
     </div>
   </div>
 
-  <!-- ============ 常用设置 ============ -->
+  <!-- ============ 内置插件 ============ -->
   <div class="pane single" id="pane-settings">
-    <h2>常用设置</h2>
-    <p class="sub">内置插件的常用配置项，保存即生效，留空恢复默认值。其他配置项可编辑 ~/.dsh/profiles/web/cordis.patch.yml。</p>
+    <h2>内置插件</h2>
+    <p class="sub">dsh 内置插件的常用配置项，保存即生效，留空恢复默认值。其他配置项可编辑 ~/.dsh/profiles/web/cordis.patch.yml。</p>
     <div class="cs-grid" id="cs-fields">加载中…</div>
     <div class="row" style="margin-top:16px"><span class="spacer"></span><button class="primary" id="cs-save">保存</button></div>
     <div class="msg" id="cs-msg"></div>
+  </div>
+
+  <!-- ============ 通用 ============ -->
+  <div class="pane single" id="pane-general">
+    <h2>通用</h2>
+    <div class="cs-card" style="max-width:720px">
+      <div class="cs-card-title">启动</div>
+      <div class="g-rows" id="g-rows"></div>
+    </div>
+    <div class="msg" id="g-msg"></div>
   </div>
 
   <!-- ============ 代理 ============ -->
@@ -738,7 +755,52 @@
   }
   $('s-open').onclick = () => pluginApi.skillsOpen()
 
-  // ================= 常用设置 =================
+  // ================= 通用 =================
+  // 五个布尔项，切换即保存并由主进程立即应用（托盘 / 登录项 / 休眠阻止）。
+  // needsTray 项在 Windows / Linux 上依赖「显示托盘图标」，托盘关闭时整行变淡。
+  const G_ITEMS = [
+    { key: 'openAtLogin', label: '开机自动启动' },
+    { key: 'startMinimized', label: '启动时最小化到托盘', needsTray: true },
+    { key: 'trayIcon', label: '显示托盘图标' },
+    { key: 'closeToTray', label: '关闭时最小化到托盘', needsTray: true },
+    { key: 'keepAwake', label: '运行任务时保持系统唤醒' },
+  ]
+  let gState = {}
+  let gPlatform = ''
+  function gMsg(text, cls) { const m = $('g-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
+  function renderGeneral() {
+    const box = $('g-rows')
+    box.innerHTML = ''
+    for (const it of G_ITEMS) {
+      const row = document.createElement('div')
+      row.className = 'g-row'
+      if (it.needsTray && !gState.trayIcon && gPlatform !== 'darwin') row.classList.add('off')
+      const text = document.createElement('div')
+      text.className = 'g-text'
+      const label = document.createElement('div'); label.className = 'g-label'; label.textContent = it.label
+      text.append(label)
+      const toggle = document.createElement('label')
+      toggle.className = 'toggle'
+      const input = document.createElement('input')
+      input.type = 'checkbox'
+      input.checked = gState[it.key] === true
+      input.onchange = async () => {
+        const next = { ...gState, [it.key]: input.checked }
+        const res = await pluginApi.generalSave(next)
+        if (!res.ok) { input.checked = !input.checked; gMsg(res.error || '保存失败', 'err'); return }
+        gState = res.settings
+        gMsg('已保存', 'ok')
+        renderGeneral()
+      }
+      const knob = document.createElement('span'); knob.className = 'knob'
+      toggle.append(input, knob)
+      row.append(text, toggle)
+      box.appendChild(row)
+    }
+  }
+  pluginApi.generalGet().then((r) => { gState = r.settings || {}; gPlatform = r.platform || ''; renderGeneral() }).catch((e) => gMsg('加载失败：' + e, 'err'))
+
+  // ================= 内置插件配置 =================
   // 字段清单来自 runtime.js 的 COMMON_SETTINGS 注册表，按 SETTING_GROUPS 分卡片渲染。
   let csOptions = []
   function csMsg(text, cls) { const m = $('cs-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }

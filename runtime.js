@@ -729,3 +729,25 @@ function applyProxyEnv(env, port, config) {
   return env
 }
 module.exports.applyProxyEnv = applyProxyEnv
+
+/**
+ * Shell behaviour settings (config center 通用配置): tray icon, close/start
+ * to tray, login item, keep-awake while the server has running work. All
+ * default to off; unknown keys are dropped, non-boolean values read as off.
+ */
+const GENERAL_KEYS = ['openAtLogin', 'startMinimized', 'trayIcon', 'closeToTray', 'keepAwake']
+function normalizeGeneralSettings(raw) {
+  const out = {}
+  for (const k of GENERAL_KEYS) out[k] = raw && typeof raw === 'object' && raw[k] === true
+  return out
+}
+/**
+ * Whether closing (or starting) hides the window instead of quitting: the
+ * tray icon is the only way back on Windows and Linux; macOS keeps the Dock.
+ */
+function hideToTrayEffective(settings, platform) {
+  return settings.closeToTray && (settings.trayIcon || platform === 'darwin')
+}
+module.exports.GENERAL_KEYS = GENERAL_KEYS
+module.exports.normalizeGeneralSettings = normalizeGeneralSettings
+module.exports.hideToTrayEffective = hideToTrayEffective

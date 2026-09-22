@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('pluginApi', {
   skillsInstallZip: () => ipcRenderer.invoke('skills:installZip'),
   settingsGet: () => ipcRenderer.invoke('settings:get'),
   settingsSave: (values) => ipcRenderer.invoke('settings:save', values),
+  generalGet: () => ipcRenderer.invoke('general:get'),
+  generalSave: (values) => ipcRenderer.invoke('general:save', values),
   proxyGet: () => ipcRenderer.invoke('proxy:get'),
   proxySave: (config) => ipcRenderer.invoke('proxy:save', config),
   proxyTest: (config, url) => ipcRenderer.invoke('proxy:test', config, url),

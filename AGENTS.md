@@ -4,17 +4,19 @@
 
 ## 架构
 
-主进程用 Electron 内置 Node（`ELECTRON_RUN_AS_NODE=1`）spawn `dsh web --patch <覆盖层> --port 0`，从 stdout 解析就绪行 `dsh web: http://127.0.0.1:<port>/?token=…`，在 BrowserWindow 里加载该 URL。关窗即杀服务进程。所有 dsh 数据在 `~/.dsh`，与命令行版共享。
+主进程用 Electron 内置 Node（`ELECTRON_RUN_AS_NODE=1`）spawn `dsh web --patch <覆盖层> --port 0`，从 stdout 解析就绪行 `dsh web: http://127.0.0.1:<port>/?token=…`，在 BrowserWindow 里加载该 URL。默认关窗即杀服务进程；开了「关闭时最小化到托盘」则关窗只隐藏窗口，服务继续，退出走托盘 / 应用菜单。所有 dsh 数据在 `~/.dsh`，与命令行版共享。
 
 ## 文件地图
 
 ```
 main.js             主进程：服务拉起/守护、菜单、更新检查（应用 = GitHub Release，
                     内核 = npm registry + 应用内升级到 userData/runtimes/）、CLI 启动器
-                    （dsh/pnpm/node/npx/uvx/uv 六个 shim）、配置中心 IPC（插件/MCP/技能/设置/代理）
+                    （dsh/pnpm/node/npx/uvx/uv 六个 shim）、配置中心 IPC（插件/MCP/技能/内置插件/通用/代理）、
+                    通用配置的执行（托盘、隐藏到托盘、登录项、powerSaveBlocker）
 runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目录选择（升级版优先 + 损坏回退）、
                     engines 校验、cordis patch 托管区块编辑（upsertManagedBlock/buildMcpBlock）、
-                    常用设置注册表（COMMON_SETTINGS/SETTING_GROUPS）、zip 技能包识别（collectSkills）、
+                    常用设置注册表（COMMON_SETTINGS/SETTING_GROUPS）、通用配置归一化
+                    （normalizeGeneralSettings/hideToTrayEffective）、zip 技能包识别（collectSkills）、
                     SKILL.md frontmatter 解析（parseSkillFrontmatter）、技能详情与围栏读取
                     （skillDetail/readSkillFile）、技能启用/关闭（listSkillStore/setSkillEnabled）、
                     代理环境变量清场与注入（scrubProxyEnv/applyProxyEnv）、例外列表匹配（isBypassed）
@@ -24,17 +26,20 @@ win-spawn-shim.js   经 --require 与 NODE_OPTIONS 预载进整棵 Node 子进�
                     子进程改为继承该控制台。非 Windows 空操作。asar 内文件普通 Node 读不到，
                     启动时拷到 userData 再注入
 plugins/            壳自带的 dsh 插件包：dsh-desktop-directory-picker（工作区目录选择走壳的
-                    系统对话框，见下文）
+                    系统对话框，见下文）；dsh-desktop-activity（每 2 s 读 agents/jobs 服务，忙闲
+                    变化时经 IPC 发 `dsh-desktop:activity`，供「运行任务时保持系统唤醒」）
 proxy-forward.js    进程内转发代理（无 Electron 依赖，resolveSystem 由 main.js 注入）：
                     createForwarder 起 127.0.0.1 随机端口，处理 CONNECT 隧道与明文 HTTP，
                     每条连接经 routeFor 决定直连或上游代理
-plugins.html        配置中心窗口：插件 / MCP 服务器 / 技能 / 常用设置 / 代理五页。
+plugins.html        配置中心窗口：插件 / MCP 服务器 / 技能 / 内置插件 / 通用 / 代理六页。
                     MCP 为主从布局，streamable-http（地址/请求头）或 stdio（命令/参数/环境变量/
                     工作目录），stdio 的「测试」在 main.js testMcpServer 里做 initialize + tools/list
                     握手。技能页：frontmatter 卡片列表 + 详情（字段表、文件树、只读预览）。
-                    常用设置页按 SETTING_GROUPS 分卡片渲染 COMMON_SETTINGS，值存
+                    内置插件页按 SETTING_GROUPS 分卡片渲染 COMMON_SETTINGS，值存
                     userData/common-settings.json，经 buildSettingsBlock 写进用户 patch 层的
-                    'settings' 托管区块。加一个配置项 = 注册表加一行；新插件的第一项再加一行分组
+                    'settings' 托管区块。加一个配置项 = 注册表加一行；新插件的第一项再加一行分组。
+                    通用页五个开关（G_ITEMS），值存 userData/general.json，切换即保存并由主进程
+                    applyGeneralSettings 立即应用
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动页
 stage-dsh.mjs       构建期：npm ci 从 locks/ 安装 dsh + 预置插件到 staging/<platform>-<arch>/dsh，
@@ -88,7 +93,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 
 完整无头启动 dsh 服务（`curl <ready-url>` 返回 303/200）需先给 linux 补 node-pty：`npm pack node-pty@<版本>` 解包后 `npx node-gyp rebuild --nodedir=<本地 node 目录>`，把 `pty.node` 放进 staging 的 `node-pty/prebuilds/linux-x64/`。0.1.2-rc.1 起就绪行带一次性 token：先请求 token URL 换 cookie（303），再用 cookie 取首页；客户端 bundle 只经组合路由下发，取首页 HTML 里 `href="/plugins/??…&rev=<hash>"` 的精确 URL 拉 bundle，断言其中含 `id: "<包名>"`。同一个 token 只能换一次 cookie，换浏览器需重启服务。
 
-`main.js` 里依赖 Electron API 的部分至少跑 `xvfb-run electron <仓库目录> --no-sandbox` 冒烟：dsh 子进程起来、就绪端口可 curl、日志无 Uncaught。配置中心页面可在 Playwright 里用 `addInitScript` 注入假 `window.pluginApi` 后打开 `plugins.html` 截图。
+`main.js` 里依赖 Electron API 的部分至少跑 `xvfb-run electron <仓库目录> --no-sandbox` 冒烟：dsh 子进程起来、就绪端口可 curl、日志无 Uncaught。配置中心页面可在 Playwright 里用 `addInitScript` 注入假 `window.pluginApi` 后打开 `plugins.html` 截图；带 `--remote-debugging-port` 启动后 Playwright `connectOverCDP` 能直接操作真实配置中心页面（不要调用 `browser.close()`，那会关掉 Electron）。窗口关闭行为的验证要发真正的 WM 关闭：用 python-xlib 给窗口发 `WM_DELETE_WINDOW` ClientMessage（Xvfb 没有窗口管理器，`xdotool windowclose` 是 XDestroyWindow，渲染进程里的 `window.close()` 不经过 BrowserWindow 的 close 事件，两者都测不到 preventDefault 路径）。托盘图标本身在 Xvfb 里看不到，只能验证代码路径不抛错。
 
 NSIS 安装器可在 Linux 全流程实跑：`dpkg --add-architecture i386 && apt install wine64 wine32:i386`（安装器是 32 位 exe，缺 wine32 时 wow64 起不来），`WINEARCH=win64 WINEPREFIX=<新目录> wineboot -i`，Xvfb 当显示，`xdotool key Return` 翻页，`import -window root` 截图。electron-builder 打 NSIS 时用 wine 跑一次安装器生成卸载器；无 wine 时可临时把 NsisTarget.js 里 `wineVm.exec` 换成写一个空文件，两遍 makensis（卸载器 / 安装器）照常编译，脚本是 `-WX` 警告即错误。win32-x64 的 staging 只需一个占位 package.json 即可过 afterPack。wine 的 powershell 桩对一切命令返回 0，可复现 FIND_PROCESS 误报；移走 prefix 里的 powershell.exe 切换到 tasklist 分支。
 
@@ -107,6 +112,9 @@ NSIS 安装器可在 Linux 全流程实跑：`dpkg --add-architecture i386 && ap
 - rc8 起 `dsh web` 默认打开系统浏览器，壳必须传 `--no-open`。
 - 0.1.2-rc.1 起就绪行带一次性 token，裸 origin 回 401，`/api` 受浏览器信任围栏保护。READY_RE 捕获整条 URL（含 query）并原样 loadURL；每次启动 token 不同。CLI 形态为 `dsh --profile web`，子命令形态 `dsh web` 仍接受。
 - dsh 每个服务实例下发一个名字随机的 `dsh-auth-<随机>` cookie（30 天过期）。cookie 按 host 不按端口隔离，每次启动都在 `127.0.0.1` 下多留一个且全部随请求发出；约 65 个时 Cookie 头近 16 KB，加上 2.8 KB 的首屏组合 bundle URL 超过 Node 的请求头上限，服务回 431，界面报 "Failed to load plugins … bundle script … failed to load"（短 URL 的请求仍正常，curl 与外部浏览器不复现）。`loadWebUi` 在每次 loadURL 前清掉该 host 下全部 `dsh-auth-*`。排查壳窗口内的请求：`--remote-debugging-port=<端口>` 启动应用后走 CDP。
+- 单实例锁失败后 `app.quit()` 是异步的，`ready` 仍会在落败进程里触发：启动路径不再检查锁时，第二次启动会 spawn 一个随即失去父进程的 dsh 服务（孤儿进程占端口、占内存）。`app.whenReady` 处理函数开头按 `hasInstanceLock` 返回。第二次启动在获胜进程里触发 `second-instance` → `showMainWindow`，是托盘模式下双击图标找回窗口的路径。
+- 隐藏到托盘只在 `BrowserWindow` 的 `close` 事件里 `preventDefault` + `hide()`；`before-quit` 置 `quitting` 后放行。隐藏的窗口仍算存活窗口，`window-all-closed` 不触发；服务意外退出时先 `showMainWindow` 再弹对话框。Windows / Linux 上隐藏窗口只能靠托盘找回（`hideToTrayEffective` 要求托盘开着），macOS 靠 Dock（`activate`）。托盘图标从 asar 内 `build/icon.png` 缩成 16/32 两档表示。
+- 「运行任务时保持系统唤醒」的忙闲信号来自 `plugins/dsh-desktop-activity` 轮询 `ctx.get('agents').list()`（`status === 'running'`、`inbox.nextTurn/nextStep` 非空）与 `ctx.get('jobs').list(agent)`（running / stopping），与上游 desktop-host 更新前排空任务用的判据相同；`agent.status` 由 dsh-agent-loop 的 Agent 提供（0.1.5-rc.2 已有）。壳侧 `powerSaveBlocker.start('prevent-app-suspension')` 只在选项开且忙时持有，服务退出即释放。
 - 升级 Electron 前确认内置 Node 满足 dsh 的 engines（当前 `^22.19 || >=24`）；`runtime.js` 的 `satisfiesNode` 在应用内内核升级前做同样检查，失败自动隔离回退（`.broken-` 目录后缀）。
 - 应用内内核升级只允许同版本线（`releaseLine`：去掉预发布标签的 major.minor.patch）。第三方插件按线适配，跨线组合无法启动；跨线时静默检查不打扰，手动检查引导下载新安装包。
 - 新内核会把 `~/.dsh/.credentials.yaml` 的 version 迁移为数字，旧内核要求字符串，降级方向拒绝启动。applyBootErrorFix 先把数字加引号（留 .bak），再失败则整体隔离（.broken-*）。该自愈只覆盖带此逻辑的版本。

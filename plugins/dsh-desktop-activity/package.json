@@ -1,0 +1,12 @@
+{
+  "name": "dsh-desktop-activity",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reports whether the dsh server has running work (agents, queued turns, jobs) to the DeepSeek Harness Desktop shell over the Node IPC channel.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  }
+}

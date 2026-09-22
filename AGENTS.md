@@ -1,18 +1,20 @@
 # AGENTS.md
 
-本仓库是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的非官方桌面打包：一个 Electron 壳，把 npm 发布版 `@deepseek-ai/dsh` 打成 Windows exe 与 macOS dmg。仓库不含上游源码，运行时由 `stage-dsh.mjs` 在构建期从 npm 拉取。上游行为在上游仓库改；这里只改壳、打包与分发。
+本仓库是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的非官方桌面打包：Electron 壳 + npm 发布版 `@deepseek-ai/dsh`，产出 Windows exe 与 macOS dmg。仓库不含上游源码，`stage-dsh.mjs` 在构建期从 npm 拉取运行时。上游行为在上游仓库改，这里只改壳、打包与分发。
 
 ## 架构
 
-主进程用 Electron 内置 Node（`ELECTRON_RUN_AS_NODE=1`）spawn `dsh web --patch <覆盖层> --port 0`，从 stdout 解析就绪行 `dsh web: http://127.0.0.1:<port>/?token=…`，在 BrowserWindow 里加载该 URL。默认关窗即杀服务进程；开了「关闭时最小化到托盘」则关窗只隐藏窗口，服务继续，退出走托盘 / 应用菜单。所有 dsh 数据在 `~/.dsh`，与命令行版共享。
+- 主进程用 Electron 内置 Node（`ELECTRON_RUN_AS_NODE=1`）spawn `dsh web --patch <覆盖层> --port 0`，从 stdout 解析就绪行 `dsh web: http://127.0.0.1:<port>/?token=…`，在 BrowserWindow 里加载该 URL。
+- 关窗即杀服务进程。开启「关闭时最小化到托盘」后关窗只隐藏窗口，服务继续，退出走托盘或应用菜单。
+- 全部 dsh 数据在 `~/.dsh`，与命令行版共享。
 
 ## 文件地图
 
 ```
 main.js             主进程：服务拉起/守护、菜单、更新检查（应用 = GitHub Release，
                     内核 = npm registry + 应用内升级到 userData/runtimes/）、CLI 启动器
-                    （dsh/pnpm/node/npx/uvx/uv 六个 shim）、配置中心 IPC（插件/MCP/技能/内置插件/通用/代理）、
-                    通用配置的执行（托盘、隐藏到托盘、登录项、powerSaveBlocker）
+                    （dsh/pnpm/node/npx/uvx/uv 六个 shim）、配置中心 IPC（插件/MCP/技能/
+                    内置插件/通用/代理）、通用配置的执行（托盘、隐藏到托盘、登录项、powerSaveBlocker）
 runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目录选择（升级版优先 + 损坏回退）、
                     engines 校验、cordis patch 托管区块编辑（upsertManagedBlock/buildMcpBlock）、
                     常用设置注册表（COMMON_SETTINGS/SETTING_GROUPS）、通用配置归一化
@@ -26,8 +28,8 @@ win-spawn-shim.js   经 --require 与 NODE_OPTIONS 预载进整棵 Node 子进�
                     子进程改为继承该控制台。非 Windows 空操作。asar 内文件普通 Node 读不到，
                     启动时拷到 userData 再注入
 plugins/            壳自带的 dsh 插件包：dsh-desktop-directory-picker（工作区目录选择走壳的
-                    系统对话框，见下文）；dsh-desktop-activity（每 2 s 读 agents/jobs 服务，忙闲
-                    变化时经 IPC 发 `dsh-desktop:activity`，供「运行任务时保持系统唤醒」）
+                    系统对话框）；dsh-desktop-activity（每 2 s 读 agents/jobs 服务，忙闲变化时
+                    经 IPC 发 `dsh-desktop:activity`，供「运行任务时保持系统唤醒」）
 proxy-forward.js    进程内转发代理（无 Electron 依赖，resolveSystem 由 main.js 注入）：
                     createForwarder 起 127.0.0.1 随机端口，处理 CONNECT 隧道与明文 HTTP，
                     每条连接经 routeFor 决定直连或上游代理
@@ -43,8 +45,9 @@ plugins.html        配置中心窗口：插件 / MCP 服务器 / 技能 / 内�
 preload-plugins.js  配置中心的 contextBridge
 splash.html         启动页
 stage-dsh.mjs       构建期：npm ci 从 locks/ 安装 dsh + 预置插件到 staging/<platform>-<arch>/dsh，
-                    裁剪运行时不读的文件（见下文"安装耗时"），安装 pnpm（11 线）到 dsh/tools/，从 GitHub 拉钉版 uv（sha256 校验）到
-                    dsh/tools/uv/，把预置插件注册进 dsh 应用依赖清单，写 preset-plugins.json
+                    裁剪运行时不读的文件，安装 pnpm（11 线）到 dsh/tools/，从 GitHub 拉钉版 uv
+                    （sha256 校验）到 dsh/tools/uv/，把预置插件注册进 dsh 应用依赖清单，
+                    写 preset-plugins.json
 afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh
 desktop-patch.yml   随包分发的插件组合覆盖层（默认空）
 patches/            stage 期打在预置插件上的补丁。当前一个：ssh-terminal-keepalive
@@ -62,19 +65,22 @@ build/              图标 + installer.nsh（NSIS customCheckAppRunning 覆盖�
 
 ## 代理链路
 
-决策点只有 `proxy-forward.js` 的进程内转发代理。主进程在 `app.whenReady` 里（早于任何 spawn）起一个 127.0.0.1 随机端口的转发器，所有子进程拿到同一组环境：`HTTP(S)_PROXY=http://127.0.0.1:<port>`、`NO_PROXY=127.0.0.1,localhost,::1`、`npm_config_proxy`（压过 `~/.npmrc` 的 proxy=）、`NODE_USE_ENV_PROXY=1`。注入前按 `PROXY_ENV_KEYS` 大小写不敏感地清掉继承的代理变量。三种模式在转发器内部按连接决策（`routeFor`）：none 一律直连；manual 命中例外列表直连、否则 CONNECT 上游并注入 `Proxy-Authorization`；system 用 Chromium 的 `session.resolveProxy(目标URL)` 逐个 URL 询问操作系统（含 PAC 与例外列表）。
+决策点只有一个：`proxy-forward.js` 的进程内转发代理。
 
-性质：配置修改立即对运行中的子进程生效（`proxy:save` 仍重启 dsh 服务以刷新 TLS 相关变量）；密码不进子进程环境；例外列表只有 `isBypassed` 一套语义。
-
-CLI shim 是持久化文件，转发器端口不是：`userData/bin/` 的 shim 里写入的 `HTTP_PROXY` 只在应用运行期间有效。应用退出时 `will-quit` 把 shim 重写为只清场不注入（直连），下次启动写回新端口；崩溃退出留下的死端口在下次启动时自愈。
-
-配置存 `userData/proxy.json`（旧 `{enabled,url}` 形态自动迁移），密码仅在勾选「记住」时落盘。
-
-壳窗口自身流量不走转发器：Chromium 由 `applyChromiumProxy` 按同一份配置 `setProxy`（system 模式用 Chromium 原生 `mode: 'system'`），代理认证由 `app.on('login')` 补全。主进程自己发的 HTTP（更新检查、MCP 的 http 探测）用 `electronNet.fetch` 走 Chromium；普通 `fetch` 不跟随配置，不用。
+- 主进程在 `app.whenReady` 里、早于任何 spawn，起一个 127.0.0.1 随机端口的转发器。
+- 所有子进程拿到同一组环境：`HTTP(S)_PROXY=http://127.0.0.1:<port>`、`NO_PROXY=127.0.0.1,localhost,::1`、`npm_config_proxy`（压过 `~/.npmrc` 的 `proxy=`）、`NODE_USE_ENV_PROXY=1`。注入前按 `PROXY_ENV_KEYS` 大小写不敏感清掉继承的代理变量。
+- 三种模式在转发器内按连接决策（`routeFor`）：
+  - none：一律直连。
+  - manual：命中例外列表直连，否则 CONNECT 上游并注入 `Proxy-Authorization`。
+  - system：Chromium `session.resolveProxy(目标URL)` 逐 URL 询问操作系统，含 PAC 与例外列表。
+- 配置修改立即对运行中的子进程生效；`proxy:save` 仍重启 dsh 服务以刷新 TLS 相关变量。密码不进子进程环境。例外列表只有 `isBypassed` 一套语义。
+- 配置存 `userData/proxy.json`（旧 `{enabled,url}` 形态自动迁移），密码仅在勾选「记住」时落盘。
+- CLI shim 是持久化文件，转发器端口不是：shim 里的 `HTTP_PROXY` 只在应用运行期间有效。`will-quit` 把 shim 重写为只清场不注入，下次启动写回新端口；崩溃留下的死端口下次启动自愈。
+- 壳窗口自身流量不走转发器：`applyChromiumProxy` 按同一份配置 `setProxy`（system 模式用 Chromium 原生 `mode: 'system'`），代理认证由 `app.on('login')` 补全。主进程自己发的 HTTP（更新检查、MCP 的 http 探测）用 `electronNet.fetch`；普通 `fetch` 不跟随配置，不用。
 
 ## 验证手段
 
-无头 Linux 环境可以验证绝大部分改动。做不到的两样：真实 win/mac 安装包（`release.yml`：workflow_dispatch 只出产物，推 `v*` 标签才发 Release）与肉眼看 GUI。
+无头 Linux 能验证绝大部分改动。做不到的两样：真实 win/mac 安装包（`release.yml`：workflow_dispatch 只出产物，推 `v*` 标签才发 Release）与肉眼看 GUI。
 
 按成本从低到高：
 
@@ -89,83 +95,125 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
   web --patch desktop-patch.yml --dump-config         # patch 覆盖层并入组合树
 ```
 
-代理链路整条可在无头环境实跑：`runtime.js` 的纯函数直接断言；`proxy-forward.js` 注入假的 `resolveSystem` 后端到端测——起一个 origin server、一个记录请求的上游代理桩、一个 TLS origin，断言外网目标进桩、loopback 与内网名字不进桩、CONNECT 隧道能跑 TLS、上游不可达时回 502。
+**代理链路**：`runtime.js` 的纯函数直接断言；`proxy-forward.js` 注入假 `resolveSystem` 端到端测：起一个 origin server、一个记录请求的上游代理桩、一个 TLS origin，断言外网目标进桩、loopback 与内网名字不进桩、CONNECT 隧道能跑 TLS、上游不可达时回 502。
 
-完整无头启动 dsh 服务（`curl <ready-url>` 返回 303/200）需先给 linux 补 node-pty：`npm pack node-pty@<版本>` 解包后 `npx node-gyp rebuild --nodedir=<本地 node 目录>`，把 `pty.node` 放进 staging 的 `node-pty/prebuilds/linux-x64/`。0.1.2-rc.1 起就绪行带一次性 token：先请求 token URL 换 cookie（303），再用 cookie 取首页；客户端 bundle 只经组合路由下发，取首页 HTML 里 `href="/plugins/??…&rev=<hash>"` 的精确 URL 拉 bundle，断言其中含 `id: "<包名>"`。同一个 token 只能换一次 cookie，换浏览器需重启服务。
+**无头启动 dsh 服务**（`curl <ready-url>` 返回 303/200）：
 
-`main.js` 里依赖 Electron API 的部分至少跑 `xvfb-run electron <仓库目录> --no-sandbox` 冒烟：dsh 子进程起来、就绪端口可 curl、日志无 Uncaught。配置中心页面可在 Playwright 里用 `addInitScript` 注入假 `window.pluginApi` 后打开 `plugins.html` 截图；带 `--remote-debugging-port` 启动后 Playwright `connectOverCDP` 能直接操作真实配置中心页面（不要调用 `browser.close()`，那会关掉 Electron）。窗口关闭行为的验证要发真正的 WM 关闭：用 python-xlib 给窗口发 `WM_DELETE_WINDOW` ClientMessage（Xvfb 没有窗口管理器，`xdotool windowclose` 是 XDestroyWindow，渲染进程里的 `window.close()` 不经过 BrowserWindow 的 close 事件，两者都测不到 preventDefault 路径）。托盘图标本身在 Xvfb 里看不到，只能验证代码路径不抛错。
+- linux 先补 node-pty：`npm pack node-pty@<版本>` 解包后 `npx node-gyp rebuild --nodedir=<本地 node 目录>`，把 `pty.node` 放进 staging 的 `node-pty/prebuilds/linux-x64/`。
+- 就绪行带一次性 token：先请求 token URL 换 cookie（303），再用 cookie 取首页。同一 token 只能换一次 cookie，换浏览器需重启服务。
+- 预置插件挂载探针：客户端 bundle 只经组合路由下发。取首页 HTML 里 `href="/plugins/??…&rev=<hash>"` 的精确 URL 拉 bundle，断言其中含 `id: "<包名>"`。单包 `/plugins/<包名>/client.js` 与自拼组合均 404。
 
-NSIS 安装器可在 Linux 全流程实跑：`dpkg --add-architecture i386 && apt install wine64 wine32:i386`（安装器是 32 位 exe，缺 wine32 时 wow64 起不来），`WINEARCH=win64 WINEPREFIX=<新目录> wineboot -i`，Xvfb 当显示，`xdotool key Return` 翻页，`import -window root` 截图。electron-builder 打 NSIS 时用 wine 跑一次安装器生成卸载器；无 wine 时可临时把 NsisTarget.js 里 `wineVm.exec` 换成写一个空文件，两遍 makensis（卸载器 / 安装器）照常编译，脚本是 `-WX` 警告即错误。win32-x64 的 staging 只需一个占位 package.json 即可过 afterPack。wine 的 powershell 桩对一切命令返回 0，可复现 FIND_PROCESS 误报；移走 prefix 里的 powershell.exe 切换到 tasklist 分支。
+**Electron 部分**：
+
+- 冒烟：`xvfb-run electron <仓库目录> --no-sandbox`，看 dsh 子进程起来、就绪端口可 curl、日志无 Uncaught。
+- 配置中心页面：Playwright `addInitScript` 注入假 `window.pluginApi` 后打开 `plugins.html` 截图；或 `--remote-debugging-port` 启动后 `connectOverCDP` 操作真实页面（不要 `browser.close()`，会关掉 Electron）。
+- 窗口关闭行为：用 python-xlib 给窗口发 `WM_DELETE_WINDOW` ClientMessage。`xdotool windowclose` 是 XDestroyWindow，渲染进程的 `window.close()` 不经过 BrowserWindow 的 close 事件，两者都测不到 preventDefault 路径。
+- 托盘图标在 Xvfb 里看不到，只能验证代码路径不抛错。
+
+**NSIS 安装器**（Linux 全流程）：
+
+- 环境：`dpkg --add-architecture i386 && apt install wine64 wine32:i386`（安装器是 32 位 exe），`WINEARCH=win64 WINEPREFIX=<新目录> wineboot -i`，Xvfb 当显示，`xdotool key Return` 翻页，`import -window root` 截图。
+- 无 wine 打包：electron-builder 用 wine 跑一次安装器生成卸载器；把 NsisTarget.js 里 `wineVm.exec` 临时换成写空文件，两遍 makensis 照常编译。脚本是 `-WX`，警告即错误。
+- win32-x64 的 staging 只需一个占位 package.json 即可过 afterPack。
+- FIND_PROCESS 误报复现：wine 的 powershell 桩对一切命令返回 0；移走 prefix 里的 powershell.exe 切到 tasklist 分支。
 
 ## 约束与已知行为
 
-改动前通读。每条只记录事实与结论。
+改动前通读。每条一个结论，后接触发条件。
 
 ### 启动与运行时
 
-- Electron-as-node 跑 dsh 必须加 `--expose-internals`：cordis 加载器依赖 Node internals 做模块解析，缺失时 HMR 相关加载随机失败。
-- 应用内更新（Windows）：electron-updater 的 GitHub provider 对着 `updateRepo` 的 Release。`build.publish` 配成 github 后 electron-builder 即使 `--publish never` 也会在 dist 写更新信息文件；发布流程把 `*.yml`（排除 builder-debug.yml）一并上传。`nsis.differentialPackage: false` 关闭差分（不产出 `.exe.blockmap`，更新整包下载）：差分靠对 GitHub 的 Range 请求，经镜像不稳定，Cherry Studio 同样关闭。两种 flavor 分频道：minimal 走默认 `latest.yml`，full 用 `-c.publish.channel=full` 写 `full.yml`，并以 `-c.extraMetadata.flavor=full` 把 flavor 记进包内 package.json，运行时据此设 `autoUpdater.channel`（设 channel 会把 allowDowngrade 置 true，之后要显式关掉）。安装包未签名：electron-updater 未配 `publisherName` 时跳过签名校验。`quitAndInstall(true, true)` 以 `/S --updated --force-run` 运行新安装包，走 installer.nsh 的 isUpdated 路径（不弹"正在运行"确认）。macOS 未签名，Squirrel.Mac 拒绝，保持下载页流程。
-- 工作区目录选择器（全平台）：`pickerPatchArgs` 停用 directory-picker-auto，挂 `plugins/dsh-desktop-directory-picker`（host，`native` 能力）+ dsh 自带的 `@deepseek-ai/dsh-client-ui-directory-picker-native`（client-ui）。dsh 服务以 `stdio[3]='ipc'` 启动，插件把 pick 请求经 `process.send` 发给壳，壳用 `dialog.showOpenDialog` 在主窗口上开系统目录对话框（Windows 即资源管理器弹窗）后回传路径；取消回 null；调用方 abort 时插件发 cancel，壳丢弃结果。不用 dsh 自带的 native 后端：Windows 上它用 koffi 子进程重新 spawn `process.execPath` 开 Win32 对话框，打包后的 Electron 环境起不来；Linux 依赖 zenity/kdialog。dsh 的交互插件是 host + client-ui 成对的，patch 只挂一半时界面不出现。
-- `plugins/<name>` 是壳自带的 dsh 插件包（纯 JS，不打包）：stage 把它们拷进运行时 node_modules 并登记进 dsh 应用清单（与预置同一解析路径）；打包后放 extraResources 的 `plugins/`，`ensureDesktopPlugins` 在每次启动前和内核升级后把当前拷贝写进活动运行时，不进 profile、不进 preset-plugins.json。
-- `--patch` 启动参数层在用户 profile 配置层之后应用，desktop-patch.yml 里的条目用户无法覆盖。
-- dsh launcher 只解析 argv 开头属于自己的旗标（`--profile`/`--patch`），遇到第一个陌生 token 就把剩余交给应用层。`--no-open`/`--port` 等应用旗标必须放在全部 patch 参数之后。
-- rc8 起 `dsh web` 默认打开系统浏览器，壳必须传 `--no-open`。
-- 0.1.2-rc.1 起就绪行带一次性 token，裸 origin 回 401，`/api` 受浏览器信任围栏保护。READY_RE 捕获整条 URL（含 query）并原样 loadURL；每次启动 token 不同。CLI 形态为 `dsh --profile web`，子命令形态 `dsh web` 仍接受。
-- dsh 每个服务实例下发一个名字随机的 `dsh-auth-<随机>` cookie（30 天过期）。cookie 按 host 不按端口隔离，每次启动都在 `127.0.0.1` 下多留一个且全部随请求发出；约 65 个时 Cookie 头近 16 KB，加上 2.8 KB 的首屏组合 bundle URL 超过 Node 的请求头上限，服务回 431，界面报 "Failed to load plugins … bundle script … failed to load"（短 URL 的请求仍正常，curl 与外部浏览器不复现）。`loadWebUi` 在每次 loadURL 前清掉该 host 下全部 `dsh-auth-*`。排查壳窗口内的请求：`--remote-debugging-port=<端口>` 启动应用后走 CDP。
-- 单实例锁失败后 `app.quit()` 是异步的，`ready` 仍会在落败进程里触发：启动路径不再检查锁时，第二次启动会 spawn 一个随即失去父进程的 dsh 服务（孤儿进程占端口、占内存）。`app.whenReady` 处理函数开头按 `hasInstanceLock` 返回。第二次启动在获胜进程里触发 `second-instance` → `showMainWindow`，是托盘模式下双击图标找回窗口的路径。
-- 隐藏到托盘只在 `BrowserWindow` 的 `close` 事件里 `preventDefault` + `hide()`；`before-quit` 置 `quitting` 后放行。隐藏的窗口仍算存活窗口，`window-all-closed` 不触发；服务意外退出时先 `showMainWindow` 再弹对话框。Windows / Linux 上隐藏窗口只能靠托盘找回（`hideToTrayEffective` 要求托盘开着），macOS 靠 Dock（`activate`）。托盘图标从 asar 内 `build/icon.png` 缩成 16/32 两档表示。
-- 「运行任务时保持系统唤醒」的忙闲信号来自 `plugins/dsh-desktop-activity` 轮询 `ctx.get('agents').list()`（`status === 'running'`、`inbox.nextTurn/nextStep` 非空）与 `ctx.get('jobs').list(agent)`（running / stopping），与上游 desktop-host 更新前排空任务用的判据相同；`agent.status` 由 dsh-agent-loop 的 Agent 提供（0.1.5-rc.2 已有）。壳侧 `powerSaveBlocker.start('prevent-app-suspension')` 只在选项开且忙时持有，服务退出即释放。
-- 升级 Electron 前确认内置 Node 满足 dsh 的 engines（当前 `^22.19 || >=24`）；`runtime.js` 的 `satisfiesNode` 在应用内内核升级前做同样检查，失败自动隔离回退（`.broken-` 目录后缀）。
-- 应用内内核升级只允许同版本线（`releaseLine`：去掉预发布标签的 major.minor.patch）。第三方插件按线适配，跨线组合无法启动；跨线时静默检查不打扰，手动检查引导下载新安装包。
-- 新内核会把 `~/.dsh/.credentials.yaml` 的 version 迁移为数字，旧内核要求字符串，降级方向拒绝启动。applyBootErrorFix 先把数字加引号（留 .bak），再失败则整体隔离（.broken-*）。该自愈只覆盖带此逻辑的版本。
+- **Electron-as-node 跑 dsh 必须加 `--expose-internals`**。cordis 加载器依赖 Node internals 做模块解析，缺失时 HMR 相关加载随机失败。
+- **应用内更新（Windows）走 electron-updater 的 GitHub provider**，对着 `updateRepo` 的 Release。
+  - `build.publish` 配成 github 后，`--publish never` 也会在 dist 写更新信息文件；发布流程把 `*.yml`（排除 builder-debug.yml）一并上传。
+  - `nsis.differentialPackage: false`：不产出 `.exe.blockmap`，更新整包下载。差分靠对 GitHub 的 Range 请求，经镜像不稳定。
+  - 两种 flavor 分频道：minimal 走默认 `latest.yml`；full 用 `-c.publish.channel=full` 写 `full.yml`，并以 `-c.extraMetadata.flavor=full` 把 flavor 记进包内 package.json，运行时据此设 `autoUpdater.channel`。设 channel 会把 allowDowngrade 置 true，之后显式关掉。
+  - 安装包未签名：electron-updater 未配 `publisherName` 时跳过签名校验。
+  - `quitAndInstall(true, true)` 以 `/S --updated --force-run` 运行新安装包，走 installer.nsh 的 isUpdated 路径（不弹「正在运行」确认）。
+  - macOS 未签名，Squirrel.Mac 拒绝，保持下载页流程。
+- **工作区目录选择器走壳的系统对话框**（全平台）。`pickerPatchArgs` 停用 directory-picker-auto，挂 `plugins/dsh-desktop-directory-picker`（host，`native` 能力）+ dsh 自带的 `@deepseek-ai/dsh-client-ui-directory-picker-native`（client-ui）。dsh 服务以 `stdio[3]='ipc'` 启动，插件把 pick 请求经 `process.send` 发给壳，壳用 `dialog.showOpenDialog` 在主窗口上开对话框后回传路径；取消回 null；调用方 abort 时插件发 cancel，壳丢弃结果。
+  - dsh 自带的 native 后端不用：Windows 上它用 koffi 子进程重新 spawn `process.execPath` 开 Win32 对话框，打包后的 Electron 环境起不来；Linux 依赖 zenity/kdialog。
+  - dsh 的交互插件是 host + client-ui 成对的，patch 只挂一半时界面不出现。
+- **`plugins/<name>` 是壳自带的 dsh 插件包**（纯 JS，不打包）。stage 把它们拷进运行时 node_modules 并登记进 dsh 应用清单（与预置同一解析路径）；打包后放 extraResources 的 `plugins/`，`ensureDesktopPlugins` 在每次启动前和内核升级后把当前拷贝写进活动运行时。不进 profile，不进 preset-plugins.json。
+- **`--patch` 层在用户 profile 配置层之后应用**，desktop-patch.yml 里的条目用户无法覆盖。
+- **dsh launcher 只解析 argv 开头属于自己的旗标**（`--profile`/`--patch`），遇到第一个陌生 token 就把剩余交给应用层。`--no-open`/`--port` 等应用旗标必须放在全部 patch 参数之后。
+- **壳必须传 `--no-open`**：rc8 起 `dsh web` 默认打开系统浏览器。
+- **就绪行带一次性 token**（0.1.2-rc.1 起）：裸 origin 回 401，`/api` 受浏览器信任围栏保护。READY_RE 捕获整条 URL（含 query）并原样 loadURL；每次启动 token 不同。CLI 形态为 `dsh --profile web`，子命令形态 `dsh web` 仍接受。
+- **每次 loadURL 前清掉 `127.0.0.1` 下全部 `dsh-auth-*` cookie**（`loadWebUi`）。dsh 每个服务实例下发一个名字随机的 `dsh-auth-<随机>` cookie（30 天过期），cookie 按 host 不按端口隔离，每次启动多留一个且全部随请求发出；约 65 个时 Cookie 头近 16 KB，加上 2.8 KB 的首屏组合 bundle URL 超过 Node 的请求头上限，服务回 431，界面报 "Failed to load plugins … bundle script … failed to load"。短 URL 的请求正常，curl 与外部浏览器不复现。排查壳窗口内的请求：`--remote-debugging-port=<端口>` 启动后走 CDP。
+- **`app.whenReady` 处理函数开头按 `hasInstanceLock` 返回**。单实例锁失败后 `app.quit()` 是异步的，`ready` 仍在落败进程里触发，不检查锁会 spawn 一个随即失去父进程的 dsh 服务（孤儿占端口、占内存）。第二次启动在获胜进程里触发 `second-instance` → `showMainWindow`，即托盘模式下双击图标找回窗口的路径。
+- **隐藏到托盘只在 `BrowserWindow` 的 `close` 事件里 `preventDefault` + `hide()`**；`before-quit` 置 `quitting` 后放行。
+  - 隐藏的窗口仍算存活窗口，`window-all-closed` 不触发；服务意外退出时先 `showMainWindow` 再弹对话框。
+  - Windows / Linux 上隐藏窗口只能靠托盘找回（`hideToTrayEffective` 要求托盘开着），macOS 靠 Dock（`activate`）。
+  - 托盘图标从 asar 内 `build/icon.png` 缩成 16/32 两档。
+- **「运行任务时保持系统唤醒」的忙闲信号来自 `plugins/dsh-desktop-activity`**：轮询 `ctx.get('agents').list()`（`status === 'running'`、`inbox.nextTurn/nextStep` 非空）与 `ctx.get('jobs').list(agent)`（running / stopping），与上游 desktop-host 更新前排空任务的判据相同；`agent.status` 由 dsh-agent-loop 的 Agent 提供（0.1.5-rc.2 起）。壳侧 `powerSaveBlocker.start('prevent-app-suspension')` 只在选项开且忙时持有，服务退出即释放。
+- **升级 Electron 前确认内置 Node 满足 dsh 的 engines**（当前 `^22.19 || >=24`）。`runtime.js` 的 `satisfiesNode` 在应用内内核升级前做同样检查，失败自动隔离回退（`.broken-` 目录后缀）。
+- **应用内内核升级只允许同版本线**（`releaseLine`：去掉预发布标签的 major.minor.patch）。第三方插件按线适配，跨线组合无法启动。跨线时静默检查不打扰，手动检查引导下载新安装包。
+- **内核降级方向拒绝启动**：新内核把 `~/.dsh/.credentials.yaml` 的 version 迁移为数字，旧内核要求字符串。applyBootErrorFix 先把数字加引号（留 .bak），再失败则整体隔离（.broken-*）。该自愈只覆盖带此逻辑的版本。
 
 ### 预置插件
 
-- 注册进内置 dsh 依赖只解决可解析；激活以 profile 清单为准，必须出现在 `~/.dsh/profiles/web/package.json` 的 dependencies 与 `dsh.profile.bundles` 里。激活由 `syncPresetPlugins` 每次启动声明式同步：profile 的预置部分刷成与运行时 preset-plugins.json 一致，版本也是声明的一部分，旧版本残留拷贝一并清退。userData/managed-presets.json 只记录当前托管名单，不碰用户自装插件。预置在配置中心移除后下次启动恢复；退出预置用 minimal 版。不可解析的名字自动跳过。应用内升级的运行时同样带预置包并重新注册（installCoreRuntime）。
-- profile 自己 node_modules 里的残缺包会遮蔽闭包软链并阻断启动。判断包是否完好分场景：作为加载器条目需要 JS 入口存在（pkgUsableAt）；作为 bundle/依赖只需清单与声明产物齐全（pkgIntactAt，元 bundle 包没有 main 属正常）。syncPresetPlugins 每次启动对预置包做残缺清理。
-- 加载器持久化的条目引用已消失的包会阻断启动。healUnresolvableEntries 给解析不到的条目放一个无操作占位包（带 `.dsh-desktop-stub` 标记），真包可用时占位退位，真实重装直接覆盖。主动扫描不完备，另有反应式兜底 applyBootErrorFix：启动失败时按报错文本识别 Cannot find package / cannot resolve profile bundle，做占位/软链/撤 bundle 后重试（最多 6 次）。
-- 配置文件损坏时的自愈：第三方写入器可能把块条目追加在 flow 空列表 `[]` 之后，dsh 报 "failed to parse overlay" 或 "must be a top-level YAML array"（空文件解析为 null 同样命中；主目录层 `~/.dsh/cordis.patch.yml` 也在检查范围）。先剔除孤立 `[]` 行保住用户条目（留 .bak），修不好再整文件隔离（.broken-*）；隔离的是 MCP 托管区块所在文件时，从 userData 的 mcp-servers.json 重建。
-- 互斥型插件族（皮肤）只能 carry 不能 seed：全部播种会同时注入多套皮肤，且 insert id 与用户旧装条目冲突。seed 清单已不含的名字每次启动撤活。
-- 预置 bundle 的 insert id 与用户旧配置条目重复时报 duplicate loader entry id：撤我方 bundle 并写入 preset-exclusions.json，仅对当前应用版本生效，下一个版本自动重试。菜单「插件 → 重新同步预置插件…」清排除记录立即重试。
-- 补丁打在应用闭包的拷贝上；profile 里同版本的真实拷贝（用户手动 pnpm 装过同版本）会遮蔽它。
-- 验证预置插件在真机挂载：见上文组合路由探针；单包 `/plugins/<包名>/client.js` 与自拼组合均 404。
+- **注册进内置 dsh 依赖只解决可解析，激活以 profile 清单为准**：必须出现在 `~/.dsh/profiles/web/package.json` 的 dependencies 与 `dsh.profile.bundles` 里。
+  - `syncPresetPlugins` 每次启动声明式同步：profile 的预置部分刷成与运行时 preset-plugins.json 一致，版本也是声明的一部分，旧版本残留拷贝一并清退。
+  - userData/managed-presets.json 只记录当前托管名单，不碰用户自装插件。
+  - 预置在配置中心移除后下次启动恢复；退出预置用 minimal 版。不可解析的名字自动跳过。
+  - 应用内升级的运行时同样带预置包并重新注册（installCoreRuntime）。
+- **profile 自己 node_modules 里的残缺包会遮蔽闭包软链并阻断启动**。包是否完好分场景：作为加载器条目需要 JS 入口存在（pkgUsableAt）；作为 bundle/依赖只需清单与声明产物齐全（pkgIntactAt，元 bundle 包没有 main 属正常）。syncPresetPlugins 每次启动对预置包做残缺清理。
+- **加载器持久化的条目引用已消失的包会阻断启动**。healUnresolvableEntries 给解析不到的条目放一个无操作占位包（带 `.dsh-desktop-stub` 标记），真包可用时占位退位，真实重装直接覆盖。主动扫描不完备，反应式兜底 applyBootErrorFix：启动失败时按报错文本识别 Cannot find package / cannot resolve profile bundle，做占位/软链/撤 bundle 后重试（最多 6 次）。
+- **配置文件损坏的自愈**：第三方写入器可能把块条目追加在 flow 空列表 `[]` 之后，dsh 报 "failed to parse overlay" 或 "must be a top-level YAML array"（空文件解析为 null 同样命中；主目录层 `~/.dsh/cordis.patch.yml` 也在检查范围）。先剔除孤立 `[]` 行保住用户条目（留 .bak），修不好再整文件隔离（.broken-*）；隔离的是 MCP 托管区块所在文件时，从 userData 的 mcp-servers.json 重建。
+- **互斥型插件族（皮肤）只能 carry 不能 seed**：全部播种会同时注入多套皮肤，且 insert id 与用户旧装条目冲突。seed 清单已不含的名字每次启动撤活。
+- **duplicate loader entry id**：预置 bundle 的 insert id 与用户旧配置条目重复时撤我方 bundle 并写入 preset-exclusions.json，仅对当前应用版本生效，下一个版本自动重试。菜单「插件 → 重新同步预置插件…」清排除记录立即重试。
+- **补丁打在应用闭包的拷贝上**；profile 里同版本的真实拷贝（用户手动 pnpm 装过同版本）会遮蔽它。
 
 ### 依赖与锁
 
-- staging 用 `npm ci --force` 从 `locks/<flavor>.package-lock.json` 安装，不做实时 npm 解析：dsh 的依赖图会让 arborist 的 peer 回溯指数爆炸（mac runner 2GB 堆 OOM，linux 10 分钟不出结果）。`--force` 跳过 npm ci 的 peer 复验；锁本身是决策记录，兼容性由 staging 冒烟验证。锁根依赖与插件清单不一致时 stage 报错。
-- 升级 dsh 用 `update-locks.mjs`：把上一份 full 锁按 lockstep 平移到目标版本（重刷 resolved/integrity、递归补齐新引用的包、放宽 npm ci 不过的 peer 区间、报告形状漂移）。插件增删换同样走它：移除的子树按解析语义剪枝；新增包按引用方 semver 区间取版本；可选 peer 不递归拉入，但树里已有名字不满足可选 peer 区间时 npm ci 同样报 Invalid，pass 3 的放宽对可选 peer 一并生效。跨线升级的三个必要环节：pass 2b 非 lockstep 支撑包按引用方区间交集取最高版（rc.1 把 cordis peer 提到 ^4.0.2）；pass 2c 区间不可调和时嵌套私有拷贝（compression 要 debug ^2.6）；剪枝在这些 pass 之前先跑一遍且不沿可选 peer 走。better-locale 走 plugins-full.json 的 carry 组显式钉版。`--legacy-peer-deps` 会跳过 peer 自动安装、锁缺 118 个核心包，不可用。
-- 0.1.5-rc.2 起内核自带 `@deepseek-ai/dsh-http-proxy`：启动时读一次标准代理环境变量并作用于 Node fetch，loopback 目标直连。壳注入的 `HTTP(S)_PROXY=http://127.0.0.1:<转发器端口>` 由它直接消费，行为与 `NODE_USE_ENV_PROXY=1` 一致。
-- pnpm 必须钉在 11 线：pnpm 12 起 npm 包是占位脚本，postinstall 才下载原生二进制，`--ignore-scripts` 安装后没有可执行文件。main.js 的 pnpmEntry() 接受 cjs/mjs 任一入口，stage 装完断言入口存在。pnpm 本体只随内置运行时分发（`dsh/tools/`），升级版运行时没有 tools 目录，取 pnpm 路径锚定 `bundledDshDir()`。
-- pnpm 11.22 起 `minimum-release-age` 默认 1440 分钟：add 路径自动写 minimumReleaseAgeExclude，remove 路径直接失败（ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED），内核升级同样受影响。env 与内置 pnpmrc 对该键不生效，唯一通道是子命令前的 `--config.minimum-release-age=0`，注入点为 userData/bin 的 pnpm shim 与 installCoreRuntime 的直接 spawn。严格模式复现：`--config.minimum-release-age-strict=true` 装一个 24h 内发布的包。
-- pnpm 的 peer 自动安装会让预置了 better-sidebar 的干净安装装任何新插件都报 ERR_PNPM_NO_MATCHING_VERSION：多个依赖方对同名 peer 做区间交集时丢掉预发布限定（`^0.1.0-rc.8 ∩ *` → `>=0.1.0 <0.2.0`），dsh 核心只发预发布版。pnpm shim 与 installCoreRuntime 追加 `--config.auto-install-peers=false`（peer 由应用闭包在运行期提供）。容器复现需把 profile workspace yaml 的 `autoInstallPeers` 改为 true。
-- pnpm 两道门禁：allowBuilds（构建脚本审批，配置中心不代为放行，提示走命令行）；minimumReleaseAge（裸装包名可能静默降级到旧版本，显式带版本号可豁免）。
-- uv 默认用自带根证书，在 TLS 拦截型代理后表现为"解码响应体超时"。启动器默认 `UV_NATIVE_TLS=1` 走系统证书库。Python 解释器首次运行从 GitHub 下载到 userData/uv/python，国内用户设 `UV_PYTHON_INSTALL_MIRROR`（启动器的 `if not defined` 语义保证用户值优先）。
+- **staging 用 `npm ci --force` 从 `locks/<flavor>.package-lock.json` 安装，不做实时 npm 解析**。dsh 的依赖图让 arborist 的 peer 回溯指数爆炸（mac runner 2GB 堆 OOM，linux 10 分钟不出结果）。`--force` 跳过 npm ci 的 peer 复验；锁是决策记录，兼容性由 staging 冒烟验证。锁根依赖与插件清单不一致时 stage 报错。
+- **升级 dsh 用 `update-locks.mjs`**：把上一份 full 锁按 lockstep 平移到目标版本（重刷 resolved/integrity、递归补齐新引用的包、放宽 npm ci 不过的 peer 区间、报告形状漂移）。插件增删换同样走它。
+  - 移除的子树按解析语义剪枝；新增包按引用方 semver 区间取版本。
+  - 可选 peer 不递归拉入；树里已有名字不满足可选 peer 区间时 npm ci 同样报 Invalid，pass 3 的放宽对可选 peer 一并生效。
+  - 跨线升级的三个必要环节：pass 2b 非 lockstep 支撑包按引用方区间交集取最高版（rc.1 把 cordis peer 提到 ^4.0.2）；pass 2c 区间不可调和时嵌套私有拷贝（compression 要 debug ^2.6）；剪枝在这些 pass 之前先跑一遍且不沿可选 peer 走。
+  - better-locale 走 plugins-full.json 的 carry 组显式钉版。
+  - `--legacy-peer-deps` 跳过 peer 自动安装、锁缺 118 个核心包，不可用。
+- **内核自带 `@deepseek-ai/dsh-http-proxy`**（0.1.5-rc.2 起）：启动时读一次标准代理环境变量并作用于 Node fetch，loopback 目标直连。壳注入的 `HTTP(S)_PROXY=http://127.0.0.1:<转发器端口>` 由它直接消费，行为与 `NODE_USE_ENV_PROXY=1` 一致。
+- **pnpm 钉在 11 线**：pnpm 12 起 npm 包是占位脚本，postinstall 才下载原生二进制，`--ignore-scripts` 安装后没有可执行文件。main.js 的 pnpmEntry() 接受 cjs/mjs 任一入口，stage 装完断言入口存在。pnpm 只随内置运行时分发（`dsh/tools/`），升级版运行时没有 tools 目录，取 pnpm 路径锚定 `bundledDshDir()`。
+- **pnpm 子命令前带 `--config.minimum-release-age=0`**（注入点：userData/bin 的 pnpm shim 与 installCoreRuntime 的直接 spawn）。pnpm 11.22 起 `minimum-release-age` 默认 1440 分钟：add 路径自动写 minimumReleaseAgeExclude，remove 路径直接失败（ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED），内核升级同样受影响。env 与内置 pnpmrc 对该键不生效。严格模式复现：`--config.minimum-release-age-strict=true` 装一个 24h 内发布的包。
+- **pnpm 子命令前带 `--config.auto-install-peers=false`**（同两个注入点；peer 由应用闭包在运行期提供）。peer 自动安装对同名 peer 做区间交集时丢掉预发布限定（`^0.1.0-rc.8 ∩ *` → `>=0.1.0 <0.2.0`），dsh 核心只发预发布版，预置了 better-sidebar 的干净安装装任何新插件都报 ERR_PNPM_NO_MATCHING_VERSION。容器复现需把 profile workspace yaml 的 `autoInstallPeers` 改为 true。
+- **pnpm 两道门禁**：allowBuilds（构建脚本审批，配置中心不代为放行，提示走命令行）；minimumReleaseAge（裸装包名可能静默降级到旧版本，显式带版本号可豁免）。
+- **启动器默认 `UV_NATIVE_TLS=1`** 走系统证书库。uv 自带根证书在 TLS 拦截型代理后表现为"解码响应体超时"。Python 解释器首次运行从 GitHub 下载到 userData/uv/python，国内用户设 `UV_PYTHON_INSTALL_MIRROR`（启动器 `if not defined` 语义，用户值优先）。
 
 ### Windows
 
-- 给子进程改 PATH 必须大小写不敏感地找键（`prependEnvPath`）：`{...process.env}` 展开出的真实键通常是 `Path`，再赋值 `PATH` 造出重复键，子进程实际生效的 PATH 可能只剩新加目录。
-- 代理配置清场后重写，删除同样大小写不敏感：Windows 上展开出的真实键常是 `Http_Proxy`。`~/.npmrc` 的 `proxy=` 只能靠显式 `npm_config_proxy` 压过。
-- 系统代理是按 URL 逐次求值的函数：把某一个地址的 `resolveProxy` 结果当全局 `HTTP_PROXY` 会丢掉 PAC 与例外列表，内网不通。
-- `NO_PROXY` 通配符语义各家不同（undici / npm / git / Python 对 `*.corp.com`、`10.*`、CIDR 解释不同），例外匹配收在 `isBypassed` 一处，`NO_PROXY` 只留 loopback。
-- 开新控制台窗口不能用 `spawn('cmd.exe', …, { detached: true })`：libuv 把 detached 映射为 `DETACHED_PROCESS`，cmd 不分配控制台。写 `.cmd` 批处理再 `shell.openPath`；批处理存 UTF-8 且首行后紧跟 `chcp 65001`。
-- GUI 进程树里不带 `windowsHide:true` 的控制台子进程（pwsh/cmd/git）会闪窗。`win-spawn-shim.js` 经 `--require` 与 NODE_OPTIONS 预载，给 child_process 全家默认补 windowsHide（exec/execFile 的 `promisify.custom` 必须在包装函数上重建）。node-pty（ConPTY）不走 child_process，不受影响。
-- windowsHide 治不了沙箱 pwsh：dsh-sandbox-windows-acl 用 koffi 直接调 CreateProcessAsUserW 起 pwsh，受限令牌下 CREATE_NO_WINDOW 的子进程以 STATUS_DLL_INIT_FAILED (0xC0000142) 退出，语义是共享宿主控制台。setupHiddenConsole（DSHDESKTOP_CONSOLE_HOST=1）给 dsh 服务进程配隐形宿主控制台：spawn 一个 CREATE_NO_WINDOW 的 cmd，AttachConsole 后杀掉它（控制台在还有进程附着时存活）。不用 AllocConsole（闪窗，Win11 可能开 Windows Terminal 标签）。已附着真实终端时不介入。koffi 从 dsh 运行时闭包解析。
-- dsh 的 subprocess 服务（Glob / Grep 起 ripgrep，`dsh-subprocess-local` 的 Win32 Job runner）给 runner 自己的环境删掉一切 `NODE_*` 变量，NODE_OPTIONS 到不了 runner；runner 是 GUI 子系统的 Electron 进程，本身不继承控制台，它经 CreateProcessW 起的 rg 就会开一个可见窗口。shim 在包装 spawn / spawnSync / execFile / execFileSync 时，对以本进程 `process.execPath` 启动且带 argv 数组的子进程在 argv 前插入 `--require <shim>`（withPreload），runner 由此加载 shim 并附着父进程的隐形控制台；argv 首项为 `--` 的单文件运行时不插。`--require` 是 Node 选项，不改变子进程的 process.argv。
-- 安装耗时由文件数决定：NSIS 模板把 7z 解到临时目录再 CopyFiles 进 $INSTDIR，每个文件落盘两次并各被 Defender 扫一次。stage 的裁剪把运行时从约 2.1 万个文件减到约 1.1 万（307 MB → 190 MB）：sourcemap / .pdb、全部 `*.d.ts`（运行时不读，dsh 的服务/类型查询走 typert 运行时反射，不读声明文件）、第三方包的 README / CHANGELOG 类 prose（@deepseek-ai 与插件包的 README 保留；其他 .md 一律保留——agent-preset 的 SKILL.md、skill-badge 资源是运行时读的）、第三方包**顶层**的 test / docs / examples / .github 目录（只在 package.json 同级，嵌套同名目录可能是运行时模块：yaml 的 dist/doc/）。验证：`node stage-dsh.mjs` 后起服务走 GUI 流程，再用一段脚本 import 全部 `@deepseek-ai/*` 入口查 Cannot find module，并扫描所有 js 的相对 import 是否指向已删文件。`nsis.useZip` 能省掉 CopyFiles 那一遍，但同一运行时的安装包从 106 MB 涨到 177 MB，不采用。
-- 安装进度明细：stock 模板 `ShowInstDetails nevershow` + `SetDetailsPrint none`，InstFiles 页只剩进度条。`build/installer.nsh` 的 customShowDetails 在安装 / 卸载段开头 `SetDetailsPrint both` 并 `ShowWindow` 明细列表（MUI InstFiles 页控件 id：1016 列表、1027 "显示细节"按钮），之后 DetailPrint 同时写进度条上方状态行与列表；各阶段用 customDetail 宏按 `$LANGUAGE`（2052 中文，其余英文）打一行。不用 LangString：任一内置语言缺定义即警告，`-WX` 下编译失败。可挂钩的位置：customCheckAppRunning（解压前）、customFiles_x64（拷贝进 $INSTDIR 之后、保存安装包副本 / 写卸载器 / 注册表 / 快捷方式之前）、customInstall（全部完成后）。
-- 有隐形宿主控制台时，子进程改为继承控制台而非 CREATE_NO_WINDOW（shim 的 hostConsole 策略）：`windowsHide:true` 的子进程没有控制台，它再起的控制台程序会得到新的可见窗口（`uvx` MCP 服务器为 uv → python 两级，MCP SDK 硬编码 windowsHide:true）。无隐形控制台（CLI 场景）时维持 windowsHide 默认。逃生口 `DSHDESKTOP_INHERIT_CONSOLE=0`。
-- 控制变量不能用 `DSH_` 前缀：dsh 的 subprocess 服务给每个子进程做环境清洗，除敏感名（KEY/PASSWORD/SECRET/TOKEN）外删除一切 `DSH_` 开头的变量。现名 `DSHDESKTOP_*`；`NODE_OPTIONS` 不在清洗名单。诊断日志 userData/console-debug.log 记录每个进程的附着路径与 GetLastError（6 = 目标进程无控制台，5 = 自己已有控制台）。
-- electron-builder 的 FIND_PROCESS 会误报，不能作为拦截安装的门条件：PowerShell 可用时它把任何路径在 $INSTDIR 下的进程都算命中（wine 的 powershell 桩对一切命令返回 0；用户装到宽泛目录时无关进程同样命中）。误报后弹 "app cannot be closed" 并退出非零，覆盖安装死在旧卸载器重试上。现行设计（build/installer.nsh）：清扫无条件执行、按已知进程名收窄（taskkill 树杀 + 按名杀 + 限定 OpenConsole/winpty-agent/应用 exe 的路径扫），几轮后直接放行（真锁文件由解包阶段自带重试兜底），放行前把安装目录下存活进程落盘到桌面 dsh-install-debug.txt；customInit 预跑旧版卸载器，非零退出时删注册表键 + 清旧载荷绕过。
+- **给子进程改 PATH 必须大小写不敏感找键**（`prependEnvPath`）：`{...process.env}` 展开出的真实键通常是 `Path`，再赋值 `PATH` 造出重复键，子进程实际生效的 PATH 可能只剩新加目录。
+- **代理变量清场同样大小写不敏感**：展开出的真实键常是 `Http_Proxy`。`~/.npmrc` 的 `proxy=` 只能靠显式 `npm_config_proxy` 压过。
+- **系统代理是按 URL 逐次求值的函数**：把某一个地址的 `resolveProxy` 结果当全局 `HTTP_PROXY` 会丢掉 PAC 与例外列表，内网不通。
+- **例外匹配收在 `isBypassed` 一处，`NO_PROXY` 只留 loopback**：`NO_PROXY` 通配符语义各家不同（undici / npm / git / Python 对 `*.corp.com`、`10.*`、CIDR 解释不同）。
+- **开新控制台窗口：写 `.cmd` 批处理再 `shell.openPath`**。`spawn('cmd.exe', …, { detached: true })` 不行：libuv 把 detached 映射为 `DETACHED_PROCESS`，cmd 不分配控制台。批处理存 UTF-8 且首行后紧跟 `chcp 65001`。
+- **`win-spawn-shim.js` 经 `--require` 与 NODE_OPTIONS 预载，给 child_process 全家默认补 windowsHide**。GUI 进程树里不带 `windowsHide:true` 的控制台子进程（pwsh/cmd/git）会闪窗。exec/execFile 的 `promisify.custom` 必须在包装函数上重建。node-pty（ConPTY）不走 child_process，不受影响。
+- **dsh 服务进程配隐形宿主控制台**（setupHiddenConsole，`DSHDESKTOP_CONSOLE_HOST=1`）：spawn 一个 CREATE_NO_WINDOW 的 cmd，AttachConsole 后杀掉它（控制台在还有进程附着时存活）。已附着真实终端时不介入。koffi 从 dsh 运行时闭包解析。
+  - 触发：dsh-sandbox-windows-acl 用 koffi 直接调 CreateProcessAsUserW 起 pwsh，windowsHide 治不了；受限令牌下 CREATE_NO_WINDOW 的子进程以 STATUS_DLL_INIT_FAILED (0xC0000142) 退出，语义是共享宿主控制台。
+  - AllocConsole 闪窗，Win11 可能开 Windows Terminal 标签，不用。
+- **shim 对以本进程 `process.execPath` 启动且带 argv 数组的子进程在 argv 前插入 `--require <shim>`**（withPreload，覆盖 spawn / spawnSync / execFile / execFileSync）。dsh 的 subprocess 服务（Glob / Grep 起 ripgrep，`dsh-subprocess-local` 的 Win32 Job runner）给 runner 自己的环境删掉一切 `NODE_*` 变量，NODE_OPTIONS 到不了 runner；runner 是 GUI 子系统的 Electron 进程，不继承控制台，它经 CreateProcessW 起的 rg 会开一个可见窗口。argv 首项为 `--` 的单文件运行时不插。`--require` 是 Node 选项，不改变子进程的 process.argv。
+- **有隐形宿主控制台时，子进程改为继承控制台而非 CREATE_NO_WINDOW**（shim 的 hostConsole 策略）：`windowsHide:true` 的子进程没有控制台，它再起的控制台程序会得到新的可见窗口（`uvx` MCP 服务器为 uv → python 两级，MCP SDK 硬编码 windowsHide:true）。无隐形控制台（CLI 场景）时维持 windowsHide 默认。逃生口 `DSHDESKTOP_INHERIT_CONSOLE=0`。
+- **控制变量用 `DSHDESKTOP_*` 前缀，不能用 `DSH_`**：dsh 的 subprocess 服务给每个子进程做环境清洗，除敏感名（KEY/PASSWORD/SECRET/TOKEN）外删除一切 `DSH_` 开头的变量；`NODE_OPTIONS` 不在清洗名单。诊断日志 userData/console-debug.log 记录每个进程的附着路径与 GetLastError（6 = 目标进程无控制台，5 = 自己已有控制台）。
+- **安装耗时由文件数决定**：NSIS 模板把 7z 解到临时目录再 CopyFiles 进 $INSTDIR，每个文件落盘两次并各被 Defender 扫一次。stage 的裁剪把运行时从约 2.1 万个文件减到约 1.1 万（307 MB → 190 MB）。
+  - 裁掉：sourcemap / .pdb；全部 `*.d.ts`（dsh 的服务/类型查询走 typert 运行时反射，不读声明文件）；第三方包的 README / CHANGELOG 类 prose；第三方包**顶层**的 test / docs / examples / .github 目录（只在 package.json 同级，嵌套同名目录可能是运行时模块：yaml 的 dist/doc/）。
+  - 保留：@deepseek-ai 与插件包的 README；其他一切 .md（agent-preset 的 SKILL.md、skill-badge 资源是运行时读的）。
+  - 验证：`node stage-dsh.mjs` 后起服务走 GUI 流程，再用脚本 import 全部 `@deepseek-ai/*` 入口查 Cannot find module，并扫描所有 js 的相对 import 是否指向已删文件。
+  - `nsis.useZip` 省掉 CopyFiles 那一遍，同一运行时的安装包从 106 MB 涨到 177 MB，不用。
+- **安装进度明细由 `build/installer.nsh` 的 customShowDetails 打开**：stock 模板 `ShowInstDetails nevershow` + `SetDetailsPrint none`，InstFiles 页只剩进度条。安装 / 卸载段开头 `SetDetailsPrint both` 并 `ShowWindow` 明细列表（MUI InstFiles 页控件 id：1016 列表、1027 "显示细节"按钮），之后 DetailPrint 同时写状态行与列表；各阶段用 customDetail 宏按 `$LANGUAGE`（2052 中文，其余英文）打一行。
+  - 不用 LangString：任一内置语言缺定义即警告，`-WX` 下编译失败。
+  - 可挂钩的位置：customCheckAppRunning（解压前）、customFiles_x64（拷贝进 $INSTDIR 之后、保存安装包副本 / 写卸载器 / 注册表 / 快捷方式之前）、customInstall（全部完成后）。
+- **electron-builder 的 FIND_PROCESS 会误报，不作为拦截安装的门条件**：PowerShell 可用时它把任何路径在 $INSTDIR 下的进程都算命中（wine 的 powershell 桩对一切命令返回 0；用户装到宽泛目录时无关进程同样命中）。误报后弹 "app cannot be closed" 并退出非零，覆盖安装死在旧卸载器重试上。
+  - 现行设计（build/installer.nsh customCheckAppRunning）：命中且非更新路径时只弹一次「正在运行」确认；清扫无条件执行、按已知进程名收窄（taskkill 树杀 + 按名杀 + 限定 OpenConsole/winpty-agent/应用 exe 的路径扫），几轮后直接放行（真锁文件由解包阶段自带重试兜底），放行前把安装目录下存活进程落盘到桌面 dsh-install-debug.txt。
+  - 同一宏尾部预跑旧版卸载器（用户点了安装之后，不在 onInit），非零退出时删注册表键 + 清旧载荷绕过。
 
 ### 其他
 
-- electron-builder 的 extraResources 默认排除 node_modules，运行时必须走 afterPack 钩子复制。
-- 本仓库若放进 pnpm workspace（如上游 fork 的子目录），electron-builder 会向上探测 workspace 根并错误改用 pnpm 收集依赖；须拷到仓库外构建。
-- CLI 启动器 dsh / pnpm / node 三件套缺一不可（pnpm 生命周期脚本裸调 `node`），外加给 stdio MCP 用的 npx / uvx / uv。
-- 常用设置只能覆盖 web 组合树里的条目；agent 预设（config/agent-presets/*.yml）不经过 cordis.patch.yml。compaction-basic 在 web 组合里默认 `disabled: true`，「上下文自动压缩」项走注册表的 `kind: 'enable'`，与同条目的 config 键合并成一个覆盖条目。
-- MCP 的 GUI 配置写入 `~/.dsh/profiles/web/cordis.patch.yml` 的标记托管区块（`# >>> dsh-desktop mcp >>>`），dsh 热加载、dsh-mcp-client 支持配置热替换，保存即生效。只改标记区块，保留用户手写条目；文件默认内容是 flow 空列表 `[]`，与块列表不能共存，upsertManagedBlock 已处理。移除条目时经 `pnpm dlx` 启动的旧 MCP 进程可能残留到应用退出。
-- 技能启用/关闭是目录搬移：dsh 的文件系统 provider 只扫根目录顶层，没有按名禁用的配置；关闭 = 移到 `userData/disabled-skills/`（应用数据目录，不在 `~/.dsh` 与任何扫描根之内；agent 检查 dsh 配置目录时看不到），目录监视 2 秒内生效。同名在两边同时存在时拒绝搬移。旧位置 `~/.dsh/skills/.disabled/` 与 `~/.dsh/disabled_skills/` 在首次列表时自动迁移。有 shell 的 agent 仍可全盘搜索到任何目录；该位置只保证不进入 dsh 的目录树。
-- CLI 启动器里的转发器端口只在应用运行期间有效；应用关闭后 shim 的清场部分仍有效，代理部分不再有效。
+- **electron-builder 的 extraResources 默认排除 node_modules**，运行时必须走 afterPack 钩子复制。
+- **本仓库不能放进 pnpm workspace**（如上游 fork 的子目录）：electron-builder 向上探测 workspace 根并错误改用 pnpm 收集依赖。须拷到仓库外构建。
+- **CLI 启动器 dsh / pnpm / node 三件套缺一不可**（pnpm 生命周期脚本裸调 `node`），外加给 stdio MCP 用的 npx / uvx / uv。
+- **常用设置只能覆盖 web 组合树里的条目**；agent 预设（config/agent-presets/*.yml）不经过 cordis.patch.yml。compaction-basic 在 web 组合里默认 `disabled: true`，「上下文自动压缩」项走注册表的 `kind: 'enable'`，与同条目的 config 键合并成一个覆盖条目。
+- **MCP 的 GUI 配置写入 `~/.dsh/profiles/web/cordis.patch.yml` 的标记托管区块**（`# >>> dsh-desktop mcp >>>`），dsh 热加载、dsh-mcp-client 支持配置热替换，保存即生效。只改标记区块，保留用户手写条目；文件默认内容是 flow 空列表 `[]`，与块列表不能共存，upsertManagedBlock 已处理。移除条目时经 `pnpm dlx` 启动的旧 MCP 进程可能残留到应用退出。
+- **技能启用/关闭是目录搬移**：dsh 的文件系统 provider 只扫根目录顶层，没有按名禁用的配置。关闭 = 移到 `userData/disabled-skills/`（不在 `~/.dsh` 与任何扫描根之内），目录监视 2 秒内生效。同名在两边同时存在时拒绝搬移。旧位置 `~/.dsh/skills/.disabled/` 与 `~/.dsh/disabled_skills/` 在首次列表时自动迁移。有 shell 的 agent 仍可全盘搜索到任何目录；该位置只保证不进入 dsh 的目录树。
 
 ## 文档维护
 
@@ -179,4 +227,8 @@ NSIS 安装器可在 Linux 全流程实跑：`dpkg --add-architecture i386 && ap
 
 ## 风格约束
 
-主进程是无构建步骤的 CJS，唯二依赖 electron 与 electron-builder（devDependencies），不引入打包器、框架或运行时依赖。能写成纯函数的逻辑放 `runtime.js` 这类无 Electron 依赖的模块。用户可见文案用中文，陈述结果，不解释动机。发版：推 `v*` 标签；锁定内核版本用 stage 步骤的 `DSH_VERSION` 环境变量。
+- 文档与注释只写设计结果：是什么、契约是什么、哪条事实约束了它。不写推导过程、被否决的方案、版本演进、「因为…所以…」。触发条件与踩坑记录归约束清单，不重复进代码注释。
+- 结构一眼可读：约束条目以加粗结论开头，细节用子项；README 每个功能一条；代码里函数级用 JSDoc 写契约，行内注释只标非显然的事实。
+- 主进程是无构建步骤的 CJS，唯二依赖 electron 与 electron-builder（devDependencies），不引入打包器、框架或运行时依赖。能写成纯函数的逻辑放 `runtime.js` 这类无 Electron 依赖的模块。
+- 用户可见文案用中文，陈述结果，不解释动机。
+- 发版：推 `v*` 标签；锁定内核版本用 stage 步骤的 `DSH_VERSION` 环境变量。

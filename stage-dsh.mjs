@@ -6,19 +6,16 @@
  * Usage:
  *   node stage-dsh.mjs                  # stage for the host platform/arch
  *   node stage-dsh.mjs win32 x64        # cross-stage (adds npm --os/--cpu)
+ *   node stage-dsh.mjs --update-locks   # live resolution, written to locks/<flavor>.package-lock.json
  *
  * Env:
  *   DSH_VERSION  npm version/tag of @deepseek-ai/dsh. Default: install from
  *                the committed lockfile (locks/<flavor>.package-lock.json).
  *                A version that differs from the locked one, or
- *                DSH_STAGE_LIVE=1, switches to live npm resolution (slow,
- *                may OOM; see AGENTS.md).
+ *                DSH_STAGE_LIVE=1, switches to live npm resolution.
  *   DSH_FLAVOR   preset-plugin manifest: "minimal" (default) reads
  *                plugins.json, any other value reads plugins-<flavor>.json
  *                (full -> plugins-full.json). A missing manifest is an error.
- *
- * `node stage-dsh.mjs --update-locks` runs a live resolution and writes the
- * result to locks/<flavor>.package-lock.json.
  */
 import { execSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -40,12 +37,10 @@ fs.rmSync(dir, { recursive: true, force: true })
 fs.mkdirSync(dir, { recursive: true })
 fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true }, null, 2))
 
-// --ignore-scripts: no node-gyp builds. Every native dep (node-pty, sharp via
-// @img/*, koffi via @koromix/*) ships prebuilt binaries selected by npm's
-// os/cpu fields.
-// Preset plugin packages install next to dsh so the loader resolves them from
-// the same node_modules tree; main.js activates them by seeding the user
-// profile from preset-plugins.json (written below).
+// --ignore-scripts: every native dep (node-pty, sharp via @img/*, koffi via
+// @koromix/*) ships prebuilt binaries selected by npm's os/cpu fields.
+// Preset plugin packages install next to dsh (one node_modules tree);
+// main.js activates them from preset-plugins.json (written below).
 let extraPackages = []
 const flavor = (process.env.DSH_FLAVOR || 'minimal').trim()
 const pluginsFile = path.join(here, flavor === 'minimal' ? 'plugins.json' : `plugins-${flavor}.json`)
@@ -53,11 +48,9 @@ if (!fs.existsSync(pluginsFile)) {
   throw new Error(`flavor "${flavor}" 对应的插件清单不存在：${pluginsFile}`)
 }
 const pluginsManifest = JSON.parse(fs.readFileSync(pluginsFile, 'utf8'))
-// "packages" are seeded into the user profile (activated). "carry" are only
-// installed and registered so they resolve from the app closure; activation
-// stays with the user. Mutually exclusive families (skins) must be carry:
-// seeding all of them activates every skin and collides entry ids with skins
-// the user installed.
+// "packages": seeded into the user profile (activated). "carry": installed
+// and registered only; activation stays with the user. Mutually exclusive
+// families (skins) are carry.
 const seedPackages = pluginsManifest.packages ?? []
 const carryPackages = pluginsManifest.carry ?? []
 extraPackages = [...seedPackages, ...carryPackages]
@@ -68,11 +61,10 @@ const crossFlags = cross ? [`--os=${platform}`, `--cpu=${arch}`, '--force'] : []
 const baseFlags = ['--ignore-scripts', '--no-audit', '--no-fund']
 
 // ---- install: locked by default, live only when asked ----
-// Live npm resolution of the dsh graph backtracks on peer ranges and can run
-// for >10min or OOM at a 2GB heap. Default is `npm ci` from the committed
-// lockfile: no resolution, integrity checked, one lock covers every platform
-// via os/cpu-conditional entries. Live mode is the dsh-upgrade path: larger
-// heap, and --update-locks writes the new lock back.
+// Default is `npm ci` from the committed lockfile: no resolution, integrity
+// checked, one lock for every platform via os/cpu-conditional entries. Live
+// mode is the dsh-upgrade path (larger heap; --update-locks writes the new
+// lock back).
 const lockPath = path.join(here, 'locks', `${flavor}.package-lock.json`)
 const wantLive = updateLocks || process.env.DSH_STAGE_LIVE === '1'
 let useLock = false
@@ -91,9 +83,8 @@ if (!wantLive && fs.existsSync(lockPath)) {
     console.log(`installing from lock ${path.basename(lockPath)} (dsh ${lockedDsh})`)
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true, dependencies: rootDeps }, null, 2))
     fs.copyFileSync(lockPath, path.join(dir, 'package-lock.json'))
-    // --force: npm ci re-validates peer ranges and rejects a preset plugin
-    // whose peer lags dsh by one release. The lock is the decision record;
-    // the staging smoke run is the compatibility check.
+    // --force: no peer re-validation by npm ci. The lock is the decision
+    // record; the staging smoke run is the compatibility check.
     execSync(`npm ${['ci', '--force', ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit' })
   }
 } else if (!wantLive) {
@@ -105,9 +96,8 @@ if (!useLock) {
   const liveEnv = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=6144`.trim() }
   // Step 1: dsh itself.
   execSync(`npm ${['install', `@deepseek-ai/dsh@${version}`, ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit', env: liveEnv })
-  // Step 2: preset plugin packages. Plugin versions must target the bundled
-  // dsh release: stale peer ranges make npm backtrack for a long time and
-  // fail at runtime.
+  // Step 2: preset plugin packages, at versions targeting the bundled dsh
+  // release.
   if (extraPackages.length > 0) {
     execSync(`npm ${['install', ...extraPackages, ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit', env: liveEnv })
   }
@@ -119,11 +109,10 @@ if (!useLock) {
 }
 
 // ---- desktop-owned plugins ----
-// Plain packages kept in the repo under plugins/<name>: copied into the
-// runtime tree and registered in the dsh app manifest, so the profile resolves
-// them through the same closure as presets. They are composed by main.js
-// patch overlays, never seeded into the profile; main.js repeats the copy for
-// upgraded runtimes (ensureDesktopPlugins).
+// Plain packages under plugins/<name>: copied into the runtime tree and
+// registered in the dsh app manifest (same closure as presets). Composed by
+// main.js patch overlays, never seeded into the profile; main.js repeats the
+// copy for upgraded runtimes (ensureDesktopPlugins).
 const desktopPluginNames = fs.readdirSync(path.join(here, 'plugins')).filter((n) => fs.existsSync(path.join(here, 'plugins', n, 'package.json')))
 for (const name of desktopPluginNames) {
   const dest = path.join(dir, 'node_modules', name)
@@ -141,10 +130,9 @@ for (const name of desktopPluginNames) {
 
 if (extraPackages.length > 0) {
 
-  // Register the preset plugins as dependencies of the bundled dsh app. At
-  // boot dsh symlinks the app's dependency closure into
-  // $DSH_HOME/profiles/node_modules (healProfilesModuleFallback); a package
-  // resolves as a plugin from the web profile only through that closure.
+  // Register the preset plugins as dependencies of the bundled dsh app: dsh
+  // symlinks the app's dependency closure into $DSH_HOME/profiles/node_modules
+  // at boot, and the web profile resolves plugins through that closure only.
   const rootManifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
   const pluginNames = Object.keys(rootManifest.dependencies ?? {}).filter((n) => n !== '@deepseek-ai/dsh')
   const appManifestPath = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
@@ -154,9 +142,8 @@ if (extraPackages.length > 0) {
   fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2))
   console.log(`registered preset plugins in dsh app manifest: ${pluginNames.join(', ')}`)
 
-  // Registration makes the packages resolvable from the profile. Activation
-  // happens at runtime: main.js seeds each preset into the profile manifest's
-  // dependencies + dsh.profile.bundles from this manifest of exact versions.
+  // Registration = resolvable. Activation happens at runtime: main.js seeds
+  // each preset into the profile manifest from this file of exact versions.
   const ver = (name) => JSON.parse(fs.readFileSync(path.join(dir, 'node_modules', ...name.split('/'), 'package.json'), 'utf8')).version
   const presets = { seed: {}, carry: {} }
   for (const name of seedPackages) presets.seed[name] = ver(name)
@@ -164,17 +151,14 @@ if (extraPackages.length > 0) {
   fs.writeFileSync(path.join(dir, 'preset-plugins.json'), JSON.stringify(presets, null, 2))
 
   // Desktop-local patches on the installed plugins. Anchors throw on upstream
-  // drift; a version bump fails the stage instead of shipping a broken patch.
+  // drift: a version bump fails the stage.
   if (applySshKeepalivePatch(dir)) console.log('applied patch: ssh terminal keepalive')
 }
 
 // ---- bundled CLI tooling ----
-// pnpm ships inside the runtime (dsh/tools/node_modules/pnpm). The desktop
-// app writes `dsh`/`pnpm`/`npx` launchers that run it on Electron's embedded
-// Node; `dsh plugin add` needs nothing installed on the machine.
-// pnpm is pinned to the 11 line: from 12 the npm package is a placeholder
-// whose postinstall downloads a native binary, which --ignore-scripts and
-// offline users never run. 11.x ships bin/pnpm.cjs + bin/pnpm.mjs.
+// pnpm ships inside the runtime (dsh/tools/node_modules/pnpm), pinned to the
+// 11 line (bin/pnpm.cjs + bin/pnpm.mjs); main.js writes launchers that run
+// it on Electron's embedded Node.
 const toolsDir = path.join(dir, 'tools')
 fs.mkdirSync(toolsDir, { recursive: true })
 fs.writeFileSync(path.join(toolsDir, 'package.json'), JSON.stringify({ name: 'dsh-desktop-tools', private: true }, null, 2))
@@ -186,11 +170,9 @@ execSync(`npm ${['install', 'pnpm@11', ...baseFlags, '--omit=optional', ...cross
   }
 }
 
-// uv (Python-side counterpart of pnpm dlx): `uvx <pkg>` MCP servers run
-// without a system Python; uv downloads an interpreter on first use into the
-// app's userData (uvx launcher in main.js). Pinned GitHub release, sha256
-// verified against the published digest. The archive holds two static
-// binaries, uv and uvx; both go to dsh/tools/uv/.
+// uv (Python-side counterpart of pnpm dlx) for `uvx <pkg>` MCP servers:
+// pinned GitHub release, sha256 verified against the published digest. The
+// archive holds two static binaries, uv and uvx; both go to dsh/tools/uv/.
 const UV_VERSION = '0.12.10'
 const UV_TRIPLE = {
   'win32-x64': 'x86_64-pc-windows-msvc', 'win32-arm64': 'aarch64-pc-windows-msvc',
@@ -258,22 +240,19 @@ if (fs.existsSync(pty)) {
 // sharp: the native @img package is used; the wasm fallback is dropped.
 rm(path.join(nm, '@img', 'sharp-wasm32'))
 
-// Files the runtime never opens. Install time on Windows scales with the
-// file count (each file is created twice by the NSIS template and scanned by
-// Defender), so every class removed here shortens the install directly:
+// Files the runtime never opens (install time on Windows scales with the
+// file count):
 // - sourcemaps and .pdb debug symbols;
-// - TypeScript declarations (*.d.ts / *.d.mts / *.d.cts): the runtime is
-//   built JavaScript; declarations serve plugin authors compiling against
-//   their own node_modules, not the app;
+// - TypeScript declarations (*.d.ts / *.d.mts / *.d.cts);
 // - package prose (README / CHANGELOG / HISTORY / CONTRIBUTING / SECURITY /
-//   CODE_OF_CONDUCT) of third-party packages. Every other .md stays: dsh
-//   loads some at runtime (agent-preset SKILL.md, skill-badge assets), and
-//   @deepseek-ai / plugin packages keep their README. LICENSE files stay;
+//   CODE_OF_CONDUCT) of third-party packages. Every other .md stays (dsh
+//   loads some at runtime); @deepseek-ai and plugin packages keep their
+//   README; LICENSE files stay;
 // - top-level test / docs / examples / .github directories of third-party
 //   packages. @deepseek-ai packages are left whole.
 const PROSE_MD = /^(readme|changelog|changes|history|contributing|security|code_of_conduct|governance|maintainers|authors)(\.|$)/i
-// Only at a package's top level (next to its package.json): nested dirs of
-// these names can be runtime modules (yaml ships dist/doc/).
+// Only next to a package.json: nested dirs of these names can be runtime
+// modules (yaml ships dist/doc/).
 const JUNK_DIRS = new Set(['test', 'tests', '__tests__', 'docs', 'example', 'examples', '.github'])
 let pruned = 0
 const isDeepseek = (p) => p.split(path.sep).includes('@deepseek-ai')

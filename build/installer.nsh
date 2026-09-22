@@ -1,36 +1,29 @@
-# Custom close-app logic for the NSIS installer/uninstaller.
+# Close-app logic and progress detail for the NSIS installer/uninstaller.
 #
-# Constraints (see AGENTS.md pitfalls):
-# - electron-builder's FIND_PROCESS is a path-prefix check when PowerShell is
-#   available: any process under $INSTDIR counts as found. It false-positives
-#   (wine's stub powershell exits 0 for everything; a broad custom install
-#   dir can contain unrelated programs) and never gates the install with a
-#   dialog/Quit. Known processes are killed, then the install proceeds;
+# Close check (customCheckAppRunning):
+# - FIND_PROCESS is a path-prefix check when PowerShell is available (any
+#   process under $INSTDIR counts) and false-positives. It only drives the
+#   "app is running" confirmation; it never blocks the install by itself.
+# - The sweep runs unconditionally, scoped to known image names: the app exe
+#   (tree kill + plain kill) and the conpty helpers OpenConsole.exe /
+#   winpty-agent.exe under $INSTDIR. After a few rounds the install proceeds;
 #   locked files surface in the extraction stage, which has its own retry
 #   dialog.
-# - The stock close logic misses $INSTDIR-hosted helpers (node-pty's conpty
-#   OpenConsole.exe / winpty-agent.exe) that can outlive the app. The sweep
-#   runs unconditionally, scoped to known binary names; a bare path-prefix
-#   sweep can kill unrelated processes under a broad custom $INSTDIR.
-# - Uninstallers embedded in old installed builds quit non-zero on any false
-#   positive, and the overwrite install then fails with "app cannot be
-#   closed" (installUtil.nsh reuses that string for uninstall failures). The
-#   old uninstaller is pre-run here; on failure its registry entry and old
-#   payload are removed so the template's uninstall step self-skips and
-#   extraction proceeds.
+# - The previous build's uninstaller is pre-run at the tail of the check; on
+#   a non-zero exit its registry keys and payload are removed so the stock
+#   uninstall step self-skips.
 
 # With customCheckAppRunning defined the stock template skips its own
 # getProcessInfo include and `Var pid` declaration; both are provided here.
 !include "getProcessInfo.nsh"
 Var customPid
 
-# Progress detail. The stock template hides the details list
-# (ShowInstDetails nevershow) and silences DetailPrint (SetDetailsPrint none),
-# leaving a bare progress bar for a multi-minute install. Both are re-enabled
-# at the start of the install/uninstall section: DetailPrint then drives the
-# status line above the progress bar and the list below it, and each phase
-# announces itself. Control ids on the MUI InstFiles page: 1016 details list,
-# 1027 "Show details" button. Silent runs are left alone.
+# Progress detail: the stock template hides the details list
+# (ShowInstDetails nevershow) and silences DetailPrint (SetDetailsPrint none).
+# Both are re-enabled at the start of the install/uninstall section;
+# DetailPrint then drives the status line above the progress bar and the list
+# below it. MUI InstFiles control ids: 1016 details list, 1027 "Show details"
+# button. Silent runs are left alone.
 !macro customShowDetails
   ${IfNot} ${Silent}
     SetDetailsPrint both
@@ -43,9 +36,8 @@ Var customPid
 !macroend
 
 # Phase line in the installer's UI language: Simplified Chinese (2052) or
-# English for every other language. LangString is not used: the stock build
-# compiles with warnings as errors, and a LangString left undefined for any
-# of the bundled languages is a warning.
+# English. No LangString: one left undefined for any bundled language is a
+# warning, and the build compiles with warnings as errors.
 !macro customDetail zh en
   ${If} $LANGUAGE == 2052
     DetailPrint "${zh}"
@@ -110,12 +102,8 @@ Var customPid
     ${endIf}
 
 !ifndef BUILD_UNINSTALLER
-  # Pre-empt the template's uninstallOldVersion (see header). Runs at the
-  # tail of the install-section close check, after the user clicked install,
-  # not in customInit: onInit runs before any UI, and a multi-second silent
-  # uninstall that kills the running app must not happen at double-click
-  # time. Installer context only; the uninstaller must not recurse into
-  # itself.
+  # Pre-run of the previous build's uninstaller (installer context only),
+  # after the user clicked install: onInit runs before any UI.
   ReadRegStr $R8 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
   ${if} $R8 != ""
     ReadRegStr $R7 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation

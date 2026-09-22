@@ -1,16 +1,15 @@
 'use strict'
 /**
- * In-process forwarding proxy: the single decision point for whether a
- * request goes direct or through which upstream proxy.
+ * In-process forwarding proxy: the single decision point, per connection,
+ * for direct vs. which upstream proxy.
  *
  * Every child process gets HTTP_PROXY=http://127.0.0.1:<port> pointing here
  * (applyProxyEnv in runtime.js) and nothing else; the dsh server, pnpm and
- * every MCP server share one per-URL decision. A system proxy is a PAC script
- * plus an exception list; a single static HTTP_PROXY URL routes intranet
- * traffic to the proxy.
+ * every MCP server share one per-URL decision (PAC and exception list
+ * included).
  *
  * No Electron dependency: `resolveSystem` is injected (main.js passes
- * Chromium's session.resolveProxy); the module runs under plain node in tests.
+ * Chromium's session.resolveProxy); the module runs under plain node.
  */
 const http = require('http')
 const net = require('net')

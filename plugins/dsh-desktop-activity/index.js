@@ -1,13 +1,10 @@
 /**
  * Work-state reporter for the desktop shell. Every `intervalMs` (default
  * 2000) the plugin reads the host's `agents` and `jobs` services and sends
- * the shell one message whenever the busy state changes; the shell uses it
- * for 「运行任务时保持系统唤醒」. Busy means: an agent in the running phase,
- * an agent with queued input (next turn or next step), or a job that is
- * running or stopping (the same rule the upstream desktop app applies
- * before an update). Composed by the shell's patch overlay next to the
- * directory picker; a server started without the shell's IPC channel does
- * nothing.
+ * the shell one message whenever the busy state changes (the signal behind
+ * 「运行任务时保持系统唤醒」). Busy: an agent in the running phase, an agent
+ * with queued input (next turn or next step), or a job running or stopping.
+ * Without the shell's IPC channel the plugin does nothing.
  *
  * Wire (this process -> parent):
  *   { type: 'dsh-desktop:activity', busy: boolean }

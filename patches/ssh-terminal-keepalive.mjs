@@ -1,25 +1,17 @@
 /**
- * Staging-time patch for @linxin666/dsh-ssh: keeps the SSH terminal session
- * alive across UI unmounts.
+ * Staging-time patch for @linxin666/dsh-ssh: the SSH terminal session
+ * survives UI unmounts (panel tab switches, center-column rebuilds).
  *
- * Upstream binds the session lifetime to the React component: TerminalTab's
- * unmount cleanup closes the WebSocket, and the host closes the ssh2
- * connection when the socket drops. Switching panel tabs or any
- * center-column rebuild by the shell (session/workspace switches) ends the
- * SSH session.
+ * Client-only: on unmount the WebSocket and the xterm instance move into a
+ * module-level slot (render detached, socket open, output flowing into the
+ * live buffer); the next mount re-adopts them (reparent the xterm element,
+ * rewire status handlers, refit). The disconnect button or a remote exit
+ * closes the session. The host needs no change.
  *
- * Client-only patch: on unmount the WebSocket and the xterm instance move
- * into a module-level slot (render detached, socket open, output flowing
- * into the live terminal buffer); the next mount re-adopts them (reparent
- * the xterm element, rewire status handlers, refit). The disconnect button
- * or a remote exit closes the session. The host tears down only when the
- * socket closes and needs no change.
- *
- * Applied by stage-dsh.mjs to the installed package's lib/client.js (served
- * by dsh at /plugins/<pkg>/client.js). Anchors are exact strings from the
- * 0.3.5 build and throw when they stop matching; an upstream bump that
- * reshapes TerminalTab fails the stage. Remove this file and its call site
- * once upstream persists sessions itself.
+ * Applied by stage-dsh.mjs to the installed package's lib/client.js. Anchors
+ * are exact strings from the upstream build and throw when they stop
+ * matching. Remove this file and its call site once upstream persists
+ * sessions itself.
  */
 import fs from 'node:fs'
 import path from 'node:path'

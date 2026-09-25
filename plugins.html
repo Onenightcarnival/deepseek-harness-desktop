@@ -147,8 +147,7 @@
 <body>
   <nav id="nav">
     <div class="nav-title">配置中心</div>
-    <button data-pane="plugins" class="active"><span class="icon">◫</span>插件</button>
-    <button data-pane="mcp"><span class="icon">⇄</span>MCP 服务器</button>
+    <button data-pane="mcp" class="active"><span class="icon">⇄</span>MCP 服务器</button>
     <button data-pane="skills"><span class="icon">✦</span>技能</button>
     <button data-pane="settings"><span class="icon">⚙</span>内置插件</button>
     <button data-pane="general"><span class="icon">☰</span>通用</button>
@@ -157,28 +156,8 @@
 
   <div id="content">
 
-  <!-- ============ 插件 ============ -->
-  <div class="pane single active" id="pane-plugins">
-    <h2>插件</h2>
-    <p class="sub">按 npm 包名或来源安装到用户配置层，重启后生效。需要执行构建脚本的插件请在「插件 → 打开命令行窗口」中安装。</p>
-    <div class="row" style="margin-bottom:8px">
-      <input id="spec" placeholder="some-dsh-plugin@1.2.0 或 github:owner/repo" spellcheck="false">
-      <button id="add" class="primary" style="flex:none">安装</button>
-    </div>
-    <div class="row" style="margin-bottom:12px">
-      <span class="meta">本地插件：</span>
-      <button id="add-dir" class="ghost">从目录安装（开发）</button>
-      <button id="add-tgz" class="ghost">从 .tgz 安装</button>
-    </div>
-    <div class="card" id="installed" style="margin-bottom:12px">加载中…</div>
-    <div class="log" id="log"></div>
-    <div class="row" style="margin-top:10px; display:none" id="restart-plugins">
-      <span class="spacer"></span><button class="primary" onclick="pluginApi.restart()">重启应用生效</button>
-    </div>
-  </div>
-
   <!-- ============ MCP ============ -->
-  <div class="pane" id="pane-mcp">
+  <div class="pane active" id="pane-mcp">
     <div id="mcp-side">
       <div class="side-head"><h2>MCP 服务器</h2><button class="add-btn" id="m-add" title="添加服务器">＋</button></div>
       <div id="mcp-servers"></div>
@@ -345,8 +324,6 @@
 
 <script>
   const $ = (id) => document.getElementById(id)
-  const log = (t) => { $('log').textContent += t + '\n'; $('log').scrollTop = 1e9 }
-  let busy = false
 
   // ---- nav ----
   for (const b of document.querySelectorAll('#nav button')) {
@@ -357,69 +334,6 @@
       $('pane-' + b.dataset.pane).classList.add('active')
     }
   }
-
-  // ================= 插件 =================
-  async function refreshPlugins() {
-    const { deps, bundles } = await pluginApi.list()
-    const names = Object.keys(deps)
-    const box = $('installed')
-    if (names.length === 0) { box.textContent = '尚未安装插件'; return }
-    box.innerHTML = ''
-    for (const name of names) {
-      const div = document.createElement('div'); div.className = 'item-row'
-      const label = document.createElement('span'); label.className = 'grow'; label.textContent = name
-      const meta = document.createElement('span'); meta.className = 'meta'; meta.textContent = deps[name]
-      div.appendChild(label)
-      if (bundles.includes(name)) {
-        const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = '自动挂载'
-        div.appendChild(tag)
-      }
-      div.appendChild(meta)
-      const rm = document.createElement('button'); rm.className = 'danger'; rm.style.padding = '3px 10px'
-      rm.textContent = '移除'; rm.onclick = () => runPlugin('remove', name)
-      div.appendChild(rm)
-      box.appendChild(div)
-    }
-  }
-  function setPluginBusy(v) {
-    busy = v
-    for (const id of ['add', 'add-dir', 'add-tgz']) $(id).disabled = v
-  }
-  function logResult(res) {
-    log((res.output || '').trim()); log(res.code === 0 ? '完成' : `失败（exit ${res.code}）`)
-    if (res.code === 0) $('restart-plugins').style.display = 'flex'
-    if (res.code !== 0 && res.needsAllowBuilds && res.needsAllowBuilds.length > 0) {
-      log('')
-      log('该插件安装时需要执行构建脚本，桌面版不代为放行。')
-      log('按上方 dsh 的提示编辑 allowBuilds 配置后，在「插件 → 打开命令行窗口」中重新安装。')
-    }
-  }
-  async function runPlugin(action, spec) {
-    if (busy || !spec) return
-    setPluginBusy(true)
-    log(`> dsh plugin --profile web ${action} ${spec}`)
-    logResult(await pluginApi.run(action, spec))
-    setPluginBusy(false)
-    refreshPlugins()
-  }
-  async function installLocal(kind) {
-    if (busy) return
-    setPluginBusy(true)
-    const res = await pluginApi.installLocal(kind)
-    if (!res.canceled) {
-      log(`> dsh plugin --profile web add ${res.spec || '（本地插件）'}`)
-      logResult(res)
-      if (res.code === 0 && kind === 'dir') {
-        log('目录以软链方式安装，改动代码后重启应用生效；插件自身依赖需先在该目录执行 pnpm install。')
-      }
-      refreshPlugins()
-    }
-    setPluginBusy(false)
-  }
-  $('add').onclick = () => runPlugin('add', $('spec').value.trim())
-  $('add-dir').onclick = () => installLocal('dir')
-  $('add-tgz').onclick = () => installLocal('tgz')
-  $('spec').addEventListener('keydown', (e) => { if (e.key === 'Enter') runPlugin('add', $('spec').value.trim()) })
 
   // ================= MCP（主-从） =================
   let servers = []
@@ -961,7 +875,6 @@
   }
 
   // ---- init ----
-  refreshPlugins()
   pluginApi.mcpList().then((s) => { servers = s; renderServerList(); if (servers.length) select(0) })
   refreshSkills()
 </script>

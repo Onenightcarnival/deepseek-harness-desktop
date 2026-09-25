@@ -26,15 +26,10 @@ const STARTUP_TIMEOUT_MS = 90_000
 const UPDATE_REPO = (() => {
   try { return require('./package.json').updateRepo || null } catch { return null }
 })()
-/** Build flavor stamped by the release workflow (extraMetadata.flavor): "full" or "minimal". */
-const APP_FLAVOR = (() => {
-  try { return require('./package.json').flavor === 'full' ? 'full' : 'minimal' } catch { return 'minimal' }
-})()
 
 /**
  * In-place app updates (Windows only): electron-updater against the GitHub
- * Releases of UPDATE_REPO, channel by flavor (`latest.yml` minimal,
- * `full.yml` full). The new installer downloads in the background; on
+ * Releases of UPDATE_REPO (`latest.yml`). The new installer downloads in the background; on
  * confirmation the app quits and runs it silently (`/S --updated`), which
  * relaunches the app. macOS keeps the download-page flow.
  */
@@ -48,8 +43,6 @@ function getAppUpdater() {
     const { autoUpdater } = require('electron-updater')
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = true
-    // The channel setter turns allowDowngrade on; it is reset right after.
-    autoUpdater.channel = APP_FLAVOR === 'full' ? 'full' : 'latest'
     autoUpdater.allowDowngrade = false
     autoUpdater.logger = { info: (m) => console.log('[updater]', m), warn: (m) => console.warn('[updater]', m), error: (m) => console.error('[updater]', m), debug: () => {} }
     autoUpdater.on('download-progress', (p) => {
@@ -298,15 +291,14 @@ async function checkCoreUpdates(interactive) {
       }
       return
     }
-    // Same release line only: presets are pinned to the bundled core's line.
-    // Cross-line upgrades ship as a new desktop build.
+    // Same release line only; a new line ships as a new desktop build.
     const bundledVersion = runtimeVersion(bundledDshDir()) || current
     if (releaseLine(latest) !== releaseLine(bundledVersion)) {
       if (interactive) {
         const { response } = await dialog.showMessageBox({
           type: 'info', title: 'DeepSeek Harness',
           message: `npm 上有 dsh v${latest}，属于新的版本线（${releaseLine(latest)}）`,
-          detail: `本安装包内置 v${bundledVersion}（${releaseLine(bundledVersion)} 线）。预置插件与内核版本线绑定；跨线升级需下载新版桌面安装包。`,
+          detail: `本安装包内置 v${bundledVersion}（${releaseLine(bundledVersion)} 线）。第三方插件按版本线适配；跨线升级需下载新版桌面安装包。`,
           buttons: ['检查应用更新', '好'], defaultId: 0, cancelId: 1,
         })
         if (response === 0) await checkAppUpdates(true)
@@ -362,17 +354,7 @@ async function installCoreRuntime(version) {
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true }, null, 2))
     const pnpmCjs = pnpmEntry()
     if (!pnpmCjs) { reject(new Error('bundled pnpm missing')); return }
-    // Full flavor: the upgraded runtime carries the preset plugins at the
-    // exact staged versions (the profile resolves plugins from the active
-    // runtime's app closure).
-    const presetSpecs = []
-    try {
-      const presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8'))
-      for (const group of [presets.seed, presets.carry]) {
-        for (const [name, v] of Object.entries(group || {})) presetSpecs.push(`${name}@${v}`)
-      }
-    } catch { /* minimal flavor */ }
-    const child = spawn(process.execPath, [...nodePreloadArgs(), pnpmCjs, '--config.minimum-release-age=0', '--config.auto-install-peers=false', 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
+    const child = spawn(process.execPath, [...nodePreloadArgs(), pnpmCjs, '--config.minimum-release-age=0', '--config.auto-install-peers=false', 'add', `@deepseek-ai/dsh@${version}`, '--ignore-scripts'], {
       cwd: dir,
       env: withNodePreloadEnv(withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' })),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -385,23 +367,6 @@ async function installCoreRuntime(version) {
     child.on('exit', (code) => {
       if (code === 0 && runtimeVersion(dir) === version) {
         ensureDesktopPlugins(dir)
-        // Presets are registered as dependencies of the dsh app manifest
-        // (same as stage-dsh.mjs); the profile resolves through the app's
-        // dependency closure, not the runtime root manifest.
-        if (presetSpecs.length > 0) {
-          try {
-            const appManifestPath = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
-            const appManifest = JSON.parse(fs.readFileSync(appManifestPath, 'utf8'))
-            appManifest.dependencies ??= {}
-            for (const spec of presetSpecs) {
-              const name = spec.slice(0, spec.lastIndexOf('@'))
-              appManifest.dependencies[name] ??= '*'
-            }
-            fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2))
-          } catch (err) {
-            console.error('preset registration in upgraded runtime failed:', err)
-          }
-        }
         // keep only the freshly installed runtime
         for (const name of fs.readdirSync(runtimesDir())) {
           if (name !== version) fs.rmSync(path.join(runtimesDir(), name), { recursive: true, force: true })
@@ -426,8 +391,8 @@ function logFile() {
 
 /**
  * Plugin-composition overlay shipped with the app (desktop-patch.yml,
- * applied via `dsh web --patch`): presets, disables or reconfigures plugins
- * on top of the upstream defaults.
+ * applied via `dsh web --patch`): disables or reconfigures plugins on top of
+ * the upstream defaults.
  */
 function desktopPatchArgs() {
   const candidates = [
@@ -893,13 +858,6 @@ function openCliTerminal() {
   shell.openPath(binDir)
 }
 
-/**
- * Preset plugin bundles (full flavor): plugins-full.json → stage-dsh.mjs →
- * preset-plugins.json inside the runtime. Registration as a dependency of
- * the bundled dsh app makes a package resolvable from the profile;
- * activation requires the profile manifest to list it in dependencies +
- * dsh.profile.bundles (syncPresetPlugins).
- */
 /** Does <base>/<name> hold a loadable copy of the package (entry file exists)? */
 function pkgUsableAt(base, name) {
   const pkgDir = path.join(base, ...name.split('/'))
@@ -929,58 +887,6 @@ function pkgIntactAt(base, name) {
     if (!entry && !bundlePatch) return fs.existsSync(path.join(pkgDir, 'index.js')) || !!pj.dsh
     return true
   } catch { return false }
-}
-
-/**
- * Stub loader entries whose package no longer resolves (flavor switch,
- * broken local install); dsh refuses to boot on such an entry
- * (ERR_MODULE_NOT_FOUND while loading the plugin tree). User config is not
- * edited: a no-op stub package with a marker file goes into the profile's
- * node_modules. The stub retires once the active runtime provides the real
- * package; a real pnpm (re)install overwrites it.
- */
-function healUnresolvableEntries() {
-  try {
-    const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
-    const localNm = path.join(profileDir, 'node_modules')
-    const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
-    const candidates = new Set()
-    for (const file of ['cordis.yml', 'cordis.patch.yml']) {
-      let text = ''
-      try { text = fs.readFileSync(path.join(profileDir, file), 'utf8') } catch { continue }
-      // Entry lines: `name: "@scope/pkg"` (quotes optional), npm name
-      // grammar only.
-      for (const m of text.matchAll(/^[\s-]*name:\s*["']?((?:@[a-z0-9~][\w.-]*\/)?[a-z0-9~][\w.-]*)["']?\s*$/gim)) {
-        candidates.add(m[1])
-      }
-    }
-    // Retire stubs by marker file, not by config reference: dsh rewrites
-    // cordis.yml and may drop the entry behind a stub, and an orphaned stub
-    // still shadows the real package.
-    try {
-      const names = []
-      for (const e of fs.readdirSync(localNm)) {
-        if (e.startsWith('@')) {
-          try { for (const s of fs.readdirSync(path.join(localNm, e))) names.push(`${e}/${s}`) } catch { /* ignore */ }
-        } else if (e !== '.pnpm' && e !== '.bin') names.push(e)
-      }
-      for (const name of names) {
-        const dir = path.join(localNm, ...name.split('/'))
-        if (fs.existsSync(path.join(dir, '.dsh-desktop-stub')) && pkgUsableAt(runtimeNm, name)) {
-          fs.rmSync(dir, { recursive: true, force: true })
-          console.log(`retired stub of ${name}: runtime provides it again`)
-        }
-      }
-    } catch { /* no node_modules yet */ }
-    for (const name of candidates) {
-      if (pkgUsableAt(runtimeNm, name)) continue // resolvable from runtime closure
-      if (pkgUsableAt(localNm, name)) continue // real local install (or an existing stub)
-      writeStubPackage(localNm, name)
-      console.log(`stubbed unresolvable plugin entry ${name}`)
-    }
-  } catch (err) {
-    console.error('entry healing failed (non-fatal):', err)
-  }
 }
 
 /** Replace whatever is at localNm/<name> with a no-op stub package. */
@@ -1077,38 +983,6 @@ function applyBootErrorFix(errText) {
         fixed = true
       }
     }
-    // duplicate loader entry id: a preset bundle's insert collides with an
-    // entry already in the user's config. The preset bundle is withdrawn;
-    // the user's entry keeps the feature via the carried package.
-    const dupIds = [...errText.matchAll(/duplicate loader entry id: ([^\s'"]+)/g)].map((m) => m[1])
-    if (dupIds.length > 0) {
-      let presets = {}
-      try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')).seed || {} } catch { /* minimal */ }
-      const pkgPath = path.join(profileDir, 'package.json')
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
-      const bundles = (pkg.dsh && pkg.dsh.profile && pkg.dsh.profile.bundles) || []
-      let wrote = false
-      for (const name of Object.keys(presets)) {
-        if (!bundles.includes(name)) continue
-        let patchText = ''
-        try {
-          const pj = JSON.parse(fs.readFileSync(path.join(runtimeNm, ...name.split('/'), 'package.json'), 'utf8'))
-          const rel = pj.dsh && pj.dsh.bundle && pj.dsh.bundle.patch
-          if (rel) patchText = fs.readFileSync(path.join(runtimeNm, ...name.split('/'), rel), 'utf8')
-        } catch { continue }
-        if (dupIds.some((id) => new RegExp(`id:\\s*["']?${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']?\\s*$`, 'm').test(patchText))) {
-          pkg.dsh.profile.bundles = pkg.dsh.profile.bundles.filter((x) => x !== name)
-          if (pkg.dependencies) delete pkg.dependencies[name]
-          // excluded for this app version only; the next installed version
-          // retries
-          addPresetExclusion(name)
-          console.log(`boot heal: excluded preset ${name} for this version (duplicate entry id with user config)`)
-          wrote = true
-          fixed = true
-        }
-      }
-      if (wrote) fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
-    }
     // Unparseable overlay/config file: dsh refuses to boot. The file is
     // quarantined (renamed, content kept). When it is the profile patch
     // holding the managed blocks, those are regenerated from the desktop's
@@ -1170,12 +1044,6 @@ function applyBootErrorFix(errText) {
         }
       }
       if (fixed) fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
-      // keep the managed list consistent (sync would repair it anyway)
-      try {
-        const managedPath = path.join(app.getPath('userData'), 'managed-presets.json')
-        const managed = JSON.parse(fs.readFileSync(managedPath, 'utf8'))
-        fs.writeFileSync(managedPath, JSON.stringify(managed.filter((n) => !bundleNames.includes(n)), null, 2))
-      } catch { /* no list */ }
     }
     return fixed
   } catch (err) {
@@ -1184,162 +1052,29 @@ function applyBootErrorFix(errText) {
   }
 }
 
-/** Per-app-version duplicate-id exclusions: presets whose entry id collides
- * with an entry already in the user's config, skipped by the sync for this
- * app version only. Every new install retries once. */
-function presetExclusionsPath() { return path.join(app.getPath('userData'), 'preset-exclusions.json') }
-function readPresetExclusions() {
-  try {
-    const j = JSON.parse(fs.readFileSync(presetExclusionsPath(), 'utf8'))
-    if (j.version === app.getVersion() && Array.isArray(j.names)) return j.names
-  } catch { /* none for this version */ }
-  return []
-}
-function addPresetExclusion(name) {
-  const names = readPresetExclusions()
-  if (!names.includes(name)) names.push(name)
-  fs.writeFileSync(presetExclusionsPath(), JSON.stringify({ version: app.getVersion(), names }, null, 2))
-}
-
 /**
- * Manual resync: clear this version's duplicate-id exclusions and stale
- * preset stubs, then relaunch; the boot sync re-applies every preset the
- * build ships.
+ * Profiles seeded by the full flavor of earlier releases list its preset
+ * plugins in dependencies + dsh.profile.bundles. Those packages no longer ship
+ * with the app; the recorded names leave the profile once, then the record.
  */
-async function restorePresetPlugins() {
-  let presets = {}
-  try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')).seed || {} } catch { /* minimal */ }
-  const names = Object.keys(presets)
-  if (names.length === 0) {
-    await dialog.showMessageBox({
-      type: 'info', title: 'DeepSeek Harness',
-      message: '当前版本没有预置插件', detail: '此安装包为精简版；预置插件随 full 版分发。', buttons: ['好'],
-    })
-    return
-  }
-  const { response } = await dialog.showMessageBox({
-    type: 'question', title: 'DeepSeek Harness',
-    message: '重新同步本版本的预置插件？',
-    detail: `以下插件将全部挂载：\n${names.join('\n')}\n\n需要重启应用。`,
-    buttons: ['同步并重启', '取消'], defaultId: 0, cancelId: 1,
-  })
-  if (response !== 0) return
+function retireManagedPresets() {
+  const managedPath = path.join(app.getPath('userData'), 'managed-presets.json')
+  let managed
+  try { managed = JSON.parse(fs.readFileSync(managedPath, 'utf8')) } catch { return }
   try {
-    fs.rmSync(presetExclusionsPath(), { force: true })
-    const localNm = path.join(app.getPath('home'), '.dsh', 'profiles', 'web', 'node_modules')
-    for (const name of names) {
-      const dir = path.join(localNm, ...name.split('/'))
-      if (fs.existsSync(path.join(dir, '.dsh-desktop-stub'))) fs.rmSync(dir, { recursive: true, force: true })
-    }
-  } catch (err) {
-    console.error('preset resync failed:', err)
-  }
-  app.relaunch()
-  app.quit()
-}
-
-/**
- * Declarative preset sync, run before every server boot in every flavor:
- * the preset portion of the user profile is made to match
- * preset-plugins.json exactly (minus this version's duplicate-id exclusions
- * and anything the active runtime cannot resolve).
- * userData/managed-presets.json records what is currently managed, so a
- * flavor switch or trimmed manifest knows what to remove; user-installed
- * plugins are never touched.
- */
-function syncPresetPlugins() {
-  try {
-    let manifest = {}
-    try { manifest = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')).seed || {} } catch { /* minimal flavor */ }
-    const managedPath = path.join(app.getPath('userData'), 'managed-presets.json')
-    let managed = []
-    try { managed = JSON.parse(fs.readFileSync(managedPath, 'utf8')) } catch {
-      // migrate from the old seeding marker, then retire it
-      try {
-        managed = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'seeded-presets.json'), 'utf8'))
-        fs.rmSync(path.join(app.getPath('userData'), 'seeded-presets.json'), { force: true })
-      } catch { /* fresh */ }
-    }
-    if (Object.keys(manifest).length === 0 && managed.length === 0) return
-    const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
-    const localNm = path.join(profileDir, 'node_modules')
-    const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
-    const resolvable = (name) => pkgIntactAt(localNm, name) || pkgIntactAt(runtimeNm, name)
-
-    // Preset leftovers in the profile's own node_modules shadow the closure
-    // (broken ones crash boot, stale versions keep serving the old plugin).
-    // Both are cleared; resolution falls back to the closure link.
-    for (const name of new Set([...Object.keys(manifest), ...managed])) {
-      const localDir = path.join(localNm, ...name.split('/'))
-      try {
-        if (!fs.existsSync(localDir)) continue
-        if (!pkgIntactAt(localNm, name)) {
-          fs.rmSync(localDir, { recursive: true, force: true })
-          console.log(`cleared broken leftover of ${name} from profile node_modules`)
-          continue
-        }
-        const want = manifest[name]
-        if (!want) continue
-        let got = null
-        try { got = JSON.parse(fs.readFileSync(path.join(localDir, 'package.json'), 'utf8')).version } catch { /* unreadable: left to pkgIntactAt */ }
-        if (got && got !== want) {
-          fs.rmSync(localDir, { recursive: true, force: true })
-          console.log(`cleared stale ${name}@${got} from profile node_modules (preset is ${want})`)
-        }
-      } catch { /* best-effort */ }
-    }
-
-    const exclusions = readPresetExclusions()
-    const desired = Object.keys(manifest).filter((n) => !exclusions.includes(n) && resolvable(n))
-    for (const name of Object.keys(manifest)) {
-      if (exclusions.includes(name)) console.log(`preset ${name} excluded for this version (entry-id conflict)`)
-      else if (!resolvable(name)) console.log(`preset ${name} not resolvable by active runtime; skipped`)
-    }
-
-    const pkgPath = path.join(profileDir, 'package.json')
-    const pkg = fs.existsSync(pkgPath)
-      ? JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
-      : { name: 'dsh-profile-web', private: true, dependencies: {}, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } } }
-    pkg.dependencies ??= {}
-    pkg.dsh ??= {}
-    pkg.dsh.profile ??= {}
-    pkg.dsh.profile.bundles ??= []
-    let changed = false
-
-    // Remove what we manage but no longer want (flavor switch, trimmed
-    // manifest, unresolvable, excluded).
+    const pkgPath = path.join(app.getPath('home'), '.dsh', 'profiles', 'web', 'package.json')
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+    const bundles = (pkg.dsh && pkg.dsh.profile && pkg.dsh.profile.bundles) || []
     for (const name of managed) {
-      if (desired.includes(name)) continue
-      if (pkg.dsh.profile.bundles.includes(name) || pkg.dependencies[name]) {
-        pkg.dsh.profile.bundles = pkg.dsh.profile.bundles.filter((x) => x !== name)
-        delete pkg.dependencies[name]
-        console.log(`preset sync: removed ${name}`)
-        changed = true
-      }
+      if (pkg.dependencies) delete pkg.dependencies[name]
+      if (pkg.dsh && pkg.dsh.profile) pkg.dsh.profile.bundles = bundles.filter((x) => x !== name)
     }
-    // Ensure every desired preset is present at the manifest version (the
-    // profile pin follows the installed build).
-    for (const name of desired) {
-      if (pkg.dependencies[name] !== manifest[name]) {
-        if (pkg.dependencies[name]) console.log(`preset sync: ${name} ${pkg.dependencies[name]} -> ${manifest[name]}`)
-        else console.log(`preset sync: applied ${name}`)
-        pkg.dependencies[name] = manifest[name]
-        changed = true
-      }
-      if (!pkg.dsh.profile.bundles.includes(name)) {
-        pkg.dsh.profile.bundles.push(name)
-        changed = true
-      }
-    }
-
-    if (changed) {
-      fs.mkdirSync(profileDir, { recursive: true })
-      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
-    }
-    fs.writeFileSync(managedPath, JSON.stringify(desired, null, 2))
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
+    console.log(`retired preset plugins: ${managed.join(', ')}`)
   } catch (err) {
-    console.error('preset sync failed (non-fatal):', err)
+    console.error('preset retirement failed (non-fatal):', err)
   }
+  for (const name of ['managed-presets.json', 'preset-exclusions.json', 'seeded-presets.json']) fs.rmSync(path.join(app.getPath('userData'), name), { force: true })
 }
 
 async function startServer() {
@@ -1350,8 +1085,7 @@ async function startServer() {
       return
     }
     ensureDesktopPlugins(activeRuntime.dir)
-    syncPresetPlugins()
-    healUnresolvableEntries()
+    retireManagedPresets()
 
     const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
     // Electron-specific vars must not leak into the node child.
@@ -1599,10 +1333,9 @@ function buildMenu() {
     {
       label: '插件',
       submenu: [
-        { label: '配置中心…（插件 / MCP / 技能）', click: () => { openPluginManager() } },
+        { label: '配置中心…（MCP / 技能 / 通用 / 代理）', click: () => { openPluginManager() } },
         { label: '打开命令行窗口', click: () => { openCliTerminal() } },
         { type: 'separator' },
-        { label: '重新同步预置插件…', click: () => { restorePresetPlugins() } },
       ],
     },
     {
@@ -1624,23 +1357,6 @@ function buildMenu() {
 }
 
 /** Run the bundled dsh CLI (plugin management) and capture its output. */
-async function runDshCli(args) {
-  return new Promise((resolve) => {
-    const binDir = writeCliLaunchers()
-    const child = spawn(process.execPath, ['--expose-internals', ...nodePreloadArgs(), dshEntry(), ...args], {
-      env: prependEnvPath(withNodePreloadEnv(withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' })), binDir, path.delimiter),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-    let out = ''
-    const onChunk = (c) => { out = (out + c.toString()).slice(-20000) }
-    child.stdout.on('data', onChunk)
-    child.stderr.on('data', onChunk)
-    child.on('exit', (code) => resolve({ code, output: out }))
-    child.on('error', (err) => resolve({ code: -1, output: String(err) }))
-  })
-}
-
 let pluginWindow = null
 function openPluginManager() {
   if (pluginWindow && !pluginWindow.isDestroyed()) { pluginWindow.focus(); return }
@@ -1659,89 +1375,6 @@ function openPluginManager() {
   pluginWindow.loadFile(path.join(__dirname, 'plugins.html'))
   pluginWindow.on('closed', () => { pluginWindow = null })
 }
-
-ipcMain.handle('plugins:list', async () => {
-  try {
-    const manifest = path.join(app.getPath('home'), '.dsh', 'profiles', 'web', 'package.json')
-    const parsed = JSON.parse(fs.readFileSync(manifest, 'utf8'))
-    return { deps: parsed.dependencies ?? {}, bundles: parsed.dsh?.profile?.bundles ?? [] }
-  } catch {
-    return { deps: {}, bundles: [] }
-  }
-})
-/**
- * Extract the build-script approvals a failed install asks for:
- * - ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED prints an exact
- *   "allowBuilds:\n  <pkg@git+url#sha>: true" suggestion;
- * - ERR_PNPM_IGNORED_BUILDS lists bare package names.
- */
-function parseAllowBuildsRequests(output) {
-  const keys = []
-  const gitHint = /allowBuilds:\s*\n\s+(\S+): true/g
-  for (let m; (m = gitHint.exec(output)); ) keys.push(m[1])
-  const ignored = /Ignored build scripts: ([^\n]+)/g
-  for (let m; (m = ignored.exec(output)); ) {
-    for (const entry of m[1].split(',')) {
-      const name = entry.trim().replace(/@[\d][^@]*$/, '') // drop trailing @version
-      if (name) keys.push(name)
-    }
-  }
-  return [...new Set(keys)]
-}
-
-ipcMain.handle('plugins:run', async (_event, action, spec) => {
-  const cleaned = String(spec || '').trim()
-  // Every npm install spec shape is accepted (names, @scope/name@range,
-  // github:owner/repo#ref, git+https://…, https://….tgz, file:/link:).
-  // Args go through spawn(argv[]) without a shell; only whitespace/control
-  // characters are rejected.
-  if (cleaned.length === 0 || cleaned.length > 300 || /[\s'"`\\]/.test(cleaned)) {
-    return { code: -1, output: '无效的包名' }
-  }
-  if (action !== 'add' && action !== 'remove') return { code: -1, output: '无效操作' }
-  const result = await runDshCli(['plugin', '--profile', 'web', action, cleaned])
-  if (action === 'add' && result.code !== 0) {
-    result.needsAllowBuilds = parseAllowBuildsRequests(result.output)
-  }
-  return result
-})
-/**
- * Turn an absolute local path into a portable pnpm spec. Forward slashes
- * everywhere: npm-package-arg parses file:/link: specs as URLs and rejects
- * raw Windows backslashes.
- */
-function localSpec(protocol, absPath) {
-  let p = path.resolve(absPath)
-  if (process.platform === 'win32') p = p.replace(/\\/g, '/')
-  return `${protocol}:${p}`
-}
-/**
- * Install a plugin from local disk. Directory → link: (symlink; edits are
- * picked up on app restart, the plugin manages its own node_modules); .tgz
- * (npm pack output) → file: (copied, deps installed). Picker paths skip the
- * text-spec hygiene check; args go through spawn(argv[]).
- */
-ipcMain.handle('plugins:installLocal', async (_event, kind) => {
-  if (kind !== 'dir' && kind !== 'tgz') return { code: -1, output: '无效操作' }
-  const opts = kind === 'dir'
-    ? { title: '选择插件目录（需含 package.json）', properties: ['openDirectory'] }
-    : { title: '选择插件包（npm pack 打出的 .tgz）', properties: ['openFile'], filters: [{ name: 'npm 包', extensions: ['tgz'] }] }
-  const { canceled, filePaths } = await dialog.showOpenDialog(pluginWindow || mainWindow, opts)
-  if (canceled || filePaths.length === 0) return { canceled: true, code: 0, output: '' }
-  const target = filePaths[0]
-  if (kind === 'dir' && !fs.existsSync(path.join(target, 'package.json'))) {
-    return { code: -1, output: `所选目录没有 package.json：\n${target}` }
-  }
-  const spec = localSpec(kind === 'dir' ? 'link' : 'file', target)
-  const result = await runDshCli(['plugin', '--profile', 'web', 'add', spec])
-  if (result.code !== 0) result.needsAllowBuilds = parseAllowBuildsRequests(result.output)
-  result.spec = spec
-  return result
-})
-ipcMain.handle('plugins:restart', async () => {
-  app.relaunch()
-  app.quit()
-})
 
 /**
  * Probe an MCP server config before saving: HTTP servers get a real

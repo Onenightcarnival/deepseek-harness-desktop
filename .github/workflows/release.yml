@@ -13,16 +13,12 @@ jobs:
   build:
     strategy:
       fail-fast: false
-      # flavor：minimal（plugins.json）与 full（plugins-full.json，产物名带 -full）。
       matrix:
         include:
-          - { os: windows-latest, args: --win --x64,   flavor: minimal }   # x64
-          - { os: windows-latest, args: --win --x64,   flavor: full }
-          - { os: macos-latest,   args: --mac --arm64, flavor: minimal }   # Apple Silicon
-          - { os: macos-latest,   args: --mac --arm64, flavor: full }
+          - { os: windows-latest, args: --win --x64 }     # x64
+          - { os: macos-latest,   args: --mac --arm64 }   # Apple Silicon
           # 需要 Intel Mac 版时取消注释：
-          # - { os: macos-15-intel, args: --mac --x64, flavor: minimal }
-          # - { os: macos-15-intel, args: --mac --x64, flavor: full }
+          # - { os: macos-15-intel, args: --mac --x64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -39,32 +35,19 @@ jobs:
 
       - name: Stage dsh runtime
         run: node stage-dsh.mjs
-        env:
-          DSH_FLAVOR: ${{ matrix.flavor }}
-        # 锁定 dsh 版本：DSH_VERSION: <版本>
+        # 锁定 dsh 版本：env DSH_VERSION: <版本>
 
       - name: Install desktop shell deps
         run: npm install --no-audit --no-fund
 
-      # full flavor：产物名加 -full 后缀，更新信息走 full 频道（full.yml），
-      # 包内 package.json 记 flavor=full 供应用内更新选频道。minimal 用默认的 latest.yml。
       - name: Build installer
-        shell: bash
-        run: |
-          EXTRA=()
-          if [ "${{ matrix.flavor }}" = "full" ]; then
-            EXTRA+=('-c.nsis.artifactName=DeepSeek-Harness-Setup-${version}-win-${arch}-full.${ext}')
-            EXTRA+=('-c.mac.artifactName=DeepSeek-Harness-${version}-mac-${arch}-full.${ext}')
-            EXTRA+=('-c.extraMetadata.flavor=full')
-            EXTRA+=('-c.publish.channel=full')
-          fi
-          npx electron-builder ${{ matrix.args }} --publish never "${EXTRA[@]}"
+        run: npx electron-builder ${{ matrix.args }} --publish never
 
-      # *.yml（latest.yml / full.yml）是应用内更新的元数据，随安装包一起发布。
+      # latest.yml 是应用内更新的元数据，随安装包一起发布。
       # NSIS 差分已关闭（nsis.differentialPackage=false），更新整包下载，不产出 .exe.blockmap。
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.os }}-${{ matrix.flavor }}
+          name: desktop-${{ matrix.os }}
           path: |
             dist/*.exe
             dist/*.dmg
@@ -93,11 +76,9 @@ jobs:
           body: |
             DeepSeek Harness 非官方桌面版。上游：https://github.com/deepseek-ai/deepseek-harness
 
-            每个平台两种安装包：
-            - 常规版：只含官方 dsh。
-            - `-full`：预置任务看板、SSH 远程连接与 dsh-better-sidebar 工作台。
+            安装包只含官方 dsh；插件在 dsh 界面的「插件」页安装，推荐清单见 README。
 
-            Windows 版支持应用内更新：帮助 → 检查应用更新，后台下载后重启即完成安装（`latest.yml` / `full.yml` 为更新元数据）。
+            Windows 版支持应用内更新：帮助 → 检查应用更新，后台下载后重启即完成安装（`latest.yml` 为更新元数据）。
 
             安装包未签名：
             - Windows：SmartScreen 提示时点「更多信息 → 仍要运行」。

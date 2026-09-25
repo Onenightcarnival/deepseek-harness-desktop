@@ -1053,28 +1053,50 @@ function applyBootErrorFix(errText) {
 }
 
 /**
- * Profiles seeded by the full flavor of earlier releases list its preset
- * plugins in dependencies + dsh.profile.bundles. Those packages no longer ship
- * with the app; the recorded names leave the profile once, then the record.
+ * Plugins the full flavor of earlier releases seeded into the profile, with
+ * the first version of each that runs on the bundled dsh line. Older pins
+ * cannot activate on this line (`settingsScope` and the other 0.1.5 seams
+ * are gone), so they leave the profile whoever installed them.
+ */
+const RETIRED_PRESET_FLOORS = {
+  '@linxin666/dsh-client-ui-task-board': '0.4.0',
+  'dsh-better-sidebar': '0.21.0',
+  '@linxin666/dsh-ssh': '0.4.0',
+}
+
+/**
+ * Remove retired presets from the profile manifest (dependencies +
+ * dsh.profile.bundles): every name in userData/managed-presets.json, plus any
+ * RETIRED_PRESET_FLOORS name pinned below its floor. Runs before every boot;
+ * the record files are deleted once consumed.
  */
 function retireManagedPresets() {
-  const managedPath = path.join(app.getPath('userData'), 'managed-presets.json')
-  let managed
-  try { managed = JSON.parse(fs.readFileSync(managedPath, 'utf8')) } catch { return }
+  const userData = app.getPath('userData')
+  let managed = []
+  try { managed = JSON.parse(fs.readFileSync(path.join(userData, 'managed-presets.json'), 'utf8')) } catch { /* no record */ }
   try {
     const pkgPath = path.join(app.getPath('home'), '.dsh', 'profiles', 'web', 'package.json')
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
-    const bundles = (pkg.dsh && pkg.dsh.profile && pkg.dsh.profile.bundles) || []
-    for (const name of managed) {
-      if (pkg.dependencies) delete pkg.dependencies[name]
-      if (pkg.dsh && pkg.dsh.profile) pkg.dsh.profile.bundles = bundles.filter((x) => x !== name)
+    const deps = pkg.dependencies || {}
+    const retire = new Set(Array.isArray(managed) ? managed : [])
+    for (const [name, floor] of Object.entries(RETIRED_PRESET_FLOORS)) {
+      const spec = deps[name]
+      if (typeof spec !== 'string') continue
+      const pinned = /^[~^]?(\d+\.\d+\.\d+(?:-[\w.]+)?)$/.exec(spec.trim())
+      if (pinned && compareVersions(pinned[1], floor) < 0) retire.add(name)
     }
-    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
-    console.log(`retired preset plugins: ${managed.join(', ')}`)
+    const bundles = (pkg.dsh && pkg.dsh.profile && pkg.dsh.profile.bundles) || []
+    const gone = [...retire].filter((name) => name in deps || bundles.includes(name))
+    if (gone.length > 0) {
+      for (const name of gone) delete deps[name]
+      if (pkg.dsh && pkg.dsh.profile) pkg.dsh.profile.bundles = bundles.filter((name) => !retire.has(name))
+      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
+      console.log(`retired preset plugins: ${gone.join(', ')}`)
+    }
   } catch (err) {
     console.error('preset retirement failed (non-fatal):', err)
   }
-  for (const name of ['managed-presets.json', 'preset-exclusions.json', 'seeded-presets.json']) fs.rmSync(path.join(app.getPath('userData'), name), { force: true })
+  for (const name of ['managed-presets.json', 'preset-exclusions.json', 'seeded-presets.json']) fs.rmSync(path.join(userData, name), { force: true })
 }
 
 async function startServer() {

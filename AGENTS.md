@@ -144,7 +144,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 
 - **壳不预置任何第三方插件**；安装、移除、启停走 dsh 0.1.7 自带的插件页（`ui-plugin-manager`，底层是 profile 里的 pnpm）。推荐清单只写在 README。
 - **0.1.7 起 profile 不再持有 dsh 自身的拷贝**：`~/.dsh/profiles/web/package.json` 只列用户装的插件与 bundles，dsh 包一律从运行时闭包解析。壳对 profile 的写入只剩托管区块（MCP / settings）与一次性退场。
-- **旧 full 版的预置在首次启动时退场**（`retireManagedPresets`）：按 userData/managed-presets.json 的名单从 profile 的 dependencies 与 bundles 删除，再删记录文件（managed-presets / preset-exclusions / seeded-presets）。没有记录文件即不动 profile。
+- **旧 full 版的预置在每次启动前退场**（`retireManagedPresets`）：userData/managed-presets.json 名单里的包，加上 `RETIRED_PRESET_FLOORS` 里钉在版本下限之下的包（task-board < 0.4.0、better-sidebar < 0.21.0、ssh < 0.4.0，这些版本在 0.1.7 线上等 `settingsScope` 等已删服务，永远激活不了），从 profile 的 dependencies 与 bundles 删除；记录文件消费后删除。用户自装的新线版本不动。
 - **加载器条目引用已消失的包会阻断启动**，反应式兜底 applyBootErrorFix：启动失败时按报错文本识别 Cannot find package / cannot resolve profile bundle，链接运行时拷贝、放无操作占位包（带 `.dsh-desktop-stub` 标记）或撤 bundle 后重试（最多 6 次）。
 - **配置文件损坏的自愈**：第三方写入器可能把块条目追加在 flow 空列表 `[]` 之后，dsh 报 "failed to parse overlay" 或 "must be a top-level YAML array"（空文件解析为 null 同样命中；主目录层 `~/.dsh/cordis.patch.yml` 也在检查范围）。先剔除孤立 `[]` 行保住用户条目（留 .bak），修不好再整文件隔离（.broken-*）；隔离的是 MCP 托管区块所在文件时，从 userData 的 mcp-servers.json 重建。
 

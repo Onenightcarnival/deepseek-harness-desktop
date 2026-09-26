@@ -6,18 +6,22 @@
  * Usage:
  *   node stage-dsh.mjs                  # stage for the host platform/arch
  *   node stage-dsh.mjs win32 x64        # cross-stage (adds npm --os/--cpu)
- *   node stage-dsh.mjs --update-locks   # live resolution, written to locks/package-lock.json
+ *   node stage-dsh.mjs --update-locks   # live resolution, written to locks/<flavor>.package-lock.json
  *
  * Env:
  *   DSH_VERSION  npm version/tag of @deepseek-ai/dsh. Default: install from
- *                the committed lockfile (locks/package-lock.json). A version
- *                that differs from the locked one, or DSH_STAGE_LIVE=1,
- *                switches to live npm resolution.
+ *                the committed lockfile (locks/<flavor>.package-lock.json).
+ *                A version that differs from the locked one, or
+ *                DSH_STAGE_LIVE=1, switches to live npm resolution.
+ *   DSH_FLAVOR   preset-plugin manifest: "minimal" (default) reads
+ *                plugins.json, any other value reads plugins-<flavor>.json
+ *                (full -> plugins-full.json). A missing manifest is an error.
  */
 import { execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { applySshKeepalivePatch } from './patches/ssh-terminal-keepalive.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const argv = process.argv.slice(2).filter((a) => !a.startsWith('--'))
@@ -35,6 +39,23 @@ fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-run
 
 // --ignore-scripts: every native dep (node-pty, sharp via @img/*, koffi via
 // @koromix/*) ships prebuilt binaries selected by npm's os/cpu fields.
+// Preset plugin packages install next to dsh (one node_modules tree);
+// main.js activates them from preset-plugins.json (written below).
+let extraPackages = []
+const flavor = (process.env.DSH_FLAVOR || 'minimal').trim()
+const pluginsFile = path.join(here, flavor === 'minimal' ? 'plugins.json' : `plugins-${flavor}.json`)
+if (!fs.existsSync(pluginsFile)) {
+  throw new Error(`flavor "${flavor}" 对应的插件清单不存在：${pluginsFile}`)
+}
+const pluginsManifest = JSON.parse(fs.readFileSync(pluginsFile, 'utf8'))
+// "packages": seeded into the user profile (activated). "carry": installed
+// and registered only; activation stays with the user. Mutually exclusive
+// families (skins) are carry.
+const seedPackages = pluginsManifest.packages ?? []
+const carryPackages = pluginsManifest.carry ?? []
+extraPackages = [...seedPackages, ...carryPackages]
+if (extraPackages.length > 0) console.log(`flavor "${flavor}" seed: [${seedPackages.join(', ')}] carry: [${carryPackages.join(', ')}]`)
+
 const cross = platform !== process.platform || arch !== process.arch
 const crossFlags = cross ? [`--os=${platform}`, `--cpu=${arch}`, '--force'] : []
 const baseFlags = ['--ignore-scripts', '--no-audit', '--no-fund']
@@ -44,7 +65,7 @@ const baseFlags = ['--ignore-scripts', '--no-audit', '--no-fund']
 // checked, one lock for every platform via os/cpu-conditional entries. Live
 // mode is the dsh-upgrade path (larger heap; --update-locks writes the new
 // lock back).
-const lockPath = path.join(here, 'locks', 'package-lock.json')
+const lockPath = path.join(here, 'locks', `${flavor}.package-lock.json`)
 const wantLive = updateLocks || process.env.DSH_STAGE_LIVE === '1'
 let useLock = false
 if (!wantLive && fs.existsSync(lockPath)) {
@@ -55,6 +76,10 @@ if (!wantLive && fs.existsSync(lockPath)) {
   } else {
     useLock = true
     const rootDeps = lock.packages[''].dependencies ?? {}
+    const lockPlugins = Object.keys(rootDeps).filter((n) => n !== '@deepseek-ai/dsh').sort()
+    if (lockPlugins.join() !== [...extraPackages].sort().join()) {
+      throw new Error(`锁文件与插件清单不一致：lock=[${lockPlugins}] manifest=[${extraPackages}]。运行 node stage-dsh.mjs --update-locks 重新生成 ${path.basename(lockPath)}`)
+    }
     console.log(`installing from lock ${path.basename(lockPath)} (dsh ${lockedDsh})`)
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true, dependencies: rootDeps }, null, 2))
     fs.copyFileSync(lockPath, path.join(dir, 'package-lock.json'))
@@ -69,7 +94,13 @@ if (!wantLive && fs.existsSync(lockPath)) {
 if (!useLock) {
   // Larger heap for arborist's backtracking. Locks remain the default path.
   const liveEnv = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=6144`.trim() }
+  // Step 1: dsh itself.
   execSync(`npm ${['install', `@deepseek-ai/dsh@${version}`, ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit', env: liveEnv })
+  // Step 2: preset plugin packages, at versions targeting the bundled dsh
+  // release.
+  if (extraPackages.length > 0) {
+    execSync(`npm ${['install', ...extraPackages, ...baseFlags, ...crossFlags].join(' ')}`, { cwd: dir, stdio: 'inherit', env: liveEnv })
+  }
   if (updateLocks) {
     fs.mkdirSync(path.dirname(lockPath), { recursive: true })
     fs.copyFileSync(path.join(dir, 'package-lock.json'), lockPath)
@@ -79,9 +110,9 @@ if (!useLock) {
 
 // ---- desktop-owned plugins ----
 // Plain packages under plugins/<name>: copied into the runtime tree and
-// registered in the dsh app manifest. Composed by main.js patch overlays,
-// never installed into the profile; main.js repeats the copy for upgraded
-// runtimes (ensureDesktopPlugins).
+// registered in the dsh app manifest (same closure as presets). Composed by
+// main.js patch overlays, never seeded into the profile; main.js repeats the
+// copy for upgraded runtimes (ensureDesktopPlugins).
 const desktopPluginNames = fs.readdirSync(path.join(here, 'plugins')).filter((n) => fs.existsSync(path.join(here, 'plugins', n, 'package.json')))
 for (const name of desktopPluginNames) {
   const dest = path.join(dir, 'node_modules', name)
@@ -95,6 +126,33 @@ for (const name of desktopPluginNames) {
   for (const name of desktopPluginNames) appManifest.dependencies[name] ??= '*'
   fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2))
   console.log(`desktop plugins in runtime: ${desktopPluginNames.join(', ')}`)
+}
+
+if (extraPackages.length > 0) {
+
+  // Register the preset plugins as dependencies of the bundled dsh app: dsh
+  // symlinks the app's dependency closure into $DSH_HOME/profiles/node_modules
+  // at boot, and the web profile resolves plugins through that closure only.
+  const rootManifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
+  const pluginNames = Object.keys(rootManifest.dependencies ?? {}).filter((n) => n !== '@deepseek-ai/dsh')
+  const appManifestPath = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+  const appManifest = JSON.parse(fs.readFileSync(appManifestPath, 'utf8'))
+  appManifest.dependencies ??= {}
+  for (const name of pluginNames) appManifest.dependencies[name] ??= '*'
+  fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2))
+  console.log(`registered preset plugins in dsh app manifest: ${pluginNames.join(', ')}`)
+
+  // Registration = resolvable. Activation happens at runtime: main.js seeds
+  // each preset into the profile manifest from this file of exact versions.
+  const ver = (name) => JSON.parse(fs.readFileSync(path.join(dir, 'node_modules', ...name.split('/'), 'package.json'), 'utf8')).version
+  const presets = { seed: {}, carry: {} }
+  for (const name of seedPackages) presets.seed[name] = ver(name)
+  for (const name of carryPackages) presets.carry[name] = ver(name)
+  fs.writeFileSync(path.join(dir, 'preset-plugins.json'), JSON.stringify(presets, null, 2))
+
+  // Desktop-local patches on the installed plugins. Anchors throw on upstream
+  // drift: a version bump fails the stage.
+  if (applySshKeepalivePatch(dir)) console.log('applied patch: ssh terminal keepalive')
 }
 
 // ---- bundled CLI tooling ----
@@ -199,7 +257,7 @@ const JUNK_DIRS = new Set(['test', 'tests', '__tests__', 'docs', 'example', 'exa
 let pruned = 0
 const isDeepseek = (p) => p.split(path.sep).includes('@deepseek-ai')
 // Plugin packages keep their prose too: a plugin's README is user-facing.
-const pluginRoots = new Set(desktopPluginNames.map((n) => path.join(nm, ...n.split('/'))))
+const pluginRoots = new Set([...extraPackages, ...desktopPluginNames].map((n) => path.join(nm, ...n.split('/'))))
 const inPluginPkg = (p) => { for (const root of pluginRoots) if (p === root || p.startsWith(root + path.sep)) return true; return false }
 const countFiles = (p) => {
   let n = 0

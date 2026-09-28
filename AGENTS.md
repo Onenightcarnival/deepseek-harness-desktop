@@ -184,6 +184,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 
 ### Windows
 
+- **uv ZIP 解压使用 `tar -xmf`，不还原归档时间戳**：Windows 自带 bsdtar 遇到无法表示的 ZIP 时间戳会报 `Can't restore time: Invalid argument` 并退出非零；运行时只需要文件内容。
 - **给子进程改 PATH 必须大小写不敏感找键**（`prependEnvPath`）：`{...process.env}` 展开出的真实键通常是 `Path`，再赋值 `PATH` 造出重复键，子进程实际生效的 PATH 可能只剩新加目录。
 - **代理变量清场同样大小写不敏感**：展开出的真实键常是 `Http_Proxy`。`~/.npmrc` 的 `proxy=` 只能靠显式 `npm_config_proxy` 压过。
 - **系统代理是按 URL 逐次求值的函数**：把某一个地址的 `resolveProxy` 结果当全局 `HTTP_PROXY` 会丢掉 PAC 与例外列表，内网不通。

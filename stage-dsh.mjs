@@ -204,7 +204,7 @@ if (UV_TRIPLE === undefined) throw new Error(`no uv build mapped for ${key}`)
   if (ext === 'zip') {
     // bsdtar (Windows 10+, macOS) extracts zips; GNU tar on Linux does not.
     if (process.platform === 'linux') execSync(`unzip -q -o "${tmpArchive}" -d "${extractDir}"`, { stdio: 'inherit' })
-    else execSync(`tar -xf "${tmpArchive}" -C "${extractDir}"`, { stdio: 'inherit' })
+    else execSync(`tar -xmf "${tmpArchive}" -C "${extractDir}"`, { stdio: 'inherit' })
   } else {
     execSync(`tar -xzf "${tmpArchive}" -C "${extractDir}"`, { stdio: 'inherit' })
   }

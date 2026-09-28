@@ -158,8 +158,8 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
   - userData/managed-presets.json 只记录当前托管名单，不碰用户自装插件。
   - 预置在配置中心移除后下次启动恢复；退出预置用 minimal 版。不可解析的名字自动跳过。
   - 应用内升级的运行时同样带预置包并重新注册（installCoreRuntime）。
-- **profile 自己 node_modules 里的残缺包会遮蔽闭包软链并阻断启动**。包是否完好分场景：作为加载器条目需要 JS 入口存在（pkgUsableAt）；作为 bundle/依赖只需清单与声明产物齐全（pkgIntactAt，元 bundle 包没有 main 属正常）。syncPresetPlugins 每次启动对预置包做残缺清理。
-- **加载器持久化的条目引用已消失的包会阻断启动**。healUnresolvableEntries 给解析不到的条目放一个无操作占位包（带 `.dsh-desktop-stub` 标记），真包可用时占位退位，真实重装直接覆盖。主动扫描不完备，反应式兜底 applyBootErrorFix：启动失败时按报错文本识别 Cannot find package / cannot resolve profile bundle，做占位/软链/撤 bundle 后重试（最多 6 次）。
+- **profile 自己 node_modules 里的残缺包会遮蔽闭包软链并阻断启动**。包是否完好分场景：作为加载器条目需要 JS 入口存在（pkgUsableAt）；作为 bundle/依赖只需清单与声明产物齐全（pkgIntactAt，元 bundle 包没有入口属正常）。入口按 `main`、再按 `exports["."]`（字符串或 default/import/require/node 条件）识别（pkgEntryOf）；只有 `exports` 的包同样算完好。syncPresetPlugins 每次启动对预置包做残缺清理。
+- **加载器持久化的条目引用已消失的包会阻断启动**。healUnresolvableEntries 给解析不到的条目放一个无操作占位包（带 `.dsh-desktop-stub` 标记），真包可用时占位退位，真实重装直接覆盖。两处占位（主动扫描与 applyBootErrorFix）都不覆盖 pkgIntactAt 为真的包：占位包没有 `dsh.bundle.patch`，内核插件管理器会把它标成「没有声明组合包」。主动扫描不完备，反应式兜底 applyBootErrorFix：启动失败时按报错文本识别 Cannot find package / cannot resolve profile bundle，做占位/软链/撤 bundle 后重试（最多 6 次）。
 - **配置文件损坏的自愈**：第三方写入器可能把块条目追加在 flow 空列表 `[]` 之后，dsh 报 "failed to parse overlay" 或 "must be a top-level YAML array"（空文件解析为 null 同样命中；主目录层 `~/.dsh/cordis.patch.yml` 也在检查范围）。先剔除孤立 `[]` 行保住用户条目（留 .bak），修不好再整文件隔离（.broken-*）；隔离的是 MCP 托管区块所在文件时，从 userData 的 mcp-servers.json 重建。
 - **互斥型插件族（皮肤）只能 carry 不能 seed**：全部播种会同时注入多套皮肤，且 insert id 与用户旧装条目冲突。seed 清单已不含的名字每次启动撤活。
 - **duplicate loader entry id**：预置 bundle 的 insert id 与用户旧配置条目重复时撤我方 bundle 并写入 preset-exclusions.json，仅对当前应用版本生效，下一个版本自动重试。菜单「插件 → 重新同步预置插件…」清排除记录立即重试。

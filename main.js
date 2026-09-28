@@ -900,13 +900,31 @@ function openCliTerminal() {
  * activation requires the profile manifest to list it in dependencies +
  * dsh.profile.bundles (syncPresetPlugins).
  */
+
+/**
+ * The package's entry file relative to its root: `main`, else the `.` export
+ * (string, or the first string among its default / import / require / node
+ * conditions), else undefined.
+ */
+function pkgEntryOf(pj) {
+  if (typeof pj.main === 'string' && pj.main !== '') return pj.main
+  const exports = pj.exports
+  const root = typeof exports === 'string' ? exports : (exports && typeof exports === 'object' ? exports['.'] : undefined)
+  if (typeof root === 'string') return root
+  if (root && typeof root === 'object') {
+    for (const key of ['default', 'import', 'require', 'node']) {
+      if (typeof root[key] === 'string') return root[key]
+    }
+  }
+  return undefined
+}
+
 /** Does <base>/<name> hold a loadable copy of the package (entry file exists)? */
 function pkgUsableAt(base, name) {
   const pkgDir = path.join(base, ...name.split('/'))
   try {
     const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'))
-    const entry = pj.main || (typeof pj.exports === 'string' ? pj.exports : null) || 'index.js'
-    return fs.existsSync(path.join(pkgDir, entry))
+    return fs.existsSync(path.join(pkgDir, pkgEntryOf(pj) || 'index.js'))
   } catch { return false }
 }
 
@@ -922,7 +940,7 @@ function pkgIntactAt(base, name) {
   const pkgDir = path.join(base, ...name.split('/'))
   try {
     const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'))
-    const entry = pj.main || (typeof pj.exports === 'string' ? pj.exports : null)
+    const entry = pkgEntryOf(pj)
     const bundlePatch = pj.dsh && pj.dsh.bundle && pj.dsh.bundle.patch
     if (entry && !fs.existsSync(path.join(pkgDir, entry))) return false
     if (bundlePatch && !fs.existsSync(path.join(pkgDir, bundlePatch))) return false
@@ -974,7 +992,7 @@ function healUnresolvableEntries() {
     } catch { /* no node_modules yet */ }
     for (const name of candidates) {
       if (pkgUsableAt(runtimeNm, name)) continue // resolvable from runtime closure
-      if (pkgUsableAt(localNm, name)) continue // real local install (or an existing stub)
+      if (pkgUsableAt(localNm, name) || pkgIntactAt(localNm, name)) continue // real local install (or an existing stub)
       writeStubPackage(localNm, name)
       console.log(`stubbed unresolvable plugin entry ${name}`)
     }
@@ -1062,7 +1080,7 @@ function applyBootErrorFix(errText) {
         fixed = true
         stat = null
       }
-      if (!pkgUsableAt(localNm, name)) {
+      if (!pkgUsableAt(localNm, name) && !pkgIntactAt(localNm, name)) {
         if (pkgUsableAt(runtimeNm, name)) {
           // runtime ships it but the profile did not resolve it: link the
           // runtime copy in

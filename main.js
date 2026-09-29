@@ -11,8 +11,7 @@ const { app, BrowserWindow, dialog, shell, Menu, Tray, nativeImage, powerSaveBlo
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
-const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, satisfiesNode, upsertManagedBlock, buildMcpBlock, prependEnvPath,
-  COMMON_SETTINGS, validateCommonSettings, buildSettingsBlock, groupCommonSettings,
+const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, satisfiesNode, prependEnvPath,
   listSkillStore, skillExists, removeSkill, setSkillEnabled, skillDetail, readSkillFile, SKILL_DISABLED_DIR,
   applyProxyEnv, PROXY_ENV_KEYS, normalizeGeneralSettings, hideToTrayEffective } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
@@ -438,13 +437,6 @@ function desktopPatchArgs() {
   return p ? ['--patch', p] : []
 }
 
-// ---- GUI-managed MCP server configuration ----
-//
-// Servers live in a marker-fenced managed block of the user's profile patch
-// layer (~/.dsh/profiles/web/cordis.patch.yml). dsh hot-reloads the file and
-// dsh-mcp-client hot-swaps the config: saving takes effect without a
-// restart. Only the fenced block is touched.
-
 /**
  * Proxy config store: {mode: 'none'|'system'|'manual', host, port, bypass,
  * auth, login, remember, password?}. `password` is persisted only with
@@ -532,65 +524,6 @@ async function startForwarder() {
  */
 function withProxyEnv(env) {
   return applyProxyEnv(env, forwarder ? forwarder.port : 0, readProxyConfig())
-}
-
-function mcpStorePath() { return path.join(app.getPath('userData'), 'mcp-servers.json') }
-function profilePatchPath() { return path.join(app.getPath('home'), '.dsh', 'profiles', 'web', 'cordis.patch.yml') }
-
-function readMcpServers() {
-  try { return JSON.parse(fs.readFileSync(mcpStorePath(), 'utf8')) } catch { return [] }
-}
-
-// ---- common settings (curated built-in plugin config overrides) ----
-// Registry: runtime.js COMMON_SETTINGS. Values persist in userData and land
-// in the profile patch layer as a second managed block ('settings'), same
-// mechanism and hot reload as the MCP block; both are regenerated together
-// on quarantine self-heal.
-function settingsStorePath() { return path.join(app.getPath('userData'), 'common-settings.json') }
-function readCommonSettings() {
-  try { return JSON.parse(fs.readFileSync(settingsStorePath(), 'utf8')) } catch { return {} }
-}
-function applySettingsToProfile(values) {
-  const file = profilePatchPath()
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  let text = ''
-  try { text = fs.readFileSync(file, 'utf8') } catch { text = '[]\n' }
-  fs.writeFileSync(file, upsertManagedBlock(text, 'settings', buildSettingsBlock(values)))
-}
-
-/** Apply the GUI-managed MCP servers into the profile patch layer. */
-function applyMcpToProfile(servers) {
-  const file = profilePatchPath()
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  let text = ''
-  try { text = fs.readFileSync(file, 'utf8') } catch { text = '[]\n' }
-  fs.writeFileSync(file, upsertManagedBlock(text, 'mcp', buildMcpBlock(servers)))
-  // remove the legacy launcher overlay (userData/mcp-patch.yml)
-  try { fs.rmSync(path.join(app.getPath('userData'), 'mcp-patch.yml'), { force: true }) } catch { /* gone */ }
-}
-
-/** Validate one MCP server object from the GUI; returns an error string or null. */
-function validateMcpServer(s, seen) {
-  if (!/^[A-Za-z0-9_-]{1,32}$/.test(s.serverName || '')) return `服务器名 "${s.serverName}" 无效（限 [A-Za-z0-9_-]{1,32}）`
-  if (s.enabled !== undefined && typeof s.enabled !== 'boolean') return `"${s.serverName}" 的 enabled 无效`
-  if (seen.has(s.serverName)) return `服务器名 "${s.serverName}" 重复`
-  seen.add(s.serverName)
-  const noCtl = (v) => typeof v === 'string' && v.length < 2000 && !/[\r\n\0]/.test(v)
-  if (s.transport === 'stdio') {
-    if (!noCtl(s.command) || s.command.trim() === '') return `"${s.serverName}" 缺少 command`
-    if (s.args && (!Array.isArray(s.args) || !s.args.every(noCtl))) return `"${s.serverName}" 的 args 无效`
-    if (s.cwd !== undefined && s.cwd !== '' && !noCtl(s.cwd)) return `"${s.serverName}" 的工作目录无效`
-  } else if (s.transport === 'streamable-http') {
-    if (!noCtl(s.url) || !/^https?:\/\//.test(s.url)) return `"${s.serverName}" 的 url 无效`
-  } else {
-    return `"${s.serverName}" 的 transport 无效`
-  }
-  for (const dict of [s.env, s.headers]) {
-    if (dict === undefined) continue
-    if (typeof dict !== 'object' || Array.isArray(dict)) return `"${s.serverName}" 的 env/headers 无效`
-    for (const [k, v] of Object.entries(dict)) if (!noCtl(k) || !noCtl(v)) return `"${s.serverName}" 的 env/headers 含非法字符`
-  }
-  return null
 }
 
 // ---- GUI-managed skills ----
@@ -1128,9 +1061,7 @@ function applyBootErrorFix(errText) {
       if (wrote) fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
     }
     // Unparseable overlay/config file: dsh refuses to boot. The file is
-    // quarantined (renamed, content kept). When it is the profile patch
-    // holding the managed blocks, those are regenerated from the desktop's
-    // own store.
+    // quarantined (renamed, content kept).
     const dshHome = path.join(app.getPath('home'), '.dsh')
     const badConfigFiles = new Set()
     // YAML syntax errors: "dsh: failed to parse <label> <path>: YAMLException…"
@@ -1164,13 +1095,6 @@ function applyBootErrorFix(errText) {
         fs.renameSync(file, quarantined)
         console.log(`boot heal: quarantined unparseable config ${file} -> ${quarantined}`)
         fixed = true
-        if (path.basename(file) === 'cordis.patch.yml' && path.dirname(file) === path.join(dshHome, 'profiles', 'web')) {
-          try {
-            applyMcpToProfile(readMcpServers())
-            applySettingsToProfile(readCommonSettings())
-            console.log('boot heal: regenerated MCP + settings managed blocks from the desktop store')
-          } catch (err) { console.error('managed block regeneration failed:', err) }
-        }
       } catch (err) { console.error(`quarantine of ${file} failed:`, err) }
     }
     // unresolvable profile bundle: dsh names it verbatim
@@ -1617,7 +1541,7 @@ function buildMenu() {
     {
       label: '插件',
       submenu: [
-        { label: '配置中心…（插件 / MCP / 技能）', click: () => { openPluginManager() } },
+        { label: '配置中心…（插件 / 技能 / 代理）', click: () => { openPluginManager() } },
         { label: '打开命令行窗口', click: () => { openCliTerminal() } },
         { type: 'separator' },
         { label: '重新同步预置插件…', click: () => { restorePresetPlugins() } },
@@ -1761,165 +1685,6 @@ ipcMain.handle('plugins:restart', async () => {
   app.quit()
 })
 
-/**
- * Probe an MCP server config before saving: HTTP servers get a real
- * initialize POST; stdio commands are spawned and must survive ~2.5s.
- * Returns { ok, detail }; never throws.
- */
-async function testMcpServer(server, extraPath) {
-  if (server.transport === 'streamable-http') {
-    try {
-      const res = await electronNet.fetch(server.url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json, text/event-stream',
-          ...(server.headers || {}),
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0', id: 1, method: 'initialize',
-          params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'dsh-desktop-test', version: '1.0' } },
-        }),
-        signal: AbortSignal.timeout(6000),
-      })
-      return { ok: res.ok, detail: `HTTP ${res.status}${res.ok ? '，服务可达' : '（服务可达但返回异常，检查路径与认证头）'}` }
-    } catch (err) {
-      const msg = String(err && (err.cause?.message || err.message) || err)
-      let hint = ''
-      if (/certificate|SSL|TLS|wrong version number|packet length/i.test(msg)) {
-        hint = '（协议可能不匹配，本机/内网服务通常为 http://）'
-      } else if (/ECONNREFUSED/.test(msg)) {
-        hint = '（端口无服务监听，确认 MCP 服务器已启动）'
-      } else if (/timeout|aborted/i.test(msg)) {
-        hint = '（连接超时，地址不可达或服务无响应）'
-      }
-      return { ok: false, detail: `连接失败：${msg} ${hint}` }
-    }
-  }
-  // stdio: spawn the command the way dsh does (PATH with the launchers,
-  // proxy env, the entry's own env/cwd), run a real MCP initialize handshake
-  // over stdin/stdout, then count tools. Long timeout: `npx -y …` / `uvx …`
-  // download on first run.
-  return new Promise((resolve) => {
-    const env = withProxyEnv({ ...process.env })
-    Object.assign(env, server.env || {})
-    if (extraPath) prependEnvPath(env, extraPath, path.delimiter)
-    const { file, args, shell } = resolveSpawnCommand(server.command, server.args || [], env)
-    let child
-    try {
-      child = spawn(file, args, {
-        env, shell,
-        cwd: server.cwd && server.cwd.trim() ? server.cwd.trim() : undefined,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      })
-    } catch (err) {
-      resolve({ ok: false, detail: `无法启动命令：${String(err && err.message || err)}` })
-      return
-    }
-    let errTail = ''
-    let outBuf = ''
-    let done = false
-    let serverInfo = null
-    const finish = (r) => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      try { child.kill() } catch { /* gone */ }
-      resolve(r)
-    }
-    const send = (msg) => { try { child.stdin.write(JSON.stringify(msg) + '\n') } catch { /* closed */ } }
-    child.stderr.on('data', (c) => { errTail = (errTail + c.toString()).slice(-600) })
-    child.stdout.on('data', (c) => {
-      outBuf += c.toString()
-      let nl
-      while ((nl = outBuf.indexOf('\n')) !== -1) {
-        const line = outBuf.slice(0, nl).trim()
-        outBuf = outBuf.slice(nl + 1)
-        if (!line) continue
-        let msg
-        try { msg = JSON.parse(line) } catch { continue } // servers may log to stdout before speaking JSON-RPC
-        if (msg.id === 1 && msg.result) {
-          serverInfo = msg.result.serverInfo || {}
-          send({ jsonrpc: '2.0', method: 'notifications/initialized' })
-          send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
-        } else if (msg.id === 1 && msg.error) {
-          finish({ ok: false, detail: `服务器拒绝 initialize：${msg.error.message || JSON.stringify(msg.error)}` })
-        } else if (msg.id === 2) {
-          const n = msg.result && Array.isArray(msg.result.tools) ? msg.result.tools.length : '?'
-          const who = serverInfo && serverInfo.name ? `${serverInfo.name}${serverInfo.version ? ' ' + serverInfo.version : ''}` : '服务器'
-          finish({ ok: true, detail: `握手成功：${who}，提供 ${n} 个工具` })
-        }
-      }
-    })
-    child.on('error', (err) => finish({ ok: false, detail: `无法启动命令：${String(err.message)}（命令不存在或不可执行）` }))
-    child.on('exit', (code) => {
-      finish({ ok: false, detail: `命令在完成 MCP 握手前退出 (exit ${code})${errTail ? `：${errTail.trim()}` : ''}` })
-    })
-    const timer = setTimeout(() => {
-      finish({ ok: false, detail: `90 秒内未完成 MCP 握手（首次运行需下载依赖，可稍后重试；确认命令是 stdio 型 MCP 服务器）${errTail ? `：${errTail.trim()}` : ''}` })
-    }, 90_000)
-    send({
-      jsonrpc: '2.0', id: 1, method: 'initialize',
-      params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'dsh-desktop-test', version: '1.0' } },
-    })
-  })
-}
-
-/**
- * Resolve a stdio command the way cross-spawn (the MCP SDK's spawner) does
- * on Windows: a bare name that lands on a .cmd/.bat launcher (the npx/pnpm
- * shims, npm-installed CLIs) runs through cmd.exe. Elsewhere the command
- * runs as given.
- */
-function resolveSpawnCommand(command, args, env) {
-  if (process.platform !== 'win32' || /[\\/]/.test(command) || /\.(exe|cmd|bat|com)$/i.test(command)) return { file: command, args, shell: false }
-  const pathVar = Object.keys(env).find((k) => k.toLowerCase() === 'path')
-  const dirs = (pathVar ? env[pathVar] : '').split(';').filter(Boolean)
-  for (const dir of dirs) {
-    for (const ext of ['.exe', '.com', '.cmd', '.bat']) {
-      const candidate = path.join(dir, command + ext)
-      if (!fs.existsSync(candidate)) continue
-      if (ext === '.cmd' || ext === '.bat') {
-        // cmd.exe parses the joined line: anything with spaces/metachars is
-        // quoted (the launcher path lives under %APPDATA%\DeepSeek Harness\bin).
-        const quote = (a) => (/[\s"&|<>^]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)
-        return { file: quote(candidate), args: args.map(quote), shell: true }
-      }
-      return { file: candidate, args, shell: false }
-    }
-  }
-  return { file: command, args, shell: false }
-}
-
-ipcMain.handle('mcp:test', async (_event, server) => {
-  const err = validateMcpServer(server, new Set())
-  if (err) return { ok: false, detail: err }
-  let extraPath
-  try { extraPath = writeCliLaunchers() } catch { extraPath = undefined }
-  return testMcpServer(server, extraPath)
-})
-ipcMain.handle('mcp:list', async () => readMcpServers())
-ipcMain.handle('mcp:save', async (_event, servers) => {
-  if (!Array.isArray(servers) || servers.length > 50) return { ok: false, error: '数据格式无效' }
-  const seen = new Set()
-  for (const s of servers) {
-    const err = validateMcpServer(s, seen)
-    if (err) return { ok: false, error: err }
-  }
-  try {
-    fs.writeFileSync(mcpStorePath(), JSON.stringify(servers, null, 2))
-    applyMcpToProfile(servers)
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: String(err && err.message || err) }
-  }
-})
-ipcMain.handle('app:openLog', async () => {
-  const lf = logFile()
-  if (lf && fs.existsSync(lf)) shell.openPath(lf)
-})
-
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 ipcMain.handle('skills:list', async () => listSkills())
 ipcMain.handle('skills:open', async (_event, name) => {
@@ -2052,30 +1817,6 @@ ipcMain.handle('proxy:test', async (_event, config, url) => {
     })
   } finally {
     probe.close()
-  }
-})
-
-// ---- common settings ----
-ipcMain.handle('settings:get', async () => ({
-  options: COMMON_SETTINGS.map(({ key, label, hint, type, def }) => ({ key, label, hint, type, def })),
-  groups: groupCommonSettings().map((g) => ({ entryId: g.entryId, label: g.label, hint: g.hint, keys: g.options.map((o) => o.key) })),
-  values: readCommonSettings(),
-}))
-ipcMain.handle('settings:save', async (_event, values) => {
-  const err = validateCommonSettings(values)
-  if (err) return { ok: false, error: err }
-  // keep only known keys with real overrides
-  const clean = {}
-  for (const opt of COMMON_SETTINGS) {
-    const v = values[opt.key]
-    if (v !== undefined && v !== null && v !== '') clean[opt.key] = v
-  }
-  try {
-    fs.writeFileSync(settingsStorePath(), JSON.stringify(clean, null, 2))
-    applySettingsToProfile(clean)
-    return { ok: true }
-  } catch (e) {
-    return { ok: false, error: String((e && e.message) || e) }
   }
 })
 

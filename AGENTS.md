@@ -13,11 +13,10 @@
 ```
 main.js             主进程：服务拉起/守护、菜单、更新检查（应用 = GitHub Release，
                     内核 = npm registry + 应用内升级到 userData/runtimes/）、CLI 启动器
-                    （dsh/pnpm/node/npx/uvx/uv 六个 shim）、配置中心 IPC（插件/MCP/技能/
-                    内置插件/通用/代理）、通用配置的执行（托盘、隐藏到托盘、登录项、powerSaveBlocker）
+                    （dsh/pnpm/node/npx/uvx/uv 六个 shim）、配置中心 IPC（插件/技能/通用/代理）、
+                    通用配置的执行（托盘、隐藏到托盘、登录项、powerSaveBlocker）
 runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目录选择（升级版优先 + 损坏回退）、
-                    engines 校验、cordis patch 托管区块编辑（upsertManagedBlock/buildMcpBlock）、
-                    常用设置注册表（COMMON_SETTINGS/SETTING_GROUPS）、通用配置归一化
+                    engines 校验、通用配置归一化
                     （normalizeGeneralSettings/hideToTrayEffective）、zip 技能包识别（collectSkills）、
                     SKILL.md frontmatter 解析（parseSkillFrontmatter）、技能详情与围栏读取
                     （skillDetail/readSkillFile）、技能启用/关闭（listSkillStore/setSkillEnabled）、
@@ -33,13 +32,8 @@ plugins/            壳自带的 dsh 插件包：dsh-desktop-directory-picker（
 proxy-forward.js    进程内转发代理（无 Electron 依赖，resolveSystem 由 main.js 注入）：
                     createForwarder 起 127.0.0.1 随机端口，处理 CONNECT 隧道与明文 HTTP，
                     每条连接经 routeFor 决定直连或上游代理
-plugins.html        配置中心窗口：插件 / MCP 服务器 / 技能 / 内置插件 / 通用 / 代理六页。
-                    MCP 为主从布局，streamable-http（地址/请求头）或 stdio（命令/参数/环境变量/
-                    工作目录），stdio 的「测试」在 main.js testMcpServer 里做 initialize + tools/list
-                    握手。技能页：frontmatter 卡片列表 + 详情（字段表、文件树、只读预览）。
-                    内置插件页按 SETTING_GROUPS 分卡片渲染 COMMON_SETTINGS，值存
-                    userData/common-settings.json，经 buildSettingsBlock 写进用户 patch 层的
-                    'settings' 托管区块。加一个配置项 = 注册表加一行；新插件的第一项再加一行分组。
+plugins.html        配置中心窗口：插件 / 技能 / 通用 / 代理四页。
+                    技能页：frontmatter 卡片列表 + 详情（字段表、文件树、只读预览）。
                     通用页五个开关（G_ITEMS），值存 userData/general.json，切换即保存并由主进程
                     applyGeneralSettings 立即应用
 preload-plugins.js  配置中心的 contextBridge
@@ -160,7 +154,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
   - 应用内升级的运行时同样带预置包并重新注册（installCoreRuntime）。
 - **profile 自己 node_modules 里的残缺包会遮蔽闭包软链并阻断启动**。包是否完好分场景：作为加载器条目需要 JS 入口存在（pkgUsableAt）；作为 bundle/依赖只需清单与声明产物齐全（pkgIntactAt，元 bundle 包没有入口属正常）。入口按 `main`、再按 `exports["."]`（字符串或 default/import/require/node 条件）识别（pkgEntryOf）；只有 `exports` 的包同样算完好。syncPresetPlugins 每次启动对预置包做残缺清理。
 - **加载器持久化的条目引用已消失的包会阻断启动**。healUnresolvableEntries 给解析不到的条目放一个无操作占位包（带 `.dsh-desktop-stub` 标记），真包可用时占位退位，真实重装直接覆盖。两处占位（主动扫描与 applyBootErrorFix）都不覆盖 pkgIntactAt 为真的包：占位包没有 `dsh.bundle.patch`，内核插件管理器会把它标成「没有声明组合包」。主动扫描不完备，反应式兜底 applyBootErrorFix：启动失败时按报错文本识别 Cannot find package / cannot resolve profile bundle，做占位/软链/撤 bundle 后重试（最多 6 次）。
-- **配置文件损坏的自愈**：第三方写入器可能把块条目追加在 flow 空列表 `[]` 之后，dsh 报 "failed to parse overlay" 或 "must be a top-level YAML array"（空文件解析为 null 同样命中；主目录层 `~/.dsh/cordis.patch.yml` 也在检查范围）。先剔除孤立 `[]` 行保住用户条目（留 .bak），修不好再整文件隔离（.broken-*）；隔离的是 MCP 托管区块所在文件时，从 userData 的 mcp-servers.json 重建。
+- **配置文件损坏的自愈**：第三方写入器可能把块条目追加在 flow 空列表 `[]` 之后，dsh 报 "failed to parse overlay" 或 "must be a top-level YAML array"（空文件解析为 null 同样命中；主目录层 `~/.dsh/cordis.patch.yml` 也在检查范围）。先剔除孤立 `[]` 行保住用户条目（留 .bak），修不好再整文件隔离（.broken-*）。
 - **互斥型插件族（皮肤）只能 carry 不能 seed**：全部播种会同时注入多套皮肤，且 insert id 与用户旧装条目冲突。seed 清单已不含的名字每次启动撤活。
 - **duplicate loader entry id**：预置 bundle 的 insert id 与用户旧配置条目重复时撤我方 bundle 并写入 preset-exclusions.json，仅对当前应用版本生效，下一个版本自动重试。菜单「插件 → 重新同步预置插件…」清排除记录立即重试。
 - **补丁打在应用闭包的拷贝上**；profile 里同版本的真实拷贝（用户手动 pnpm 装过同版本）会遮蔽它。
@@ -214,8 +208,6 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - **electron-builder 的 extraResources 默认排除 node_modules**，运行时必须走 afterPack 钩子复制。
 - **本仓库不能放进 pnpm workspace**（如上游 fork 的子目录）：electron-builder 向上探测 workspace 根并错误改用 pnpm 收集依赖。须拷到仓库外构建。
 - **CLI 启动器 dsh / pnpm / node 三件套缺一不可**（pnpm 生命周期脚本裸调 `node`），外加给 stdio MCP 用的 npx / uvx / uv。
-- **常用设置只能覆盖 web 组合树里的条目**；agent 预设（config/agent-presets/*.yml）不经过 cordis.patch.yml。compaction-basic 在 web 组合里默认 `disabled: true`，「上下文自动压缩」项走注册表的 `kind: 'enable'`，与同条目的 config 键合并成一个覆盖条目。
-- **MCP 的 GUI 配置写入 `~/.dsh/profiles/web/cordis.patch.yml` 的标记托管区块**（`# >>> dsh-desktop mcp >>>`），dsh 热加载、dsh-mcp-client 支持配置热替换，保存即生效。只改标记区块，保留用户手写条目；文件默认内容是 flow 空列表 `[]`，与块列表不能共存，upsertManagedBlock 已处理。移除条目时经 `pnpm dlx` 启动的旧 MCP 进程可能残留到应用退出。
 - **技能启用/关闭是目录搬移**：dsh 的文件系统 provider 只扫根目录顶层，没有按名禁用的配置。关闭 = 移到 `userData/disabled-skills/`（不在 `~/.dsh` 与任何扫描根之内），目录监视 2 秒内生效。同名在两边同时存在时拒绝搬移。旧位置 `~/.dsh/skills/.disabled/` 与 `~/.dsh/disabled_skills/` 在首次列表时自动迁移。有 shell 的 agent 仍可全盘搜索到任何目录；该位置只保证不进入 dsh 的目录树。
 
 ## 文档维护

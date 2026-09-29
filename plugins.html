@@ -100,40 +100,19 @@
   .toggle input:checked + .knob { background: #4d6bfe; }
   .toggle input:checked + .knob::after { left: 17px; }
 
-  /* ---- MCP master-detail ---- */
+  /* ---- 通用页的行 ---- */
   .g-rows { display: flex; flex-direction: column; }
   .g-row { display: flex; align-items: center; gap: 16px; padding: 13px 0; border-bottom: 1px solid #26262e; }
   .g-row:last-child { border-bottom: none; padding-bottom: 2px; }
   .g-row .g-text { flex: 1; min-width: 0; }
   .g-row .g-label { color: #e6e6ec; font-size: 13px; }
   .g-row.off { opacity: .55; }
-  #pane-mcp { flex-direction: row; }
-  #mcp-side { width: 220px; flex: none; border-right: 1px solid #26262e; display: flex; flex-direction: column; }
-  #mcp-side .side-head { padding: 16px 14px 10px; display: flex; align-items: center; justify-content: space-between; }
-  #mcp-side .side-head h2 { font-size: 14px; }
-  #mcp-side .add-btn { border-radius: 8px; padding: 4px 10px; font-size: 15px; line-height: 1; }
-  #mcp-servers { flex: 1; overflow: auto; padding: 0 8px 12px; }
-  .srv { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
-  .srv:hover { background: #20202a; }
-  .srv.sel { background: #2a2c3a; }
-  .srv .dot { width: 8px; height: 8px; border-radius: 50%; background: #4a4a56; flex: none; }
-  .srv .dot.ok { background: #58c07a; } .srv .dot.err { background: #e05b5b; }
-  .srv .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .srv .off { color: #7a7a86; font-size: 10.5px; }
-  #mcp-empty { color: #7a7a86; font-size: 12px; text-align: center; padding: 30px 12px; }
-  #mcp-detail { flex: 1; overflow: auto; padding: 18px 22px; }
-  .cs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; align-items: start; }
   .cs-card { background: #1a1a21; border: 1px solid #26262e; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; min-width: 0; }
   .cs-card-title { color: #e6e6ec; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-  .cs-card-id { color: #7a7a86; font-weight: 400; font-size: 11px; background: #23232b; padding: 1px 6px; border-radius: 4px; }
   .cs-card > .meta { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #26262e; }
   .cs-card .field:last-child { margin-bottom: 0; }
   .field { margin-bottom: 14px; }
   .field label { display: block; color: #9a9aa6; font-size: 12px; margin-bottom: 6px; }
-  .kv-row { display: flex; gap: 6px; margin-bottom: 6px; }
-  .kv-row input { flex: 1; }
-  .kv-row .k { flex: 0 0 38%; }
-  #mcp-none { color: #7a7a86; display: flex; flex: 1; align-items: center; justify-content: center; }
 
   .log { background: #101014; border: 1px solid #26262e; border-radius: 10px; padding: 10px 12px;
          height: 170px; overflow: auto; white-space: pre-wrap;
@@ -148,9 +127,7 @@
   <nav id="nav">
     <div class="nav-title">配置中心</div>
     <button data-pane="plugins" class="active"><span class="icon">◫</span>插件</button>
-    <button data-pane="mcp"><span class="icon">⇄</span>MCP 服务器</button>
     <button data-pane="skills"><span class="icon">✦</span>技能</button>
-    <button data-pane="settings"><span class="icon">⚙</span>内置插件</button>
     <button data-pane="general"><span class="icon">☰</span>通用</button>
     <button data-pane="proxy"><span class="icon">⇌</span>代理</button>
   </nav>
@@ -175,57 +152,6 @@
     <div class="row" style="margin-top:10px; display:none" id="restart-plugins">
       <span class="spacer"></span><button class="primary" onclick="pluginApi.restart()">重启应用生效</button>
     </div>
-  </div>
-
-  <!-- ============ MCP ============ -->
-  <div class="pane" id="pane-mcp">
-    <div id="mcp-side">
-      <div class="side-head"><h2>MCP 服务器</h2><button class="add-btn" id="m-add" title="添加服务器">＋</button></div>
-      <div id="mcp-servers"></div>
-    </div>
-    <div id="mcp-detail" style="display:none">
-      <div class="row" style="margin-bottom:16px">
-        <h2 id="m-title" style="flex:1">服务器</h2>
-        <label class="toggle" title="启用 / 停用">
-          <input type="checkbox" id="m-enabled"><span class="knob"></span>
-        </label>
-      </div>
-      <div class="field"><label>名称（作为工具前缀 mcp__名称__，限字母数字_-）</label>
-        <input id="m-name" placeholder="my-server" spellcheck="false"></div>
-      <div class="field"><label>连接方式</label>
-        <select id="m-transport">
-          <option value="streamable-http">远程服务（streamable-http）</option>
-          <option value="stdio">本机命令（stdio）</option>
-        </select></div>
-      <div id="m-http-fields">
-        <div class="field"><label>服务器地址</label>
-          <input id="m-url" placeholder="http://127.0.0.1:8080/mcp" spellcheck="false"></div>
-        <div class="field"><label>请求头（可选）</label>
-          <div id="m-headers"></div>
-          <button class="ghost" id="m-add-header">＋ 添加请求头</button></div>
-      </div>
-      <div id="m-stdio-fields" style="display:none">
-        <div class="field"><label>命令（<code>npx</code>、<code>uvx</code> 由应用内置运行时提供）</label>
-          <input id="m-command" placeholder="npx" spellcheck="false"></div>
-        <div class="field"><label>参数（每行一个）</label>
-          <textarea id="m-args" rows="4" placeholder="-y&#10;@modelcontextprotocol/server-filesystem&#10;/Users/me/projects" spellcheck="false"></textarea></div>
-        <div class="field"><label>环境变量（可选）</label>
-          <div id="m-env"></div>
-          <button class="ghost" id="m-add-env">＋ 添加环境变量</button></div>
-        <div class="field"><label>工作目录（可选）</label>
-          <input id="m-cwd" placeholder="/path/to/project" spellcheck="false"></div>
-        <p class="sub">命令以当前用户身份在本机执行，只添加信任的服务器。首次运行 npx/uvx 会下载依赖。</p>
-      </div>
-      <div class="row" style="margin-top:18px">
-        <button class="danger" id="m-del">删除</button>
-        <span class="spacer"></span>
-        <button id="m-test">测试连接</button>
-        <button class="primary" id="m-save">保存</button>
-      </div>
-      <div class="msg" id="mcp-msg"></div>
-      <p class="sub" style="margin-top:14px">保存即生效，无需重启。连接状态用「测试连接」查看，或<a href="#" onclick="pluginApi.openLog();return false" style="color:#7ea0ff">打开服务日志</a>。</p>
-    </div>
-    <div id="mcp-none">左侧 ＋ 添加一个 MCP 服务器</div>
   </div>
 
   <!-- ============ 技能 ============ -->
@@ -267,15 +193,6 @@
         </div>
       </div>
     </div>
-  </div>
-
-  <!-- ============ 内置插件 ============ -->
-  <div class="pane single" id="pane-settings">
-    <h2>内置插件</h2>
-    <p class="sub">dsh 内置插件的常用配置项，保存即生效，留空恢复默认值。其他配置项可编辑 ~/.dsh/profiles/web/cordis.patch.yml。</p>
-    <div class="cs-grid" id="cs-fields">加载中…</div>
-    <div class="row" style="margin-top:16px"><span class="spacer"></span><button class="primary" id="cs-save">保存</button></div>
-    <div class="msg" id="cs-msg"></div>
   </div>
 
   <!-- ============ 通用 ============ -->
@@ -420,167 +337,6 @@
   $('add-dir').onclick = () => installLocal('dir')
   $('add-tgz').onclick = () => installLocal('tgz')
   $('spec').addEventListener('keydown', (e) => { if (e.key === 'Enter') runPlugin('add', $('spec').value.trim()) })
-
-  // ================= MCP（主-从） =================
-  let servers = []
-  let sel = -1
-  const testState = {}        // serverName -> 'ok' | 'err'
-
-  function renderServerList() {
-    const box = $('mcp-servers')
-    box.innerHTML = ''
-    if (servers.length === 0) {
-      const d = document.createElement('div'); d.id = 'mcp-empty'
-      d.textContent = '尚无服务器'
-      box.appendChild(d)
-    }
-    servers.forEach((s, i) => {
-      const div = document.createElement('div'); div.className = 'srv' + (i === sel ? ' sel' : '')
-      const dot = document.createElement('span')
-      dot.className = 'dot' + (testState[s.serverName] === 'ok' ? ' ok' : testState[s.serverName] === 'err' ? ' err' : '')
-      const name = document.createElement('span'); name.className = 'name'
-      name.textContent = s.serverName || '（未命名）'
-      div.appendChild(dot); div.appendChild(name)
-      if (s.enabled === false) {
-        const off = document.createElement('span'); off.className = 'off'; off.textContent = '已停用'
-        div.appendChild(off)
-      }
-      div.onclick = () => { select(i) }
-      box.appendChild(div)
-    })
-  }
-
-  function headerRow(k = '', v = '', kph = 'Authorization', vph = 'Bearer …') {
-    const row = document.createElement('div'); row.className = 'kv-row'
-    const ki = document.createElement('input'); ki.className = 'k'; ki.placeholder = kph; ki.value = k
-    const vi = document.createElement('input'); vi.placeholder = vph; vi.value = v
-    const x = document.createElement('button'); x.className = 'ghost'; x.textContent = '×'
-    x.onclick = () => row.remove()
-    row.appendChild(ki); row.appendChild(vi); row.appendChild(x)
-    return row
-  }
-
-  function select(i) {
-    sel = i
-    renderServerList()
-    const s = servers[i]
-    if (!s) { $('mcp-detail').style.display = 'none'; $('mcp-none').style.display = 'flex'; return }
-    $('mcp-none').style.display = 'none'
-    $('mcp-detail').style.display = 'block'
-    $('m-title').textContent = s.serverName || '新服务器'
-    $('m-enabled').checked = s.enabled !== false
-    $('m-name').value = s.serverName || ''
-    $('m-transport').value = s.transport === 'stdio' ? 'stdio' : 'streamable-http'
-    $('m-url').value = s.url || ''
-    const hb = $('m-headers'); hb.innerHTML = ''
-    for (const [k, v] of Object.entries(s.headers || {})) hb.appendChild(headerRow(k, v))
-    $('m-command').value = s.command || ''
-    $('m-args').value = Array.isArray(s.args) ? s.args.join('\n') : ''
-    const eb = $('m-env'); eb.innerHTML = ''
-    for (const [k, v] of Object.entries(s.env || {})) eb.appendChild(headerRow(k, v, 'API_KEY', '值'))
-    $('m-cwd').value = s.cwd || ''
-    applyTransportView()
-    $('mcp-msg').textContent = ''; $('mcp-msg').className = 'msg'
-  }
-
-  function applyTransportView() {
-    const stdio = $('m-transport').value === 'stdio'
-    $('m-http-fields').style.display = stdio ? 'none' : 'block'
-    $('m-stdio-fields').style.display = stdio ? 'block' : 'none'
-  }
-
-  function readKv(containerId) {
-    const out = {}
-    for (const row of $(containerId).querySelectorAll('.kv-row')) {
-      const [ki, vi] = row.querySelectorAll('input')
-      if (ki.value.trim()) out[ki.value.trim()] = vi.value.trim()
-    }
-    return out
-  }
-
-  function readForm() {
-    const s = { serverName: $('m-name').value.trim(), enabled: $('m-enabled').checked }
-    if ($('m-transport').value === 'stdio') {
-      s.transport = 'stdio'
-      s.command = $('m-command').value.trim()
-      s.args = $('m-args').value.split('\n').map((a) => a.trim()).filter(Boolean)
-      const env = readKv('m-env')
-      if (Object.keys(env).length) s.env = env
-      const cwd = $('m-cwd').value.trim()
-      if (cwd) s.cwd = cwd
-    } else {
-      s.transport = 'streamable-http'
-      s.url = $('m-url').value.trim()
-      const headers = readKv('m-headers')
-      if (Object.keys(headers).length) s.headers = headers
-    }
-    return s
-  }
-
-  /** Field-level check before save/test; returns an error string or null. */
-  function checkForm(s) {
-    if (!/^[A-Za-z0-9_-]{1,32}$/.test(s.serverName)) return '名称需为 1-32 位字母/数字/_-'
-    if (s.transport === 'stdio') {
-      if (!s.command) return '请填写命令（如 npx 或 uvx）'
-      if (/\s/.test(s.command)) return '命令栏只填可执行文件名，参数请写在下方「参数」里（每行一个）'
-    } else if (!/^https?:\/\//.test(s.url)) return '地址需以 http:// 或 https:// 开头'
-    return null
-  }
-
-  function setMsg(text, cls) { const m = $('mcp-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
-
-  async function persist() {
-    const res = await pluginApi.mcpSave(servers)
-    if (!res.ok) { setMsg('保存失败：' + res.error, 'err'); servers = await pluginApi.mcpList(); renderServerList(); return false }
-    setMsg('已保存', 'ok')
-    renderServerList()
-    return true
-  }
-
-  $('m-add').onclick = () => {
-    servers.push({ serverName: '', transport: 'streamable-http', url: '', enabled: true })
-    select(servers.length - 1)
-    $('m-name').focus()
-  }
-  $('m-save').onclick = async () => {
-    if (sel < 0) return
-    const s = readForm()
-    const bad = checkForm(s)
-    if (bad) { setMsg(bad, 'err'); return }
-    if (servers.some((x, i) => i !== sel && x.serverName === s.serverName)) { setMsg('名称与已有服务器重复', 'err'); return }
-    servers[sel] = s
-    if (await persist()) $('m-title').textContent = s.serverName
-  }
-  $('m-del').onclick = async () => {
-    if (sel < 0) return
-    const name = servers[sel].serverName || '（未命名）'
-    if (!confirm(`删除服务器 "${name}"？`)) return
-    servers.splice(sel, 1)
-    await persist()
-    select(servers.length ? Math.min(sel, servers.length - 1) : -1)
-  }
-  $('m-enabled').onchange = async () => {
-    if (sel < 0) return
-    servers[sel].enabled = $('m-enabled').checked
-    if (servers[sel].serverName) await persist()
-    renderServerList()
-  }
-  $('m-add-header').onclick = () => $('m-headers').appendChild(headerRow())
-  $('m-add-env').onclick = () => $('m-env').appendChild(headerRow('', '', 'API_KEY', '值'))
-  $('m-transport').onchange = applyTransportView
-  $('m-test').onclick = async () => {
-    if (sel < 0) return
-    const s = readForm()
-    const bad = checkForm(s)
-    if (bad) { setMsg(bad, 'err'); return }
-    $('m-test').disabled = true
-    setMsg(s.transport === 'stdio' ? '测试中…（首次运行需下载依赖，最长 90 秒）' : '测试中…')
-    const res = await pluginApi.mcpTest(s)
-    testState[s.serverName] = res.ok ? 'ok' : 'err'
-    setMsg(res.detail, res.ok ? 'ok' : 'err')
-    $('m-test').disabled = false
-    renderServerList()
-  }
 
   // ================= 技能 =================
   // 列表：SKILL.md frontmatter 摘要；详情：全部字段、源文件树、只读预览。
@@ -800,98 +556,6 @@
   }
   pluginApi.generalGet().then((r) => { gState = r.settings || {}; gPlatform = r.platform || ''; renderGeneral() }).catch((e) => gMsg('加载失败：' + e, 'err'))
 
-  // ================= 内置插件配置 =================
-  // 字段清单来自 runtime.js 的 COMMON_SETTINGS 注册表，按 SETTING_GROUPS 分卡片渲染。
-  let csOptions = []
-  function csMsg(text, cls) { const m = $('cs-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
-  async function loadCommonSettings() {
-    const { options, values, groups } = await pluginApi.settingsGet()
-    csOptions = options
-    const box = $('cs-fields')
-    box.innerHTML = ''
-    const byKey = new Map(options.map((o) => [o.key, o]))
-    const sections = (groups && groups.length ? groups : [{ label: '', hint: '', keys: options.map((o) => o.key) }])
-    for (const g of sections) {
-      const card = document.createElement('div')
-      card.className = 'cs-card'
-      if (g.label) {
-        const title = document.createElement('div')
-        title.className = 'cs-card-title'
-        title.textContent = g.label
-        const idTag = document.createElement('code')
-        idTag.className = 'cs-card-id'
-        idTag.textContent = g.entryId
-        title.appendChild(idTag)
-        card.appendChild(title)
-        if (g.hint) {
-          const sub = document.createElement('div')
-          sub.className = 'meta'
-          sub.textContent = g.hint
-          card.appendChild(sub)
-        }
-      }
-      box.appendChild(card)
-      for (const key of g.keys) {
-      const o = byKey.get(key)
-      if (!o) continue
-      const field = document.createElement('div')
-      field.className = 'field'
-      const label = document.createElement('label')
-      label.textContent = o.label
-      let input
-      const v = values[o.key]
-      if (o.type === 'bool') {
-        input = document.createElement('select')
-        for (const [val, text] of [['', `默认（${o.def ? '开' : '关'}）`], ['on', '开'], ['off', '关']]) {
-          const opt = document.createElement('option')
-          opt.value = val; opt.textContent = text
-          input.appendChild(opt)
-        }
-        input.value = v === true ? 'on' : v === false ? 'off' : ''
-      } else {
-        input = document.createElement('input')
-        if (o.type === 'posInt') { input.type = 'number'; input.min = '1'; input.step = '1' }
-        if (o.type === 'ratio') { input.type = 'number'; input.min = '0.05'; input.max = '0.95'; input.step = '0.05' }
-        input.placeholder = `默认 ${o.def}（留空恢复默认）`
-        input.spellcheck = false
-        input.value = v === undefined || v === null ? '' : String(v)
-      }
-      input.id = 'cs-' + o.key
-      const hint = document.createElement('div')
-      hint.className = 'meta'
-      hint.style.marginTop = '4px'
-      hint.textContent = o.hint
-      field.append(label, input, hint)
-      card.appendChild(field)
-      }
-    }
-  }
-  loadCommonSettings().catch((e) => csMsg('加载失败：' + e, 'err'))
-  $('cs-save').onclick = async () => {
-    const values = {}
-    for (const o of csOptions) {
-      const raw = $('cs-' + o.key).value.trim()
-      if (raw === '') { values[o.key] = ''; continue }
-      if (o.type === 'posInt') {
-        const n = Number(raw)
-        if (!Number.isSafeInteger(n) || n < 1) { csMsg(`「${o.label}」需为正整数`, 'err'); return }
-        values[o.key] = n
-      } else if (o.type === 'ratio') {
-        const n = Number(raw)
-        if (!(n > 0 && n < 1)) { csMsg(`「${o.label}」需为 0 到 1 之间的小数`, 'err'); return }
-        values[o.key] = n
-      } else if (o.type === 'bool') {
-        values[o.key] = raw === 'on'
-      } else {
-        values[o.key] = raw
-      }
-    }
-    $('cs-save').disabled = true
-    const res = await pluginApi.settingsSave(values)
-    csMsg(res.ok ? '已保存' : (res.error || '保存失败'), res.ok ? 'ok' : 'err')
-    $('cs-save').disabled = false
-  }
-
   // ================= 代理 =================
   function proxyMsg(text, cls) { const m = $('proxy-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
   function proxyDim() {
@@ -962,7 +626,6 @@
 
   // ---- init ----
   refreshPlugins()
-  pluginApi.mcpList().then((s) => { servers = s; renderServerList(); if (servers.length) select(0) })
   refreshSkills()
 </script>
 </body>

@@ -43,11 +43,10 @@ stage-dsh.mjs       构建期：npm ci 从 locks/ 安装 dsh + 预置插件到 s
                     （sha256 校验）到 dsh/tools/uv/，把预置插件注册进 dsh 应用依赖清单，
                     写 preset-plugins.json
 afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh
+build/installer.nsh 安装 / 卸载的进程关闭、阶段提示与提取钩子
+build/extract-long-paths.nsh Windows 7z 扩展路径解压、Robocopy 复制与失败重试
+build/test-installer-copy.mjs Windows 原生安装载荷回归测试（隔离目录，无注册表写入）
 desktop-patch.yml   随包分发的插件组合覆盖层（默认空）
-patches/            stage 期打在预置插件上的补丁。当前一个：ssh-terminal-keepalive
-                    （@linxin666/dsh-ssh 的终端会话随 React 组件卸载而断线；补丁在卸载时把
-                    WebSocket + xterm 停进模块级槽位，重挂时收养；服务端零改动）。锚点是构建
-                    产物里的精确字符串，失配即 throw。上游修复后删补丁与调用点
 plugins.json        预置插件清单（默认空 = minimal flavor）
 plugins-full.json   full flavor 清单：packages（任务看板 / better-sidebar / SSH，播种激活）与
                     carry 组（只装进闭包可解析、不激活）。stage 按 DSH_FLAVOR 选清单并把精确
@@ -111,6 +110,8 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - win32-x64 的 staging 只需一个占位 package.json 即可过 afterPack。
 - FIND_PROCESS 误报复现：wine 的 powershell 桩对一切命令返回 0；移走 prefix 里的 powershell.exe 切到 tasklist 分支。
 
+**Windows 安装载荷回归**：`node build/test-installer-copy.mjs <makensis.exe> <NSIS插件目录> <7za.exe> [<完整载荷.7z> <win-unpacked目录>]`。使用生产提取宏，在隔离目录验证长路径文件的 SHA256、首次安装、覆盖安装、保留额外文件、占用失败和解除占用后重试。附加完整载荷时，逐文件验证真实应用的首次与覆盖安装内容。只写 `staging/installer-copy-test-*` 和临时复制日志，不写注册表 / 快捷方式。
+
 ## 约束与已知行为
 
 改动前通读。每条一个结论，后接触发条件。
@@ -118,7 +119,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 ### 启动与运行时
 
 - **Electron-as-node 跑 dsh 必须加 `--expose-internals`**。cordis 加载器依赖 Node internals 做模块解析，缺失时 HMR 相关加载随机失败。
-- **Electron 版本钉在内核 `node-addon-require-builtin` 的指纹表上**（0.1.7 线：43.0.0 / 44.0.0 / 45.0.0-alpha.6，按 Electron 内置 V8 的精确版本放行；devDependencies 用精确版本 `44.0.0`）。补丁版本（43.4.0，V8 15.0.245.28）启动即 `unsupported Electron runtime fingerprint`，dsh 服务起不来。升级内核线时先查新内核该包的指纹表（`strings node_modules/node-addon-require-builtin-*/prebuilt/*.node | grep electron`）再选 Electron。
+- **Electron 版本钉在内核 `node-addon-require-builtin` 的指纹表上**（0.2.0 线：43.0.0 / 44.0.0 / 45.0.0-alpha.6，按 Electron 内置 V8 的精确版本放行；devDependencies 用精确版本 `44.0.0`）。补丁版本（43.4.0，V8 15.0.245.28）启动即 `unsupported Electron runtime fingerprint`，dsh 服务起不来。升级内核线时先查新内核该包的指纹表（`strings node_modules/node-addon-require-builtin-*/prebuilt/*.node | grep electron`）再选 Electron。
 - **应用内更新（Windows）走 electron-updater 的 GitHub provider**，对着 `updateRepo` 的 Release。
   - `build.publish` 配成 github 后，`--publish never` 也会在 dist 写更新信息文件；发布流程把 `*.yml`（排除 builder-debug.yml）一并上传。
   - `nsis.differentialPackage: false`：不产出 `.exe.blockmap`，更新整包下载。差分靠对 GitHub 的 Range 请求，经镜像不稳定。
@@ -157,17 +158,18 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - **配置文件损坏的自愈**：第三方写入器可能把块条目追加在 flow 空列表 `[]` 之后，dsh 报 "failed to parse overlay" 或 "must be a top-level YAML array"（空文件解析为 null 同样命中；主目录层 `~/.dsh/cordis.patch.yml` 也在检查范围）。先剔除孤立 `[]` 行保住用户条目（留 .bak），修不好再整文件隔离（.broken-*）。
 - **互斥型插件族（皮肤）只能 carry 不能 seed**：全部播种会同时注入多套皮肤，且 insert id 与用户旧装条目冲突。seed 清单已不含的名字每次启动撤活。
 - **duplicate loader entry id**：预置 bundle 的 insert id 与用户旧配置条目重复时撤我方 bundle 并写入 preset-exclusions.json，仅对当前应用版本生效，下一个版本自动重试。菜单「插件 → 重新同步预置插件…」清排除记录立即重试。
-- **补丁打在应用闭包的拷贝上**；profile 里同版本的真实拷贝（用户手动 pnpm 装过同版本）会遮蔽它。
+- **SSH 0.4.4 原生维护可重新连接的终端会话**：卸载视图走 detach，主动断开走 close；桌面构建直接分发原包。
 
 ### 依赖与锁
 
 - **staging 用 `npm ci --force` 从 `locks/<flavor>.package-lock.json` 安装，不做实时 npm 解析**。dsh 的依赖图让 arborist 的 peer 回溯指数爆炸（mac runner 2GB 堆 OOM，linux 10 分钟不出结果）。`--force` 跳过 npm ci 的 peer 复验；锁是决策记录，兼容性由 staging 冒烟验证。锁根依赖与插件清单不一致时 stage 报错。
 - **升级 dsh 用 `update-locks.mjs`**：把上一份 full 锁按 lockstep 平移到目标版本（重刷 resolved/integrity、递归补齐新引用的包、放宽 npm ci 不过的 peer 区间、报告形状漂移）。插件增删换同样走它。
-  - 平移新增的条目没有 `optional` / `os` / `cpu` 标记（工具从 registry 元数据取不到），平台专属包（`@deepseek-ai/libreoffice-kit-<平台>`、`sherpa-onnx-<平台>`、`@img/sharp-<平台>`）会被 npm ci 全部装进每个平台的 staging（0.1.7 线多出约 800 MB）。平移后用一份干净的 `npm install @deepseek-ai/dsh@<版本>` 生成的锁，按包名把这三个字段拷回两份锁再 stage；对照 staging 体积（0.1.7-rc.2 minimal 约 400 MB）。
+  - 锁文件保留每个包的 `os` / `cpu` / `libc` 平台限制；只经可选依赖可达的子树标记 `optional`。Windows 与 macOS staging 只安装当前平台的原生包。
   - 移除的子树按解析语义剪枝；新增包按引用方 semver 区间取版本。
   - 可选 peer 不递归拉入；树里已有名字不满足可选 peer 区间时 npm ci 同样报 Invalid，pass 3 的放宽对可选 peer 一并生效。
   - 跨线升级的三个必要环节：pass 2b 非 lockstep 支撑包按引用方区间交集取最高版（rc.1 把 cordis peer 提到 ^4.0.2）；pass 2c 区间不可调和时嵌套私有拷贝（compression 要 debug ^2.6）；剪枝在这些 pass 之前先跑一遍且不沿可选 peer 走。
   - better-locale 走 plugins-full.json 的 carry 组显式钉版。
+  - 升级脚本使用项目的 semver 开发依赖和系统临时目录，支持 Windows / macOS / Linux；注册表请求有超时、重试与进度输出。
   - `--legacy-peer-deps` 跳过 peer 自动安装、锁缺 118 个核心包，不可用。
 - **内核自带 `@deepseek-ai/dsh-http-proxy`**（0.1.5-rc.2 起）：启动时读一次标准代理环境变量并作用于 Node fetch，loopback 目标直连。壳注入的 `HTTP(S)_PROXY=http://127.0.0.1:<转发器端口>` 由它直接消费，行为与 `NODE_USE_ENV_PROXY=1` 一致。
 - **pnpm 钉在 11 线**：pnpm 12 起 npm 包是占位脚本，postinstall 才下载原生二进制，`--ignore-scripts` 安装后没有可执行文件。main.js 的 pnpmEntry() 接受 cjs/mjs 任一入口，stage 装完断言入口存在。pnpm 只随内置运行时分发（`dsh/tools/`），升级版运行时没有 tools 目录，取 pnpm 路径锚定 `bundledDshDir()`。
@@ -191,11 +193,12 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - **shim 对以本进程 `process.execPath` 启动且带 argv 数组的子进程在 argv 前插入 `--require <shim>`**（withPreload，覆盖 spawn / spawnSync / execFile / execFileSync）。dsh 的 subprocess 服务（Glob / Grep 起 ripgrep，`dsh-subprocess-local` 的 Win32 Job runner）给 runner 自己的环境删掉一切 `NODE_*` 变量，NODE_OPTIONS 到不了 runner；runner 是 GUI 子系统的 Electron 进程，不继承控制台，它经 CreateProcessW 起的 rg 会开一个可见窗口。argv 首项为 `--` 的单文件运行时不插。`--require` 是 Node 选项，不改变子进程的 process.argv。
 - **有隐形宿主控制台时，子进程改为继承控制台而非 CREATE_NO_WINDOW**（shim 的 hostConsole 策略）：`windowsHide:true` 的子进程没有控制台，它再起的控制台程序会得到新的可见窗口（`uvx` MCP 服务器为 uv → python 两级，MCP SDK 硬编码 windowsHide:true）。无隐形控制台（CLI 场景）时维持 windowsHide 默认。逃生口 `DSHDESKTOP_INHERIT_CONSOLE=0`。
 - **控制变量用 `DSHDESKTOP_*` 前缀，不能用 `DSH_`**：dsh 的 subprocess 服务给每个子进程做环境清洗，除敏感名（KEY/PASSWORD/SECRET/TOKEN）外删除一切 `DSH_` 开头的变量；`NODE_OPTIONS` 不在清洗名单。诊断日志 userData/console-debug.log 记录每个进程的附着路径与 GetLastError（6 = 目标进程无控制台，5 = 自己已有控制台）。
-- **安装耗时由文件数决定**：NSIS 模板把 7z 解到临时目录再 CopyFiles 进 $INSTDIR，每个文件落盘两次并各被 Defender 扫一次。stage 的裁剪把运行时从约 2.1 万个文件减到约 1.1 万（307 MB → 190 MB）。
+- **安装耗时由文件数决定**：NSIS 把 7z 解到临时目录再用 Robocopy 复制进 $INSTDIR，每个文件落盘两次并各被 Defender 扫一次。stage 的裁剪移除运行时不需要的文件。
   - 裁掉：sourcemap / .pdb；全部 `*.d.ts`（dsh 的服务/类型查询走 typert 运行时反射，不读声明文件）；第三方包的 README / CHANGELOG 类 prose；第三方包**顶层**的 test / docs / examples / .github 目录（只在 package.json 同级，嵌套同名目录可能是运行时模块：yaml 的 dist/doc/）。
   - 保留：@deepseek-ai 与插件包的 README；其他一切 .md（agent-preset 的 SKILL.md、skill-badge 资源是运行时读的）。
   - 验证：`node stage-dsh.mjs` 后起服务走 GUI 流程，再用脚本 import 全部 `@deepseek-ai/*` 入口查 Cannot find module，并扫描所有 js 的相对 import 是否指向已删文件。
   - `nsis.useZip` 省掉 CopyFiles 那一遍，同一运行时的安装包从 106 MB 涨到 177 MB，不用。
+- **Windows 载荷解压与复制必须都支持长路径**：`build/extract-long-paths.nsh` 在 `customCheckAppRunning` 展开时替换已加载的 `extractUsing7za` 宏；Nsis7z 的输出目录加 `\\?\` 扩展前缀，否则会静默漏掉深层文件，再用系统 Robocopy `/E` 复制。返回码 0–7 为成功，8 及以上或启动失败进入重试 / 取消，静默安装失败返回非零；日志在 `%TEMP%\dsh-install-copy.log`。不使用 `/MIR`，不删除目标目录的额外文件。NSIS `CopyFiles` 会因深层依赖失败，模板却误报应用无法关闭；Windows 验证必须包含超过 260 字符的实际安装路径。
 - **安装进度明细由 `build/installer.nsh` 的 customShowDetails 打开**：stock 模板 `ShowInstDetails nevershow` + `SetDetailsPrint none`，InstFiles 页只剩进度条。安装 / 卸载段开头 `SetDetailsPrint both` 并 `ShowWindow` 明细列表（MUI InstFiles 页控件 id：1016 列表、1027 "显示细节"按钮），之后 DetailPrint 同时写状态行与列表；各阶段用 customDetail 宏按 `$LANGUAGE`（2052 中文，其余英文）打一行。
   - 不用 LangString：任一内置语言缺定义即警告，`-WX` 下编译失败。
   - 可挂钩的位置：customCheckAppRunning（解压前）、customFiles_x64（拷贝进 $INSTDIR 之后、保存安装包副本 / 写卸载器 / 注册表 / 快捷方式之前）、customInstall（全部完成后）。
@@ -224,6 +227,6 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 
 - 文档与注释只写设计结果：是什么、契约是什么、哪条事实约束了它。不写推导过程、被否决的方案、版本演进、「因为…所以…」。触发条件与踩坑记录归约束清单，不重复进代码注释。
 - 结构一眼可读：约束条目以加粗结论开头，细节用子项；README 每个功能一条；代码里函数级用 JSDoc 写契约，行内注释只标非显然的事实。
-- 主进程是无构建步骤的 CJS，唯二依赖 electron 与 electron-builder（devDependencies），不引入打包器、框架或运行时依赖。能写成纯函数的逻辑放 `runtime.js` 这类无 Electron 依赖的模块。
+- 主进程是无构建步骤的 CJS，构建依赖为 electron、electron-builder 与 semver（devDependencies），不引入打包器、框架或运行时依赖。能写成纯函数的逻辑放 `runtime.js` 这类无 Electron 依赖的模块。
 - 用户可见文案用中文，陈述结果，不解释动机。
 - 发版：推 `v*` 标签；锁定内核版本用 stage 步骤的 `DSH_VERSION` 环境变量。

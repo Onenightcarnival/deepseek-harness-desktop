@@ -1,6 +1,6 @@
 # DeepSeek Harness Desktop
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的非官方桌面安装包，提供 Windows exe 与 macOS dmg。仓库只含 Electron 壳与 CI 配置，构建时安装 npm 发布版 `@deepseek-ai/dsh`。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的非官方桌面安装包，提供 Windows exe 与 macOS dmg。仓库只含 Electron 壳与 CI 配置，构建时安装 npm 发布版 `@deepseek-ai/dsh`。当前内置内核锁定为 `0.2.0-rc.2`。
 
 应用用内置 Node 在本机随机端口启动 `dsh web`，窗口加载 Web UI，关窗即停服务。数据与配置在用户目录 `.dsh`，与命令行版通用。
 
@@ -9,9 +9,11 @@
 每个平台两种：
 
 - **常规版**：只含官方 dsh。
-- **full 版**（文件名带 `-full`）：预置三个插件——任务看板、SSH 远程连接（[dsh-web](https://github.com/zhu1090093659/dsh-web)）、[dsh-better-sidebar](https://www.npmjs.com/package/dsh-better-sidebar) 工作台（文件管理、编辑预览、内嵌浏览器、终端、Git 面板、后台任务）。SSH 插件带一个桌面版补丁：终端会话在切换面板或会话后保持连接。预置插件每次启动同步进用户配置层，在配置中心移除后下次启动恢复。
+- **full 版**（文件名带 `-full`）：预置三个插件——任务看板、SSH 远程连接（[dsh-web](https://github.com/zhu1090093659/dsh-web)）、[dsh-better-sidebar](https://www.npmjs.com/package/dsh-better-sidebar) 工作台（文件管理、编辑预览、内嵌浏览器、终端、Git 面板、后台任务）。SSH 插件原生支持终端会话分离与重新连接，切换面板不会立即关闭远端终端。预置插件每次启动同步进用户配置层，在配置中心移除后下次启动恢复。
 
 两种版本共享 `~/.dsh` 数据，可互相覆盖安装。不需要预置请用常规版。
+
+Windows 安装支持深层依赖的长路径；文件复制失败时可重试，详细错误记录在 `%TEMP%\dsh-install-copy.log`。
 
 安装包未签名：Windows 有 SmartScreen 提示；macOS 需 `xattr -cr "/Applications/DeepSeek Harness.app"` 或右键打开。
 
@@ -52,7 +54,7 @@ npx electron-builder --win --x64    # Windows
 npx electron-builder --mac --arm64  # macOS
 ```
 
-产物在 `dist/`。开发调试：staging 后 `npm start`。Electron 钉在 `44.0.0`：dsh 0.1.7 的 `node-addon-require-builtin` 按 Electron 内置 V8 的精确版本放行（43.0.0 / 44.0.0 / 45.0.0-alpha.6），补丁版本（如 43.4.0）启动即失败。
+产物在 `dist/`。开发调试：staging 后 `npm start`。Electron 钉在 `44.0.0`：dsh 0.2.0 的 `node-addon-require-builtin` 按 Electron 内置 V8 的精确版本放行（43.0.0 / 44.0.0 / 45.0.0-alpha.6），补丁版本（如 43.4.0）启动即失败。
 
 ### 文件
 

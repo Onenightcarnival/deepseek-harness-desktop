@@ -21,7 +21,6 @@ import { execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { applySshKeepalivePatch } from './patches/ssh-terminal-keepalive.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const argv = process.argv.slice(2).filter((a) => !a.startsWith('--'))
@@ -149,10 +148,6 @@ if (extraPackages.length > 0) {
   for (const name of seedPackages) presets.seed[name] = ver(name)
   for (const name of carryPackages) presets.carry[name] = ver(name)
   fs.writeFileSync(path.join(dir, 'preset-plugins.json'), JSON.stringify(presets, null, 2))
-
-  // Desktop-local patches on the installed plugins. Anchors throw on upstream
-  // drift: a version bump fails the stage.
-  if (applySshKeepalivePatch(dir)) console.log('applied patch: ssh terminal keepalive')
 }
 
 // ---- bundled CLI tooling ----

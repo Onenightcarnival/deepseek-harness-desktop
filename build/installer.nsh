@@ -66,6 +66,9 @@ Var customPid
 !macroend
 
 !macro customCheckAppRunning
+!ifndef BUILD_UNINSTALLER
+  !include "extract-long-paths.nsh"
+!endif
   !insertmacro customShowDetails
   !insertmacro customDetail "正在检查运行中的实例…" "Checking for running instances..."
   !insertmacro IS_POWERSHELL_AVAILABLE

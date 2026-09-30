@@ -1,7 +1,7 @@
 {
   "name": "deepseek-harness-desktop",
   "productName": "DeepSeek Harness",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "Desktop shell for DeepSeek Harness (dsh) — unofficial packaging of the dsh web UI",
   "main": "main.js",
   "license": "MIT",
@@ -13,7 +13,8 @@
   },
   "devDependencies": {
     "electron": "44.0.0",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "semver": "^7.8.5"
   },
   "build": {
     "appId": "ai.deepseek.harness.desktop",

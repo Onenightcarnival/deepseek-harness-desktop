@@ -21,6 +21,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { tmpdir } from 'node:os'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const [target, ...pluginSpecs] = process.argv.slice(2)
@@ -41,12 +42,35 @@ const prevDsh = lock.packages['node_modules/@deepseek-ai/dsh'].version
 const metaCache = new Map()
 async function reg(name) {
   if (!metaCache.has(name)) {
-    const res = await fetch(`https://registry.npmjs.org/${name.replace('/', '%2f')}`)
-    if (!res.ok) throw new Error(`registry ${name}: ${res.status}`)
-    metaCache.set(name, await res.json())
+    metaCache.set(name, (async () => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = await fetch(`https://registry.npmjs.org/${name.replace('/', '%2f')}`, {
+            headers: { accept: 'application/vnd.npm.install-v1+json' },
+            signal: AbortSignal.timeout(30_000),
+          })
+          if (!res.ok) throw new Error(`registry ${name}: ${res.status}`)
+          return await res.json()
+        } catch (error) {
+          if (attempt >= 2) throw error
+          console.warn(`registry retry ${attempt + 1}: ${name} (${error.message})`)
+        }
+      }
+    })())
   }
   return metaCache.get(name)
 }
+
+const metadataNames = [...new Set(Object.keys(lock.packages).filter(Boolean).map(key => key.replace(/^.*node_modules\//, '')))]
+let metadataCursor = 0
+let metadataDone = 0
+await Promise.all(Array.from({ length: 8 }, async () => {
+  while (metadataCursor < metadataNames.length) {
+    await reg(metadataNames[metadataCursor++])
+    metadataDone++
+    if (metadataDone % 100 === 0) console.log(`registry metadata: ${metadataDone}/${metadataNames.length}`)
+  }
+}))
 
 // Pass 1: bump lockstep + plugin entries, refresh dist metadata.
 const drift = []
@@ -80,11 +104,11 @@ for (const [key, entry] of Object.entries(lock.packages)) {
 // auto-install them); optional deps are (npm installs them by default).
 const have = new Set(Object.keys(lock.packages).map((k) => k.replace(/^.*node_modules\//, '')))
 const added = []
-// npm's own semver, from the npm installation next to the running node. A
-// new entry is picked by the referrer's range, not latest.
+// Use the build dependency on every platform. A new entry is picked by the
+// referrer's range, not latest.
 const { createRequire } = await import('node:module')
-const npmDir = path.resolve(path.dirname(process.execPath), '../lib/node_modules/npm')
-const semver = createRequire(path.join(npmDir, 'index.js'))('semver')
+const require = createRequire(import.meta.url)
+const semver = require('semver')
 const requiredRefs = (v) => Object.entries({
   ...v.dependencies,
   ...v.optionalDependencies,
@@ -243,11 +267,41 @@ for (const entry of Object.values(lock.packages)) {
 
 // Pass 4: prune entries unreachable from the root (prune()).
 const pruned = prune()
+// Platform selectors belong to every locked version, including newly added
+// native packages. Optional-only closures must stay optional on other hosts.
+for (const [key, entry] of Object.entries(lock.packages)) {
+  if (!key) continue
+  const name = key.replace(/^.*node_modules\//, '')
+  const metadata = (await reg(name)).versions[entry.version]
+  if (!metadata) throw new Error(`${name}@${entry.version} 不在 registry`)
+  for (const field of ['os', 'cpu', 'libc']) {
+    if (metadata[field]) entry[field] = metadata[field]
+    else delete entry[field]
+  }
+}
+const required = new Set([''])
+const requiredQueue = ['']
+while (requiredQueue.length) {
+  const key = requiredQueue.pop()
+  const entry = lock.packages[key]
+  for (const [name] of requiredRefs(entry)) {
+    if (name in (entry.optionalDependencies ?? {})) continue
+    const resolved = resolveKey(key, name)
+    if (resolved !== undefined && !required.has(resolved)) {
+      required.add(resolved)
+      requiredQueue.push(resolved)
+    }
+  }
+}
+for (const [key, entry] of Object.entries(lock.packages)) {
+  if (required.has(key)) delete entry.optional
+  else entry.optional = true
+}
 fs.writeFileSync(fullPath, JSON.stringify(lock, null, 2))
 
 // Minimal lock: prune the full lock with npm. All versions are pinned (no
 // backtracking) and the core-only tree has no lagging peers.
-const tmp = fs.mkdtempSync('/tmp/lockmin-')
+const tmp = fs.mkdtempSync(path.join(tmpdir(), 'dsh-lockmin-'))
 const minimal = structuredClone(lock)
 minimal.packages[''].dependencies = { '@deepseek-ai/dsh': `^${target}` }
 fs.writeFileSync(path.join(tmp, 'package-lock.json'), JSON.stringify(minimal, null, 2))

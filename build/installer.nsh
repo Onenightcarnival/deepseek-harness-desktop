@@ -1,29 +1,16 @@
-# Close-app logic and progress detail for the NSIS installer/uninstaller.
-#
-# Close check (customCheckAppRunning):
-# - FIND_PROCESS is a path-prefix check when PowerShell is available (any
-#   process under $INSTDIR counts) and false-positives. It only drives the
-#   "app is running" confirmation; it never blocks the install by itself.
-# - The sweep runs unconditionally, scoped to known image names: the app exe
-#   (tree kill + plain kill) and the conpty helpers OpenConsole.exe /
-#   winpty-agent.exe under $INSTDIR. After a few rounds the install proceeds;
-#   locked files surface in the extraction stage, which has its own retry
-#   dialog.
-# - The previous build's uninstaller is pre-run at the tail of the check; on
-#   a non-zero exit its registry keys and payload are removed so the stock
-#   uninstall step self-skips.
+# NSIS install/uninstall process cleanup and progress.
+# - FIND_PROCESS controls the running-app prompt only.
+# - Bounded cleanup targets the app and known ConPTY helpers under $INSTDIR.
+# - Extraction handles remaining file locks through its retry dialog.
+# - A failed previous uninstaller triggers registry and payload cleanup.
 
 # With customCheckAppRunning defined the stock template skips its own
 # getProcessInfo include and `Var pid` declaration; both are provided here.
 !include "getProcessInfo.nsh"
 Var customPid
 
-# Progress detail: the stock template hides the details list
-# (ShowInstDetails nevershow) and silences DetailPrint (SetDetailsPrint none).
-# Both are re-enabled at the start of the install/uninstall section;
-# DetailPrint then drives the status line above the progress bar and the list
-# below it. MUI InstFiles control ids: 1016 details list, 1027 "Show details"
-# button. Silent runs are left alone.
+# Interactive installs show both status and detail lines.
+# MUI InstFiles controls: 1016 = list, 1027 = Show details button.
 !macro customShowDetails
   ${IfNot} ${Silent}
     SetDetailsPrint both
@@ -35,9 +22,7 @@ Var customPid
   ${endIf}
 !macroend
 
-# Phase line in the installer's UI language: Simplified Chinese (2052) or
-# English. No LangString: one left undefined for any bundled language is a
-# warning, and the build compiles with warnings as errors.
+# Phase text: Simplified Chinese for language 2052; English otherwise.
 !macro customDetail zh en
   ${If} $LANGUAGE == 2052
     DetailPrint "${zh}"

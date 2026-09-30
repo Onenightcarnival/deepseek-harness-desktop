@@ -202,9 +202,8 @@ let serverProc = null
 let mainWindow = null
 let quitting = false
 
-// Second launch: hand over to the running instance (second-instance shows
-// its window) and exit. `app.quit()` is asynchronous and `ready` still
-// fires in the losing process; the startup path checks `hasInstanceLock`.
+// Second launch signals the active instance and exits.
+// The ready handler starts services only while holding hasInstanceLock.
 const hasInstanceLock = app.requestSingleInstanceLock()
 if (!hasInstanceLock) {
   app.quit()
@@ -746,16 +745,13 @@ for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => { try {
 `
 
 /**
- * Open an OS terminal window with the bundled dsh/pnpm CLI on PATH, so
- * users can run `dsh …` immediately without any manual setup.
+ * Open an OS terminal with the bundled CLI launchers on PATH.
  */
 function openCliTerminal() {
   const binDir = writeCliLaunchers()
   if (process.platform === 'win32') {
-    // A batch file run via ShellExecute (openPath) gets a visible console;
-    // spawn('cmd.exe', …, { detached }) does not. Batch is parsed in the
-    // console codepage: chcp 65001 precedes any non-ASCII line (file saved
-    // as UTF-8).
+    // ShellExecute opens the UTF-8 batch in a visible console.
+    // chcp 65001 precedes all non-ASCII content.
     const cmdFile = path.join(binDir, 'DeepSeek Harness CLI.cmd')
     fs.writeFileSync(cmdFile, [
       '@echo off',
@@ -1275,9 +1271,8 @@ async function startServer() {
     } catch { /* CLI launchers are best-effort */ }
     withProxyEnv(env)
     withNodePreloadEnv(env)
-    // Invisible host console for the server (win-spawn-shim.js
-    // setupHiddenConsole): the Windows sandbox's pwsh shares it instead of
-    // opening a visible one. Server only; CLI runs own a real terminal.
+    // The server and Windows sandbox share setupHiddenConsole's hidden console.
+    // CLI launches retain their real terminal.
     env.DSHDESKTOP_CONSOLE_HOST = '1'
     // Per-process console-attach trace (server + every runner); fresh per
     // app launch.

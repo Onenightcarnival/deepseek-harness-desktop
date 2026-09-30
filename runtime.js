@@ -422,9 +422,7 @@ function setSkillEnabled(fsLike, pathLike, root, name, enabled, disabledDir) {
 module.exports.setSkillEnabled = setSkillEnabled
 
 /**
- * Prepend a directory to the PATH entry of a plain env object, matching the
- * key case-insensitively (a `{...process.env}` spread on Windows usually
- * carries "Path", and a spread is not case-insensitive).
+ * Prepend a directory to an env object's PATH using case-insensitive key matching.
  */
 function prependEnvPath(env, dir, delimiter) {
   const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH'
@@ -542,8 +540,8 @@ function normalizeGeneralSettings(raw) {
   return out
 }
 /**
- * Whether closing (or starting) hides the window instead of quitting: the
- * tray icon is the only way back on Windows and Linux; macOS keeps the Dock.
+ * Effective hide-to-tray setting: requires a tray on Windows/Linux;
+ * macOS supports restoring through the Dock.
  */
 function hideToTrayEffective(settings, platform) {
   return settings.closeToTray && (settings.trayIcon || platform === 'darwin')

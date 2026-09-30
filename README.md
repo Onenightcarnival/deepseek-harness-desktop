@@ -1,93 +1,127 @@
 # DeepSeek Harness Desktop
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的非官方桌面安装包，提供 Windows exe 与 macOS dmg。仓库只含 Electron 壳与 CI 配置，构建时安装 npm 发布版 `@deepseek-ai/dsh`。当前内置内核锁定为 `0.2.0-rc.2`。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方桌面安装包，支持 Windows 与 macOS。当前内置内核：`0.2.0-rc.2`。
 
-应用用内置 Node 在本机随机端口启动 `dsh web`，窗口加载 Web UI，关窗即停服务。数据与配置在用户目录 `.dsh`，与命令行版通用。
-
-主窗口与配置中心采用一体化标题栏：Windows 保留原生最小化、最大化与关闭按钮，顶部「应用 / 编辑」打开原生菜单；「插件」「帮助」等入口收在「应用」中。macOS 保留左上角红黄绿按钮、系统菜单与半透明侧栏。配置中心跟随主界面的深浅主题，启动前跟随系统主题。
+应用在本机随机端口运行 dsh Web UI。数据与配置位于 `~/.dsh`，与命令行版共享。默认关窗退出；开启托盘模式后，关窗保留服务与任务。
 
 ## 安装包
 
-每个平台两种：
+| 版本 | 内容 |
+|---|---|
+| 常规版 | 官方 dsh 与桌面壳 |
+| full 版（文件名含 `-full`） | 常规版 + 任务看板、SSH、better-sidebar |
 
-- **常规版**：只含官方 dsh。
-- **full 版**（文件名带 `-full`）：预置三个插件——任务看板、SSH 远程连接（[dsh-web](https://github.com/zhu1090093659/dsh-web)）、[dsh-better-sidebar](https://www.npmjs.com/package/dsh-better-sidebar) 工作台（文件管理、编辑预览、内嵌浏览器、终端、Git 面板、后台任务）。SSH 插件原生支持终端会话分离与重新连接，切换面板不会立即关闭远端终端。预置插件每次启动同步进用户配置层，在配置中心移除后下次启动恢复。
+任务看板与 SSH 来自 [dsh-web](https://github.com/zhu1090093659/dsh-web)。SSH 支持终端会话分离与重连。[better-sidebar](https://www.npmjs.com/package/dsh-better-sidebar) 提供文件管理、编辑预览、内嵌浏览器、终端、Git 与后台任务。
 
-两种版本共享 `~/.dsh` 数据，可互相覆盖安装。不需要预置请用常规版。
+两种版本共享数据，可互相覆盖安装。full 预置插件每次启动同步，手动移除后会恢复；常规版不启用这些预置。
 
-Windows 安装支持深层依赖的长路径；文件复制失败时可重试，详细错误记录在 `%TEMP%\dsh-install-copy.log`。
+| 平台 | 安装说明 |
+|---|---|
+| Windows | 未签名，可能显示 SmartScreen 提示；支持长路径与复制重试，错误日志为 `%TEMP%\\dsh-install-copy.log` |
+| macOS | 未签名，使用右键打开或 `xattr -cr "/Applications/DeepSeek Harness.app"` |
 
-安装包未签名：Windows 有 SmartScreen 提示；macOS 需 `xattr -cr "/Applications/DeepSeek Harness.app"` 或右键打开。
+## 窗口与菜单
+
+主窗口与配置中心使用一体化标题栏，并同步深浅主题；启动前跟随系统主题。
+
+| 平台 | 标题栏与入口 |
+|---|---|
+| Windows | 原生窗口按钮；「应用 / 编辑」菜单；配置中心位于「应用 → 配置中心…」（Ctrl+,） |
+| macOS | 原生红黄绿按钮、系统菜单、半透明侧栏；「插件 → 配置中心…」 |
+| Linux 开发环境 | 「插件 → 配置中心…」 |
 
 ## 更新
 
-菜单「帮助」两项，启动时不自动检查：
+更新由「帮助」菜单手动触发，第一项显示当前内核版本。
 
-- **检查应用更新…**：查询 GitHub Release（`package.json` 的 `updateRepo`）。Windows 可选「后台下载」，完成后提示「立即重启」，重启即完成安装；选「稍后」则在下次退出应用时安装。更新整包下载。元数据是 Release 里的 `latest.yml`（常规版）/ `full.yml`（full 版）。macOS 版未签名，跳转下载页。
-- **检查内核更新…**：查询 npm 上的 `@deepseek-ai/dsh`，一键升级到用户数据目录的 `runtimes/<版本>/`，重启生效；升级失败自动回退到内置版本。只在同一版本线内升级（如 0.1.7-rc.1 → rc.2），跨线需下载新安装包。「帮助」菜单第一项显示当前内核版本。
+| 操作 | 来源 | 生效方式 |
+|---|---|---|
+| 检查应用更新 | GitHub Release | Windows 后台下载整包，立即重启或下次退出时安装；macOS 打开下载页 |
+| 检查内核更新 | npm `@deepseek-ai/dsh` | 安装到用户数据目录 `runtimes/<版本>/`，重启生效；失败回退内置版本 |
+
+内核仅支持同一版本线内升级，例如 `0.2.0-rc.1 → 0.2.0-rc.2`。跨版本线使用新安装包。
 
 ## 配置中心
 
-Windows 菜单「应用 → 配置中心…」（`Ctrl+,`），macOS / Linux 菜单「插件 → 配置中心…」，四页：
+| 页面 | 功能 |
+|---|---|
+| 插件 | 按 npm 包名、Git 来源、本地目录或 .tgz 安装；移除插件；重启生效 |
+| 技能 | 安装单个技能或合集 zip；启用、关闭、删除；查看字段、文件树和只读文本预览 |
+| 通用 | 启动、托盘与系统唤醒设置 |
+| 代理 | 无代理、系统代理或手动代理；测试连接与 TLS 配置 |
 
-- **插件**：按 npm 包名或来源安装、移除。「从目录安装」以软链方式装开发中的插件；「从 .tgz 安装」装 `npm pack` 打出的包。需要执行构建脚本的插件不在图形界面放行，按 dsh 提示在命令行窗口处理。
-- **技能**：安装 zip 技能包（单技能或多技能合集）。列表按 SKILL.md 的 frontmatter 展示名称、版本、描述与调用面，每项有启用开关和删除。点名称进详情：全部 frontmatter 字段、源文件树、只读预览（文本限 256 KB）、打开目录。关闭的技能移到应用数据目录的 `disabled-skills/`（不在 `~/.dsh` 内），再打开即移回。安装、删除、开关即时生效。
-- **通用**：桌面程序自身的五个开关，默认全部关闭，切换即生效：
-  - 开机自动启动（系统登录项）。
-  - 启动时最小化到托盘。
-  - 显示托盘图标。托盘菜单：打开主窗口、配置中心、退出；macOS 为菜单栏图标。
-  - 关闭时最小化到托盘。关闭主窗口只隐藏窗口，dsh 服务与运行中的任务继续；托盘菜单或应用菜单的「退出」才停止服务；双击应用图标或托盘图标重新打开窗口。
-  - 运行任务时保持系统唤醒。有 agent 在运行、有排队输入或有作业在执行期间阻止系统休眠。
+目录安装采用软链。构建脚本审批在「插件 → 打开命令行窗口」中完成。
 
-  Windows / Linux 上「启动时 / 关闭时最小化到托盘」需同时开启托盘图标，否则关闭即退出。
-- **代理**：不使用代理 / 使用系统代理 / 手动配置。三种模式都由应用控制，子进程继承的 `HTTP_PROXY` 等变量先被清除。系统代理按目标地址逐个读取系统设置，支持 PAC 与例外列表。手动配置支持主机名、端口、例外列表（`corp.com`、`*.corp.com`、`10.*`、`<local>`）、身份验证（密码可选记住）、TLS 选项（系统证书库、导入 CA、不校验证书）。对 dsh 服务的全部网络请求生效，本机地址始终直连。「测试连通」显示目标地址走直连还是哪台代理。保存后自动重启 dsh 服务。
+技能变更即时生效。关闭的技能位于应用数据目录 `disabled-skills/`，启用后移回；文本预览上限为 256 KB。
 
-菜单「插件」另有两项：
+### 通用
 
-- **重新同步预置插件…**：清除本版本的冲突排除记录并重启，强制恢复全部预置插件。
-- **打开命令行窗口**：打开终端（Windows 为 cmd，macOS 为 Terminal），`dsh`、`pnpm`、`node`、`npx` 已在 PATH 上，运行在应用内置的 Node 上。长期使用可把用户数据目录下的 `bin/` 加进 PATH。命令行同样遵循配置中心的代理设置。
-- **Python MCP 环境**：桌面安装包不捆绑 uv/uvx。安装最新版 `@onenightcarnival/dsh-toolkit` 或 `@onenightcarnival/dsh-config-center` 后，在「设置 → 环境依赖」安装专属 uv 环境。已有使用裸命令 `uv` / `uvx` 的 profile MCP 配置会在环境安装完成后切换到专属路径；首次使用需要网络。显式填写的自定义可执行文件路径保持原样。
+所有选项默认关闭，切换即时生效。
+
+| 选项 | 行为 |
+|---|---|
+| 开机自动启动 | 注册系统登录项 |
+| 显示托盘图标 | 提供主窗口、配置中心与退出入口；macOS 显示菜单栏图标 |
+| 启动时最小化到托盘 | 隐藏启动窗口 |
+| 关闭时最小化到托盘 | 保留服务与任务；通过菜单退出，双击应用或托盘图标恢复窗口 |
+| 运行任务时保持系统唤醒 | Agent 运行、输入排队或作业执行期间阻止系统休眠 |
+
+Windows / Linux 的隐藏窗口选项依赖托盘图标。
+
+### 代理
+
+系统代理按目标地址读取 PAC 与例外列表。手动代理支持主机、端口、认证和例外列表（`corp.com`、`*.corp.com`、`10.*`、`<local>`）。
+
+TLS 选项包含系统证书库、自定义 CA 和关闭证书校验。密码可选择记住，勾选后以明文保存在本机。模型、插件安装、内核升级与 MCP 共用代理，本机地址直连。保存后重启服务。
+
+### 插件菜单
+
+| 操作 | 行为 |
+|---|---|
+| 重新同步预置插件 | 清除当前版本的冲突排除记录，重启并恢复预置 |
+| 打开命令行窗口 | 打开终端，PATH 包含应用的 dsh / pnpm / node / npx；沿用代理设置 |
+
+长期使用 CLI 可将用户数据目录的 `bin/` 加入 PATH。
+
+### Python MCP 环境
+
+安装 `@onenightcarnival/dsh-toolkit` 或 `@onenightcarnival/dsh-config-center` 后，在「设置 → 环境依赖」安装专属 uv 环境。桌面安装包不捆绑 uv/uvx。
+
+安装完成后，当前 profile 中的裸 `uv` / `uvx` 命令转为专属路径；显式自定义路径保持不变。首次使用需联网下载 Python 与依赖。
 
 ## 本地构建
 
+构建使用精确版本 Electron `44.0.0`，产物位于 `dist/`。
+
 ```sh
-node stage-dsh.mjs        # DSH_VERSION=x.y.z 锁定版本
+node stage-dsh.mjs
 npm install
-npx electron-builder --win --x64    # Windows
-npx electron-builder --mac --arm64  # macOS
+npx electron-builder --win --x64
+npx electron-builder --mac --arm64
 ```
 
-产物在 `dist/`。开发调试：staging 后 `npm start`。Electron 钉在 `44.0.0`：dsh 0.2.0 的 `node-addon-require-builtin` 按 Electron 内置 V8 的精确版本放行（43.0.0 / 44.0.0 / 45.0.0-alpha.6），补丁版本（如 43.4.0）启动即失败。
+设置 `DSH_FLAVOR=full` 选择 full 清单。开发调试在 staging 后运行 `npm start`。架构、文件职责和验证入口见 [AGENTS.md](AGENTS.md)。
 
-### 文件
+### 预置插件
 
-- `main.js` — 主进程：dsh 服务的启动与守护、窗口与菜单、更新、配置中心、CLI 启动器。工作区目录选择通过 `--patch` 覆盖层换成壳自带的插件（`plugins/`），弹系统目录对话框。
-- `splash.html` — 启动页。
-- `window-chrome.js` / `preload-desktop.js` / `desktop.css` — 原生标题栏、菜单与主题同步；配置中心使用同一套窗口样式。
-- `stage-dsh.mjs` — 把 `@deepseek-ai/dsh` 安装进 `staging/<platform>-<arch>/dsh` 并裁剪，再放入内置 pnpm（11 线）。
-- `afterPack.js` — electron-builder 钩子，把 staging 运行时拷进应用 resources。
-- `build/` — 图标与 NSIS 安装脚本。
+| 文件 | 内容 |
+|---|---|
+| `plugins.json` / `plugins-<flavor>.json` | 预置包与版本；stage 按 DSH_FLAVOR 选择 |
+| `desktop-patch.yml` | 禁用、覆盖或挂载组合条目；通过 `--patch` 在用户 profile 层之后应用 |
+| `locks/` | 各 flavor 的完整安装锁 |
 
-### 预置与增删插件
+带 `dsh.bundle` 的包可直接登记到清单。其他插件通过 patch 的 insert 挂载；带界面的插件须成对挂载 host 与 client-ui。插件版本必须匹配内核版本线。
 
-- `desktop-patch.yml`：随包分发的插件组合覆盖层，启动时经 `dsh web --patch` 生效：禁用内置插件（条目 id 用 `npx @deepseek-ai/dsh web --dump-config` 查）、覆盖插件配置、挂载新插件，语法见文件内注释。用户侧的 `~/.dsh/profiles/web/cordis.patch.yml` 语法相同，在其后应用。
-- `plugins.json` / `plugins-<flavor>.json`：预置进安装包的插件清单，例如 `{"packages": ["some-dsh-plugin@1.2.0"]}`；stage 按 `DSH_FLAVOR` 选清单（默认 `plugins.json`，`DSH_FLAVOR=full` 读 `plugins-full.json`）。声明了 `dsh.bundle` 的插件包写入清单即可；不带 bundle 的插件在 `desktop-patch.yml` 里 insert 挂载条目，带界面的插件需把 host 与 client-ui 两半都挂上。
-- 插件版本需与内置 dsh 版本匹配。改动清单后重新生成锁（见发版）。不重新打包时，用户可编辑 `~/.dsh/profiles/web/cordis.patch.yml`，或用 `dsh plugin` 命令安装。
+用户插件通过 `dsh plugin` 管理；用户覆盖层为 `~/.dsh/profiles/web/cordis.patch.yml`。
 
 ## 发版
 
-推送标签即触发 `.github/workflows/release.yml`：
+1. 修改预置或内核后，运行 `node update-locks.mjs <dsh版本> ["插件@版本"...]` 更新锁。
+2. 运行 staging 与相应验证，提交改动。
+3. 推送与发布版本对应的 `vX.Y.Z` 标签。
 
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-- Windows 与 macOS runner 各自原生构建，产物与 SHA256SUMS.txt 一起发布到 GitHub Release。版本号以标签为准，CI 把 `vX.Y.Z` 写入 `package.json` 后构建。
-- 内置 dsh 版本以 `locks/` 下的锁文件为准，构建用 `npm ci` 从锁安装。升级内置 dsh：`node update-locks.mjs <dsh版本> ["插件@版本"...]` 重新生成锁，跑一遍 staging 后提交打标签。改动预置插件清单同样需要重新生成锁。
+`.github/workflows/release.yml` 在 Windows 与 macOS runner 原生构建。版本号取自标签，产物与 SHA256SUMS.txt 发布到 GitHub Release。应用更新元数据为常规版的 `latest.yml` 与 full 版的 `full.yml`。
 
 ## 协议
 
-上游为 MIT 协议；本仓库同样以 MIT 发布，应用图标改自上游 favicon。
-
-参与开发请先读 [AGENTS.md](AGENTS.md)。
+MIT。应用图标改自上游 favicon。

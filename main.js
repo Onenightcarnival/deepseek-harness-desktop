@@ -7,7 +7,7 @@
  */
 'use strict'
 
-const { app, BrowserWindow, dialog, shell, Menu, Tray, nativeImage, powerSaveBlocker, ipcMain, session, net: electronNet } = require('electron')
+const { app, BrowserWindow, dialog, shell, Menu, Tray, nativeImage, nativeTheme, powerSaveBlocker, ipcMain, session, net: electronNet } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
@@ -15,6 +15,8 @@ const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, sa
   listSkillStore, skillExists, removeSkill, setSkillEnabled, skillDetail, readSkillFile, SKILL_DISABLED_DIR,
   applyProxyEnv, PROXY_ENV_KEYS, normalizeGeneralSettings, hideToTrayEffective } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
+const { createWindowChrome } = require('./window-chrome.js')
+const windowChrome = createWindowChrome({ ipcMain, nativeTheme, Menu, getOrigin: () => currentWebUrl })
 
 // Ready line with the one-time browser-trust token. The whole URL (query
 // included) is loaded as-is; the token exchange (303 → cookie) happens in
@@ -1391,7 +1393,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     title: 'DeepSeek Harness',
-    backgroundColor: '#101014',
+    ...windowChrome.options(),
     // 「启动时最小化到托盘」: the window loads hidden and the tray brings it back
     show: !(generalSettings.startMinimized && hideToTrayEffective(generalSettings, process.platform)),
     icon: process.platform === 'linux' ? path.join(__dirname, 'build', 'icon.png') : undefined,
@@ -1399,9 +1401,12 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
+      sandbox: true,
+      preload: path.join(__dirname, 'preload-desktop.js'),
     },
   })
 
+  windowChrome.attach(mainWindow, 'main')
   mainWindow.loadFile(path.join(__dirname, 'splash.html'))
 
   // Open external links in the system browser, keep the app on the local UI.
@@ -1562,7 +1567,17 @@ function buildMenu() {
       ],
     },
   ]
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  const items = process.platform === 'win32' ? [
+    { id: 'desktop-application', label: '应用', submenu: [
+      { label: '配置中心…', accelerator: 'CmdOrCtrl+,', click: () => { openPluginManager() } },
+      { type: 'separator' },
+      ...template.filter(item => item.role !== 'editMenu'),
+      { type: 'separator' }, { label: '退出', role: 'quit' },
+    ] },
+    { id: 'desktop-edit', label: '编辑', role: 'editMenu' },
+  ] : template
+  Menu.setApplicationMenu(Menu.buildFromTemplate(items))
+  if (process.platform === 'win32') for (const win of BrowserWindow.getAllWindows()) win.setMenuBarVisibility(false)
 }
 
 /** Run the bundled dsh CLI (plugin management) and capture its output. */
@@ -1585,19 +1600,27 @@ async function runDshCli(args) {
 
 let pluginWindow = null
 function openPluginManager() {
-  if (pluginWindow && !pluginWindow.isDestroyed()) { pluginWindow.focus(); return }
+  if (pluginWindow && !pluginWindow.isDestroyed()) {
+    if (pluginWindow.isMinimized()) pluginWindow.restore()
+    pluginWindow.show(); pluginWindow.focus(); return
+  }
   pluginWindow = new BrowserWindow({
-    width: 880,
-    height: 620,
+    width: 960,
+    height: 700,
+    minWidth: 760,
+    minHeight: 540,
     title: '配置中心',
+    ...windowChrome.options(),
     parent: mainWindow || undefined,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: path.join(__dirname, 'preload-plugins.js'),
+      sandbox: true,
+      preload: path.join(__dirname, 'preload-desktop.js'),
     },
   })
   pluginWindow.setMenuBarVisibility(false)
+  windowChrome.attach(pluginWindow, 'settings')
   pluginWindow.loadFile(path.join(__dirname, 'plugins.html'))
   pluginWindow.on('closed', () => { pluginWindow = null })
 }

@@ -1,7 +1,7 @@
 {
   "name": "deepseek-harness-desktop",
   "productName": "DeepSeek Harness",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Desktop shell for DeepSeek Harness (dsh) — unofficial packaging of the dsh web UI",
   "main": "main.js",
   "license": "MIT",
@@ -30,7 +30,9 @@
       "win-spawn-shim.js",
       "splash.html",
       "plugins.html",
-      "preload-plugins.js",
+      "preload-desktop.js",
+      "window-chrome.js",
+      "desktop.css",
       "build/icon.png"
     ],
     "directories": {

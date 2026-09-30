@@ -3,18 +3,19 @@
 <head>
 <meta charset="utf-8">
 <title>DeepSeek Harness</title>
+<link rel="stylesheet" href="desktop.css">
 <style>
   html, body { height: 100%; margin: 0; }
   body {
     display: flex; align-items: center; justify-content: center;
-    background: #101014; color: #e8e8ec;
+    background: var(--desktop-sidebar); color: var(--desktop-text);
     font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   }
   .box { text-align: center; }
   .logo { width: 72px; height: 72px; margin: 0 auto 20px; }
-  .logo path { fill: #fff; }
+  .logo path { fill: currentColor; }
   h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
-  p { font-size: 13px; color: #9a9aa4; margin: 0; }
+  p { font-size: 13px; color: var(--muted); margin: 0; }
   .spinner {
     margin: 24px auto 0; width: 26px; height: 26px;
     border: 3px solid #2c2c34; border-top-color: #4d6bfe; border-radius: 50%;

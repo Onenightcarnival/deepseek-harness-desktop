@@ -4,6 +4,8 @@
 
 应用用内置 Node 在本机随机端口启动 `dsh web`，窗口加载 Web UI，关窗即停服务。数据与配置在用户目录 `.dsh`，与命令行版通用。
 
+主窗口与配置中心采用一体化标题栏：Windows 保留原生最小化、最大化与关闭按钮，顶部「应用 / 编辑」打开原生菜单；「插件」「帮助」等入口收在「应用」中。macOS 保留左上角红黄绿按钮、系统菜单与半透明侧栏。配置中心跟随主界面的深浅主题，启动前跟随系统主题。
+
 ## 安装包
 
 每个平台两种：
@@ -26,7 +28,7 @@ Windows 安装支持深层依赖的长路径；文件复制失败时可重试，
 
 ## 配置中心
 
-菜单「插件 → 配置中心…」，四页：
+Windows 菜单「应用 → 配置中心…」（`Ctrl+,`），macOS / Linux 菜单「插件 → 配置中心…」，四页：
 
 - **插件**：按 npm 包名或来源安装、移除。「从目录安装」以软链方式装开发中的插件；「从 .tgz 安装」装 `npm pack` 打出的包。需要执行构建脚本的插件不在图形界面放行，按 dsh 提示在命令行窗口处理。
 - **技能**：安装 zip 技能包（单技能或多技能合集）。列表按 SKILL.md 的 frontmatter 展示名称、版本、描述与调用面，每项有启用开关和删除。点名称进详情：全部 frontmatter 字段、源文件树、只读预览（文本限 256 KB）、打开目录。关闭的技能移到应用数据目录的 `disabled-skills/`（不在 `~/.dsh` 内），再打开即移回。安装、删除、开关即时生效。
@@ -60,6 +62,7 @@ npx electron-builder --mac --arm64  # macOS
 
 - `main.js` — 主进程：dsh 服务的启动与守护、窗口与菜单、更新、配置中心、CLI 启动器。工作区目录选择通过 `--patch` 覆盖层换成壳自带的插件（`plugins/`），弹系统目录对话框。
 - `splash.html` — 启动页。
+- `window-chrome.js` / `preload-desktop.js` / `desktop.css` — 原生标题栏、菜单与主题同步；配置中心使用同一套窗口样式。
 - `stage-dsh.mjs` — 把 `@deepseek-ai/dsh` 安装进 `staging/<platform>-<arch>/dsh` 并裁剪，再放入内置 pnpm（11 线）与 uv（钉版、sha256 校验）。
 - `afterPack.js` — electron-builder 钩子，把 staging 运行时拷进应用 resources。
 - `build/` — 图标与 NSIS 安装脚本。

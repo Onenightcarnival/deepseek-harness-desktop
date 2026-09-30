@@ -1,0 +1,54 @@
+:root {
+  color-scheme: light;
+  --desktop-sidebar: #f9fafb; --desktop-content: #fff; --desktop-text: #0f1115;
+  --surface: #fff; --control: #f5f5f5; --hover: #ebebeb; --selected: #e8e8e8;
+  --border: #e5e5e5; --muted: #737373; --secondary: #525252;
+  --accent: #4d6bfe; --link: #3455db; --danger: #bd303d; --danger-border: #edc5ca;
+  --success: #247f45; --badge: #eef1ff; --switch: #c9c9c9;
+  --desktop-titlebar-height: 0px;
+}
+:root[data-desktop-dark] {
+  color-scheme: dark;
+  --desktop-sidebar: #1b1b1c; --desktop-content: #141414; --desktop-text: #f9fafb;
+  --surface: #1b1b1c; --control: #252525; --hover: #303030; --selected: #303030;
+  --border: #333; --muted: #989898; --secondary: #c4c4c4;
+  --link: #8da7ff; --danger: #ff8585; --danger-border: #633940;
+  --success: #6fd08c; --badge: #262d43; --switch: #494949;
+}
+html[data-desktop-local] body { background: var(--desktop-sidebar); color: var(--desktop-text); }
+html[data-desktop-platform=darwin],
+html[data-desktop-platform=darwin] body { background: transparent !important; }
+#desktop-titlebar {
+  position: fixed; z-index: 1100; top: 0;
+  left: env(titlebar-area-x, 0px); width: env(titlebar-area-width, 100%);
+  height: var(--desktop-titlebar-height); display: flex; align-items: center;
+  box-sizing: border-box; padding: 0 16px; user-select: none;
+  color: var(--desktop-text); -webkit-app-region: drag;
+  font: 12px -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+html[data-desktop-platform=darwin] #desktop-titlebar { padding-left: var(--desktop-traffic-clearance, 88px); }
+html[data-fullscreen] #desktop-titlebar { display: none; }
+html[data-desktop-local] body,
+html[data-desktop-platform=darwin] body { box-sizing: border-box; padding-top: var(--desktop-titlebar-height); }
+html[data-fullscreen][data-desktop-local] body,
+html[data-fullscreen][data-desktop-platform=darwin] body { padding-top: 0; }
+html[data-desktop-platform=darwin] [data-window-drag] { -webkit-app-region: drag; }
+[data-window-drag] :is(button, a, input, select, textarea, [role=button]) { -webkit-app-region: no-drag; }
+/* 上游 frame 的拖拽伪元素只覆盖原生按钮之外的安全区域。 */
+html[data-windows-titlebar] :has(> [data-shell-overlay])::before {
+  left: env(titlebar-area-x, 0px) !important;
+  width: env(titlebar-area-width, 100%) !important; right: auto !important;
+}
+/* 全屏保留应用菜单与侧栏切换按钮所在行，避免交互区域重叠。 */
+html[data-windows-titlebar][data-fullscreen] { --dsh-frame-chrome-top: var(--dsh-windows-titlebar-height); }
+/* 内核 frame 的前三列依次为侧栏、主内容和右栏；保持 Web 快捷键协议。 */
+html[data-desktop-platform=darwin] :has(> [data-shell-overlay]) { background: transparent; }
+html[data-desktop-platform=darwin] :has(> [data-shell-overlay]) > div:first-child {
+  background: color-mix(in srgb, var(--desktop-sidebar) 50%, transparent); border-right: none;
+}
+html[data-desktop-platform=darwin] :has(> [data-shell-overlay]) > div:nth-child(2) {
+  background: var(--desktop-content); border-radius: 16px 0 0 0;
+}
+@media (prefers-reduced-transparency: reduce) {
+  html[data-desktop-platform=darwin] body { background: var(--desktop-sidebar) !important; }
+}

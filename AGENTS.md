@@ -36,7 +36,9 @@ plugins.html        配置中心窗口：插件 / 技能 / 通用 / 代理四页
                     技能页：frontmatter 卡片列表 + 详情（字段表、文件树、只读预览）。
                     通用页五个开关（G_ITEMS），值存 userData/general.json，切换即保存并由主进程
                     applyGeneralSettings 立即应用
-preload-plugins.js  配置中心的 contextBridge
+window-chrome.js    Windows 标题栏覆盖 / macOS hiddenInset + vibrancy、可信主 frame IPC、主题与全屏同步
+preload-desktop.js  沙箱 preload：上游平台布局、Windows 菜单、主题探针；配置中心本地页独占 pluginApi
+desktop.css        原生按钮安全区域、拖拽区与配置中心的深浅色 token
 splash.html         启动页
 stage-dsh.mjs       构建期：npm ci 从 locks/ 安装 dsh + 预置插件到 staging/<platform>-<arch>/dsh，
                     裁剪运行时不读的文件，安装 pnpm（11 线）到 dsh/tools/，从 GitHub 拉钉版 uv
@@ -78,7 +80,10 @@ build/              图标 + installer.nsh（NSIS customCheckAppRunning 覆盖�
 按成本从低到高：
 
 ```sh
-node --check main.js runtime.js preload-plugins.js   # 语法
+node --check main.js                                 # 主进程语法
+node --check runtime.js
+node --check window-chrome.js
+node --check preload-desktop.js
 node -e "require('./runtime.js')"                     # runtime.js 独立可加载，纯函数直接单测
 node stage-dsh.mjs                                    # linux 实跑 staging（node-pty 无 linux 预编译，脚本按平台跳过该断言）
 DSH_FLAVOR=full node stage-dsh.mjs                    # full flavor：预置清单可装、peer 匹配、preset-plugins.json 生成
@@ -97,6 +102,8 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - 预置插件挂载探针：客户端 bundle 只经组合路由下发。取首页 HTML 里 `href="/plugins/??…&rev=<hash>"` 的精确 URL 拉 bundle，断言其中含 `id: "<包名>"`。单包 `/plugins/<包名>/client.js` 与自拼组合均 404。
 
 **Electron 部分**：
+
+- `node build/test-window-chrome.cjs`：隔离 userData 的真实 Electron 检查，覆盖配置桥来源隔离、深浅主题、四页控件、Windows 原生菜单与按钮安全区域、缩放和全屏；截图写 `staging/window-chrome-test/`。测试会短暂显示窗口以验证原生全屏事件。可用 `DSHDESKTOP_TEST_ELECTRON` 指定本机 Electron 可执行文件；同时设置 `DSHDESKTOP_TEST_RUNTIME`（含 node_modules 的 dsh 目录）和 `DSHDESKTOP_TEST_HOME`（必须位于 staging 内的隔离 profile）时额外启动真实内核检查主界面。macOS 的原生按钮与 vibrancy 需在 Mac 上运行验收，Windows 只能验证 macOS 布局与选项。
 
 - 冒烟：`xvfb-run electron <仓库目录> --no-sandbox`，看 dsh 子进程起来、就绪端口可 curl、日志无 Uncaught。
 - 配置中心页面：Playwright `addInitScript` 注入假 `window.pluginApi` 后打开 `plugins.html` 截图；或 `--remote-debugging-port` 启动后 `connectOverCDP` 操作真实页面（不要 `browser.close()`，会关掉 Electron）。
@@ -141,6 +148,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
   - 隐藏的窗口仍算存活窗口，`window-all-closed` 不触发；服务意外退出时先 `showMainWindow` 再弹对话框。
   - Windows / Linux 上隐藏窗口只能靠托盘找回（`hideToTrayEffective` 要求托盘开着），macOS 靠 Dock（`activate`）。
   - 托盘图标从 asar 内 `build/icon.png` 缩成 16/32 两档。
+- **窗口 chrome 使用独立的 `data-desktop-platform` 视觉标记**：内核的 `data-platform` 会启用官方原生键盘桥，Web 壳不能设置。Windows 使用 `data-windows-titlebar`、`data-fullscreen`、`data-window-drag`、`data-shell-overlay` 与 `--dsw-*` 配色 token；macOS 标题栏独立预留 48px，frame 前三列依次为侧栏 / 主内容 / 右栏，不匹配编译类名。Windows 拖拽区使用 `env(titlebar-area-width)` 避开原生按钮；隐藏原生菜单栏但保留 Menu 及快捷键。共享 preload 只对受管窗口主 frame、精确本地文件或当前内核来源启用；`pluginApi` 仅在配置中心本地页暴露。
 - **「运行任务时保持系统唤醒」的忙闲信号来自 `plugins/dsh-desktop-activity`**：轮询 `ctx.get('agents').list()`（`status === 'running'`、`inbox.nextTurn/nextStep` 非空）与 `ctx.get('jobs').list(agent)`（running / stopping），与上游 desktop-host 更新前排空任务的判据相同；`agent.status` 由 dsh-agent-loop 的 Agent 提供（0.1.5-rc.2 起）。壳侧 `powerSaveBlocker.start('prevent-app-suspension')` 只在选项开且忙时持有，服务退出即释放。
 - **升级 Electron 前确认内置 Node 满足 dsh 的 engines**（当前 `^22.19 || >=24`）且命中上面的指纹表。`runtime.js` 的 `satisfiesNode` 在应用内内核升级前做同样检查，失败自动隔离回退（`.broken-` 目录后缀）。
 - **应用内内核升级只允许同版本线**（`releaseLine`：去掉预发布标签的 major.minor.patch）。第三方插件按线适配，跨线组合无法启动；Electron 指纹表也按线变化。跨线时静默检查不打扰，手动检查引导下载新安装包。

@@ -27,7 +27,12 @@ module.exports = async function afterPack(context) {
     resDir = path.join(context.appOutDir, 'resources')
   }
   const dest = path.join(resDir, 'dsh')
+  if (path.dirname(path.resolve(dest)) !== path.resolve(resDir)) throw new Error('invalid runtime destination')
   fs.rmSync(dest, { recursive: true, force: true })
-  fs.cpSync(src, dest, { recursive: true, dereference: false, verbatimSymlinks: true })
+  // Exclude the retired tools even when building from an older staging directory.
+  const retiredUv = path.join(src, 'tools', 'uv')
+  fs.cpSync(src, dest, { recursive: true, dereference: false, verbatimSymlinks: true,
+    filter: source => source !== retiredUv && !source.startsWith(retiredUv + path.sep),
+  })
   console.log(`afterPack: copied dsh runtime ${key} -> ${dest}`)
 }

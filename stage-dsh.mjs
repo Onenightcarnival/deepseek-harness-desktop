@@ -165,58 +165,7 @@ execSync(`npm ${['install', 'pnpm@11', ...baseFlags, '--omit=optional', ...cross
   }
 }
 
-// uv (Python-side counterpart of pnpm dlx) for `uvx <pkg>` MCP servers:
-// pinned GitHub release, sha256 verified against the published digest. The
-// archive holds two static binaries, uv and uvx; both go to dsh/tools/uv/.
-const UV_VERSION = '0.12.10'
-const UV_TRIPLE = {
-  'win32-x64': 'x86_64-pc-windows-msvc', 'win32-arm64': 'aarch64-pc-windows-msvc',
-  'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin',
-  'linux-x64': 'x86_64-unknown-linux-gnu', 'linux-arm64': 'aarch64-unknown-linux-gnu',
-}[key]
-if (UV_TRIPLE === undefined) throw new Error(`no uv build mapped for ${key}`)
-{
-  const ext = platform === 'win32' ? 'zip' : 'tar.gz'
-  const asset = `uv-${UV_TRIPLE}.${ext}`
-  const base = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/`
-  const fetchBuf = async (url) => {
-    const res = await fetch(url, { redirect: 'follow' })
-    if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`)
-    return Buffer.from(await res.arrayBuffer())
-  }
-  const [archive, digestText] = await Promise.all([fetchBuf(base + asset), fetchBuf(base + asset + '.sha256')])
-  const expected = digestText.toString('utf8').trim().split(/\s+/)[0].toLowerCase()
-  const actual = (await import('node:crypto')).createHash('sha256').update(archive).digest('hex')
-  if (actual !== expected) throw new Error(`uv ${asset}: sha256 mismatch (got ${actual}, published ${expected})`)
-  const uvDir = path.join(toolsDir, 'uv')
-  fs.rmSync(uvDir, { recursive: true, force: true })
-  fs.mkdirSync(uvDir, { recursive: true })
-  const tmpArchive = path.join(toolsDir, asset)
-  fs.writeFileSync(tmpArchive, archive)
-  const extractDir = path.join(toolsDir, 'uv-extract')
-  fs.rmSync(extractDir, { recursive: true, force: true })
-  fs.mkdirSync(extractDir, { recursive: true })
-  if (ext === 'zip') {
-    // bsdtar (Windows 10+, macOS) extracts zips; GNU tar on Linux does not.
-    if (process.platform === 'linux') execSync(`unzip -q -o "${tmpArchive}" -d "${extractDir}"`, { stdio: 'inherit' })
-    else execSync(`tar -xmf "${tmpArchive}" -C "${extractDir}"`, { stdio: 'inherit' })
-  } else {
-    execSync(`tar -xzf "${tmpArchive}" -C "${extractDir}"`, { stdio: 'inherit' })
-  }
-  const wanted = platform === 'win32' ? ['uv.exe', 'uvx.exe'] : ['uv', 'uvx']
-  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)])
-  const found = walk(extractDir)
-  for (const name of wanted) {
-    const src = found.find((f) => path.basename(f) === name)
-    if (!src) throw new Error(`uv archive ${asset} lacks ${name}`)
-    fs.copyFileSync(src, path.join(uvDir, name))
-    if (platform !== 'win32') fs.chmodSync(path.join(uvDir, name), 0o755)
-  }
-  fs.writeFileSync(path.join(uvDir, 'VERSION'), UV_VERSION + '\n')
-  fs.rmSync(extractDir, { recursive: true, force: true })
-  fs.rmSync(tmpArchive, { force: true })
-  console.log(`bundled uv ${UV_VERSION} (${UV_TRIPLE})`)
-}
+// Python MCP environments are installed by the configuration-center plugin.
 
 // ---- prune ----
 const nm = path.join(dir, 'node_modules')

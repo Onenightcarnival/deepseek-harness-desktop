@@ -45,7 +45,8 @@ Windows 菜单「应用 → 配置中心…」（`Ctrl+,`），macOS / Linux 菜
 菜单「插件」另有两项：
 
 - **重新同步预置插件…**：清除本版本的冲突排除记录并重启，强制恢复全部预置插件。
-- **打开命令行窗口**：打开终端（Windows 为 cmd，macOS 为 Terminal），`dsh`、`pnpm`、`node`、`npx`、`uvx`、`uv` 已在 PATH 上，运行在应用内置的 Node 上。长期使用可把用户数据目录下的 `bin/` 加进 PATH。命令行同样遵循配置中心的代理设置。
+- **打开命令行窗口**：打开终端（Windows 为 cmd，macOS 为 Terminal），`dsh`、`pnpm`、`node`、`npx` 已在 PATH 上，运行在应用内置的 Node 上。长期使用可把用户数据目录下的 `bin/` 加进 PATH。命令行同样遵循配置中心的代理设置。
+- **Python MCP 环境**：桌面安装包不捆绑 uv/uvx。安装最新版 `@onenightcarnival/dsh-toolkit` 或 `@onenightcarnival/dsh-config-center` 后，在「设置 → 环境依赖」安装专属 uv 环境。已有使用裸命令 `uv` / `uvx` 的 profile MCP 配置会在环境安装完成后切换到专属路径；首次使用需要网络。显式填写的自定义可执行文件路径保持原样。
 
 ## 本地构建
 
@@ -63,7 +64,7 @@ npx electron-builder --mac --arm64  # macOS
 - `main.js` — 主进程：dsh 服务的启动与守护、窗口与菜单、更新、配置中心、CLI 启动器。工作区目录选择通过 `--patch` 覆盖层换成壳自带的插件（`plugins/`），弹系统目录对话框。
 - `splash.html` — 启动页。
 - `window-chrome.js` / `preload-desktop.js` / `desktop.css` — 原生标题栏、菜单与主题同步；配置中心使用同一套窗口样式。
-- `stage-dsh.mjs` — 把 `@deepseek-ai/dsh` 安装进 `staging/<platform>-<arch>/dsh` 并裁剪，再放入内置 pnpm（11 线）与 uv（钉版、sha256 校验）。
+- `stage-dsh.mjs` — 把 `@deepseek-ai/dsh` 安装进 `staging/<platform>-<arch>/dsh` 并裁剪，再放入内置 pnpm（11 线）。
 - `afterPack.js` — electron-builder 钩子，把 staging 运行时拷进应用 resources。
 - `build/` — 图标与 NSIS 安装脚本。
 

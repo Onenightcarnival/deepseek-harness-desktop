@@ -13,7 +13,7 @@
 ```
 main.js             主进程：服务拉起/守护、菜单、更新检查（应用 = GitHub Release，
                     内核 = npm registry + 应用内升级到 userData/runtimes/）、CLI 启动器
-                    （dsh/pnpm/node/npx/uvx/uv 六个 shim）、配置中心 IPC（插件/技能/通用/代理）、
+                    （dsh/pnpm/node/npx 四个 shim）、配置中心 IPC（插件/技能/通用/代理）、
                     通用配置的执行（托盘、隐藏到托盘、登录项、powerSaveBlocker）
 runtime.js          纯 CJS、无 Electron 依赖：版本比较、运行时目录选择（升级版优先 + 损坏回退）、
                     engines 校验、通用配置归一化
@@ -41,10 +41,11 @@ preload-desktop.js  沙箱 preload：上游平台布局、Windows 菜单、主�
 desktop.css        原生按钮安全区域、拖拽区与配置中心的深浅色 token
 splash.html         启动页
 stage-dsh.mjs       构建期：npm ci 从 locks/ 安装 dsh + 预置插件到 staging/<platform>-<arch>/dsh，
-                    裁剪运行时不读的文件，安装 pnpm（11 线）到 dsh/tools/，从 GitHub 拉钉版 uv
-                    （sha256 校验）到 dsh/tools/uv/，把预置插件注册进 dsh 应用依赖清单，
+                    裁剪运行时不读的文件，安装 pnpm（11 线）到 dsh/tools/，
+                    把预置插件注册进 dsh 应用依赖清单，
                     写 preset-plugins.json
-afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh
+afterPack.js        electron-builder 钩子：把 staging 运行时拷进应用 resources/dsh，过滤旧 tools/uv 载荷
+build/test-uv-removal.cjs  验证旧 uv 启动器清理保留用户自定义启动器
 build/installer.nsh 安装 / 卸载的进程关闭、阶段提示与提取钩子
 build/extract-long-paths.nsh Windows 7z 扩展路径解压、Robocopy 复制与失败重试
 build/test-installer-copy.mjs Windows 原生安装载荷回归测试（隔离目录，无注册表写入）
@@ -84,6 +85,7 @@ node --check main.js                                 # 主进程语法
 node --check runtime.js
 node --check window-chrome.js
 node --check preload-desktop.js
+node build/test-uv-removal.cjs                       # 旧 uv 启动器迁移
 node -e "require('./runtime.js')"                     # runtime.js 独立可加载，纯函数直接单测
 node stage-dsh.mjs                                    # linux 实跑 staging（node-pty 无 linux 预编译，脚本按平台跳过该断言）
 DSH_FLAVOR=full node stage-dsh.mjs                    # full flavor：预置清单可装、peer 匹配、preset-plugins.json 生成
@@ -184,11 +186,10 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 - **pnpm 子命令前带 `--config.minimum-release-age=0`**（注入点：userData/bin 的 pnpm shim 与 installCoreRuntime 的直接 spawn）。pnpm 11.22 起 `minimum-release-age` 默认 1440 分钟：add 路径自动写 minimumReleaseAgeExclude，remove 路径直接失败（ERR_PNPM_RESOLUTION_POLICY_VIOLATIONS_UNHANDLED），内核升级同样受影响。env 与内置 pnpmrc 对该键不生效。严格模式复现：`--config.minimum-release-age-strict=true` 装一个 24h 内发布的包。
 - **pnpm 子命令前带 `--config.auto-install-peers=false`**（同两个注入点；peer 由应用闭包在运行期提供）。peer 自动安装对同名 peer 做区间交集时丢掉预发布限定（`^0.1.0-rc.8 ∩ *` → `>=0.1.0 <0.2.0`），dsh 核心只发预发布版，预置了 better-sidebar 的干净安装装任何新插件都报 ERR_PNPM_NO_MATCHING_VERSION。容器复现需把 profile workspace yaml 的 `autoInstallPeers` 改为 true。
 - **pnpm 两道门禁**：allowBuilds（构建脚本审批，配置中心不代为放行，提示走命令行）；minimumReleaseAge（裸装包名可能静默降级到旧版本，显式带版本号可豁免）。
-- **启动器默认 `UV_NATIVE_TLS=1`** 走系统证书库。uv 自带根证书在 TLS 拦截型代理后表现为"解码响应体超时"。Python 解释器首次运行从 GitHub 下载到 userData/uv/python，国内用户设 `UV_PYTHON_INSTALL_MIRROR`（启动器 `if not defined` 语义，用户值优先）。
+- **Python MCP 环境由 toolkit 配置中心管理**：desktop 不下载、不捆绑、不生成 uv/uvx 启动器。`removeLegacyUvLaunchers` 只清理应用 bin 目录内带旧缓存变量及 tools/uv 路径的生成文件，保留自定义启动器和旧 Python 缓存。afterPack 过滤旧 staging 的 tools/uv，避免复用 staging 时重新带入。
 
 ### Windows
 
-- **uv ZIP 解压使用 `tar -xmf`，不还原归档时间戳**：Windows 自带 bsdtar 遇到无法表示的 ZIP 时间戳会报 `Can't restore time: Invalid argument` 并退出非零；运行时只需要文件内容。
 - **给子进程改 PATH 必须大小写不敏感找键**（`prependEnvPath`）：`{...process.env}` 展开出的真实键通常是 `Path`，再赋值 `PATH` 造出重复键，子进程实际生效的 PATH 可能只剩新加目录。
 - **代理变量清场同样大小写不敏感**：展开出的真实键常是 `Http_Proxy`。`~/.npmrc` 的 `proxy=` 只能靠显式 `npm_config_proxy` 压过。
 - **系统代理是按 URL 逐次求值的函数**：把某一个地址的 `resolveProxy` 结果当全局 `HTTP_PROXY` 会丢掉 PAC 与例外列表，内网不通。
@@ -218,7 +219,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 
 - **electron-builder 的 extraResources 默认排除 node_modules**，运行时必须走 afterPack 钩子复制。
 - **本仓库不能放进 pnpm workspace**（如上游 fork 的子目录）：electron-builder 向上探测 workspace 根并错误改用 pnpm 收集依赖。须拷到仓库外构建。
-- **CLI 启动器 dsh / pnpm / node 三件套缺一不可**（pnpm 生命周期脚本裸调 `node`），外加给 stdio MCP 用的 npx / uvx / uv。
+- **CLI 启动器 dsh / pnpm / node 三件套缺一不可**（pnpm 生命周期脚本裸调 `node`），外加给 stdio MCP 用的 npx。
 - **技能启用/关闭是目录搬移**：dsh 的文件系统 provider 只扫根目录顶层，没有按名禁用的配置。关闭 = 移到 `userData/disabled-skills/`（不在 `~/.dsh` 与任何扫描根之内），目录监视 2 秒内生效。同名在两边同时存在时拒绝搬移。旧位置 `~/.dsh/skills/.disabled/` 与 `~/.dsh/disabled_skills/` 在首次列表时自动迁移。有 shell 的 agent 仍可全盘搜索到任何目录；该位置只保证不进入 dsh 的目录树。
 
 ## 文档维护

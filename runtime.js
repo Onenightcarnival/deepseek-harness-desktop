@@ -551,3 +551,18 @@ function hideToTrayEffective(settings, platform) {
 module.exports.GENERAL_KEYS = GENERAL_KEYS
 module.exports.normalizeGeneralSettings = normalizeGeneralSettings
 module.exports.hideToTrayEffective = hideToTrayEffective
+
+/** Remove only desktop-generated uv launchers that point at the retired bundled tools. */
+function removeLegacyUvLaunchers(binDir) {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  for (const name of ['uv', 'uvx', 'uv.cmd', 'uvx.cmd']) {
+    const file = path.join(binDir, name)
+    try {
+      if (!fs.lstatSync(file).isFile()) continue
+      const text = fs.readFileSync(file, 'utf8')
+      if (text.includes('UV_CACHE_DIR') && text.includes('UV_PYTHON_INSTALL_DIR') && /[\\/]tools[\\/]uv[\\/]uvx?(?:\.exe)?[" ]/.test(text)) fs.unlinkSync(file)
+    } catch (error) { if (error.code !== 'ENOENT') throw error }
+  }
+}
+module.exports.removeLegacyUvLaunchers = removeLegacyUvLaunchers

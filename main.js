@@ -647,7 +647,7 @@ function proxyShimLines(win) {
 }
 
 /**
- * Write the CLI launchers (dsh / pnpm / node / npx / uvx / uv) into
+ * Write the CLI launchers (dsh / pnpm / node / npx) into
  * userData/bin. All run on Electron's embedded Node (ELECTRON_RUN_AS_NODE);
  * nothing needs to be installed on the machine. Returns the bin dir, which
  * is also prepended to the server's PATH.
@@ -676,8 +676,7 @@ function writeCliLaunchers() {
   const exe = process.execPath
   const npxShim = path.join(binDir, 'npx-shim.js')
   fs.writeFileSync(npxShim, NPX_SHIM_SOURCE)
-  const uvDir = path.join(bundledDshDir(), 'tools', 'uv')
-  const uvExe = fs.existsSync(path.join(uvDir, process.platform === 'win32' ? 'uv.exe' : 'uv'))
+  require('./runtime').removeLegacyUvLaunchers(binDir)
   if (process.platform === 'win32') {
     const winProxy = proxyShimLines(true).join('\r\n') + '\r\n'
     fs.writeFileSync(path.join(binDir, 'dsh.cmd'),
@@ -701,15 +700,7 @@ function writeCliLaunchers() {
       fs.writeFileSync(path.join(binDir, 'npx.cmd'),
         `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nset "PATH=${binDir};%PATH%"\r\nset "DSHDESKTOP_PNPM_CJS=${pnpmCjs}"\r\n${winProxy}"${exe}" "${npxShim}" %*\r\n`)
     }
-    if (uvExe) {
-      // `uvx`/`uv`: bundled Python-side runtime for `uvx <pkg>` MCP servers.
-      // Caches and interpreters live under userData; user-set env wins
-      // (`if not defined`).
-      for (const name of ['uvx', 'uv']) {
-        fs.writeFileSync(path.join(binDir, `${name}.cmd`),
-          `@echo off\r\nset "PATH=${binDir};%PATH%"\r\n${uvEnvLines(true).join('\r\n')}\r\n${winProxy}"${path.join(uvDir, name + '.exe')}" %*\r\n`)
-      }
-    }
+
   } else {
     const shProxy = proxyShimLines(false).join('\n') + '\n'
     fs.writeFileSync(path.join(binDir, 'dsh'),
@@ -724,34 +715,9 @@ function writeCliLaunchers() {
       fs.writeFileSync(path.join(binDir, 'npx'),
         `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexport PATH="${binDir}:$PATH"\nexport DSHDESKTOP_PNPM_CJS="${pnpmCjs}"\n${shProxy}exec "${exe}" "${npxShim}" "$@"\n`, { mode: 0o755 })
     }
-    if (uvExe) {
-      for (const name of ['uvx', 'uv']) {
-        fs.writeFileSync(path.join(binDir, name),
-          `#!/bin/sh\nexport PATH="${binDir}:$PATH"\n${uvEnvLines(false).join('\n')}\n${shProxy}exec "${path.join(uvDir, name)}" "$@"\n`, { mode: 0o755 })
-      }
-    }
+
   }
   return binDir
-}
-
-/**
- * Environment for the bundled uv: cache, interpreters and tool venvs under
- * userData (removed with the app). A value the user already exported wins.
- */
-function uvEnvLines(win) {
-  const base = path.join(app.getPath('userData'), 'uv')
-  const vars = {
-    UV_CACHE_DIR: path.join(base, 'cache'),
-    UV_PYTHON_INSTALL_DIR: path.join(base, 'python'),
-    UV_TOOL_DIR: path.join(base, 'tools'),
-    UV_TOOL_BIN_DIR: path.join(base, 'bin'),
-    // UV_NATIVE_TLS: OS certificate store instead of uv's bundled roots
-    // (same default as the proxy page's "trust the system store").
-    UV_NATIVE_TLS: '1',
-  }
-  return Object.entries(vars).map(([k, v]) => win
-    ? `if not defined ${k} set "${k}=${v}"`
-    : `[ -n "\${${k}:-}" ] || export ${k}="${v}"`)
 }
 
 /**

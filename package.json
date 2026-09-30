@@ -1,7 +1,7 @@
 {
   "name": "deepseek-harness-desktop",
   "productName": "DeepSeek Harness",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Desktop shell for DeepSeek Harness (dsh) — unofficial packaging of the dsh web UI",
   "main": "main.js",
   "license": "MIT",

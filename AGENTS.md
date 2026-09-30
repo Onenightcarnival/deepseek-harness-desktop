@@ -13,12 +13,12 @@
 | 文件 | 职责 |
 |---|---|
 | `main.js` | 服务进程、窗口、菜单、应用与内核更新、CLI 启动器、配置中心 IPC、托盘与系统唤醒 |
-| `runtime.js` | 无 Electron 依赖的版本选择、engines 校验、配置归一化、技能管理与代理函数 |
+| `runtime.js` | 无 Electron 依赖的版本选择、engines 校验、配置归一化与代理函数 |
 | `win-spawn-shim.js` | 子进程隐藏、隐形宿主控制台与预加载传播；启动时复制到 userData，非 Windows 为无操作 |
 | `plugins/dsh-desktop-directory-picker` | 工作区系统目录选择器 |
 | `plugins/dsh-desktop-activity` | 每 2 秒读取 agents/jobs，经 IPC 上报任务忙闲 |
 | `proxy-forward.js` | 回环转发器、HTTP / CONNECT 与逐连接路由 |
-| `plugins.html` | 插件、技能、通用与代理四页；通用值存 userData/general.json |
+| `plugins.html` | 插件、通用与代理三页；通用值存 userData/general.json |
 | `window-chrome.js` | 标题栏、可信主 frame IPC、主题与全屏同步 |
 | `preload-desktop.js` | 平台布局、菜单桥、主题探针；配置中心独占 pluginApi |
 | `desktop.css` / `splash.html` | 原生按钮安全区、拖拽区与主题 / 启动页 |
@@ -58,6 +58,7 @@ node --check main.js                                 # 主进程语法
 node --check runtime.js
 node --check window-chrome.js
 node --check preload-desktop.js
+node build/test-windows-execution-level.cjs          # Windows EXE 管理员权限清单
 node build/test-uv-removal.cjs                       # 旧 uv 启动器迁移
 node -e "require('./runtime.js')"                     # runtime.js 独立可加载，纯函数直接单测
 node stage-dsh.mjs                                    # linux 实跑 staging（node-pty 无 linux 预编译，脚本按平台跳过该断言）
@@ -78,7 +79,7 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 
 **Electron 部分**：
 
-- `node build/test-window-chrome.cjs`：隔离 userData 的真实 Electron 检查，覆盖配置桥来源隔离、深浅主题、四页控件、Windows 原生菜单与按钮安全区域、缩放和全屏；截图写 `staging/window-chrome-test/`。测试会短暂显示窗口以验证原生全屏事件。可用 `DSHDESKTOP_TEST_ELECTRON` 指定本机 Electron 可执行文件；同时设置 `DSHDESKTOP_TEST_RUNTIME`（含 node_modules 的 dsh 目录）和 `DSHDESKTOP_TEST_HOME`（必须位于 staging 内的隔离 profile）时额外启动真实内核检查主界面。macOS 的原生按钮与 vibrancy 需在 Mac 上运行验收，Windows 只能验证 macOS 布局与选项。
+- `node build/test-window-chrome.cjs`：隔离 userData 的真实 Electron 检查，覆盖配置桥来源隔离、深浅主题、三页控件、Windows 原生菜单与按钮安全区域、缩放和全屏；截图写 `staging/window-chrome-test/`。测试会短暂显示窗口以验证原生全屏事件。可用 `DSHDESKTOP_TEST_ELECTRON` 指定本机 Electron 可执行文件；同时设置 `DSHDESKTOP_TEST_RUNTIME`（含 node_modules 的 dsh 目录）和 `DSHDESKTOP_TEST_HOME`（必须位于 staging 内的隔离 profile）时额外启动真实内核检查主界面。macOS 的原生按钮与 vibrancy 需在 Mac 上运行验收，Windows 只能验证 macOS 布局与选项。
 
 - 冒烟：`xvfb-run electron <仓库目录> --no-sandbox`，看 dsh 子进程起来、就绪端口可 curl、日志无 Uncaught。
 - 配置中心页面：Playwright `addInitScript` 注入假 `window.pluginApi` 后打开 `plugins.html` 截图；或 `--remote-debugging-port` 启动后 `connectOverCDP` 操作真实页面（不要 `browser.close()`，会关掉 Electron）。
@@ -157,6 +158,8 @@ node staging/linux-x64/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js \
 
 ### Windows
 
+- Windows EXE 的 `requestedExecutionLevel` 固定为 `requireAdministrator`，由 electron-builder 写入清单；系统 UAC 处理提权。macOS 配置独立。
+
 #### 子进程
 
 | 项目 | 约束 |
@@ -204,7 +207,7 @@ FIND_PROCESS 仅用于运行确认，不作为安装退出条件。真实文件�
 - **electron-builder 的 extraResources 默认排除 node_modules**，运行时必须走 afterPack 钩子复制。
 - **本仓库不能放进 pnpm workspace**（如上游 fork 的子目录）：electron-builder 向上探测 workspace 根并错误改用 pnpm 收集依赖。须拷到仓库外构建。
 - **CLI 启动器 dsh / pnpm / node 三件套缺一不可**（pnpm 生命周期脚本裸调 `node`），外加给 stdio MCP 用的 npx。
-- **技能启用/关闭是目录搬移**：dsh 的文件系统 provider 只扫根目录顶层，没有按名禁用的配置。关闭 = 移到 `userData/disabled-skills/`（不在 `~/.dsh` 与任何扫描根之内），目录监视 2 秒内生效。同名在两边同时存在时拒绝搬移。旧位置 `~/.dsh/skills/.disabled/` 与 `~/.dsh/disabled_skills/` 在首次列表时自动迁移。有 shell 的 agent 仍可全盘搜索到任何目录；该位置只保证不进入 dsh 的目录树。
+- **技能管理**：toolkit 配置中心插件负责安装、启停、删除和预览；主进程通过 `DSHDESKTOP_DISABLED_SKILLS` 传入 `userData/disabled-skills/`，供插件兼容读取旧停用技能。
 
 ## 文档维护
 

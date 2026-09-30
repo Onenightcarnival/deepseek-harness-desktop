@@ -55,7 +55,6 @@ app.whenReady().then(async () => {
   const chrome = createWindowChrome({ ipcMain, nativeTheme, Menu, getOrigin: () => activeOrigin })
   let saved = null
   ipcMain.handle('plugins:list', () => ({ deps: { 'dsh-toolkit': '0.7.0' }, bundles: ['dsh-toolkit'] }))
-  ipcMain.handle('skills:list', () => [])
   ipcMain.handle('general:get', () => ({ settings: {}, platform: process.platform }))
   ipcMain.handle('general:save', (_event, settings) => { saved = settings; return { ok: true, settings } })
   ipcMain.handle('proxy:get', () => ({ mode: 'none' }))
@@ -86,7 +85,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(output, name + '.png'), (await settings.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG())
   }
   await capture('settings-light')
-  for (const pane of ['skills', 'general', 'proxy', 'plugins']) {
+  for (const pane of ['general', 'proxy', 'plugins']) {
     await js(`document.querySelector('[data-pane="${pane}"]').click()`)
     assert.equal(await js('document.querySelector(".pane.active").id'), `pane-${pane}`)
   }

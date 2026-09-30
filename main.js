@@ -12,7 +12,6 @@ const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, satisfiesNode, prependEnvPath,
-  listSkillStore, skillExists, removeSkill, setSkillEnabled, skillDetail, readSkillFile, SKILL_DISABLED_DIR,
   applyProxyEnv, PROXY_ENV_KEYS, normalizeGeneralSettings, hideToTrayEffective } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
 const { createWindowChrome } = require('./window-chrome.js')
@@ -526,14 +525,6 @@ async function startForwarder() {
 function withProxyEnv(env) {
   return applyProxyEnv(env, forwarder ? forwarder.port : 0, readProxyConfig())
 }
-
-// ---- GUI-managed skills ----
-
-function skillsDir() { return path.join(app.getPath('home'), '.dsh', 'skills') }
-
-/** Disabled skills live in the app's data directory, outside ~/.dsh. */
-function disabledSkillsRoot() { return path.join(app.getPath('userData'), SKILL_DISABLED_DIR) }
-function listSkills() { return listSkillStore(fs, path, skillsDir(), disabledSkillsRoot()) }
 
 /**
  * Workspace directory picker: the shell's own backend (plugins/
@@ -1259,7 +1250,7 @@ async function startServer() {
     syncPresetPlugins()
     healUnresolvableEntries()
 
-    const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSHDESKTOP_DISABLED_SKILLS: path.join(app.getPath('userData'), 'disabled-skills') }
     // Electron-specific vars must not leak into the node child.
     delete env.ELECTRON_NO_ATTACH_CONSOLE
     // Expose the bundled dsh/pnpm CLI launchers to the server and its
@@ -1507,7 +1498,7 @@ function buildMenu() {
     {
       label: '插件',
       submenu: [
-        { label: '配置中心…（插件 / 技能 / 代理）', click: () => { openPluginManager() } },
+        { label: '配置中心…（插件 / 通用 / 代理）', click: () => { openPluginManager() } },
         { label: '打开命令行窗口', click: () => { openCliTerminal() } },
         { type: 'separator' },
         { label: '重新同步预置插件…', click: () => { restorePresetPlugins() } },
@@ -1669,51 +1660,6 @@ ipcMain.handle('plugins:restart', async () => {
   app.quit()
 })
 
-const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-ipcMain.handle('skills:list', async () => listSkills())
-ipcMain.handle('skills:open', async (_event, name) => {
-  fs.mkdirSync(skillsDir(), { recursive: true })
-  // With a name: open that skill's directory (or the folder holding a flat
-  // .md), wherever it lives (enabled or disabled).
-  const n = String(name || '').trim()
-  if (n !== '') {
-    const d = skillDetail(fs, path, skillsDir(), n, disabledSkillsRoot())
-    if (d) { shell.openPath(d.dir); return }
-  }
-  shell.openPath(skillsDir())
-})
-// Detail view: frontmatter summary + file tree; file reads are fenced to the
-// skill's own directory, text-only and size-capped (runtime.js).
-ipcMain.handle('skills:detail', async (_event, name) => {
-  const d = skillDetail(fs, path, skillsDir(), String(name || '').trim(), disabledSkillsRoot())
-  return d ? { ok: true, detail: d } : { ok: false, error: '技能不存在' }
-})
-ipcMain.handle('skills:readFile', async (_event, name, rel) => {
-  const d = skillDetail(fs, path, skillsDir(), String(name || '').trim(), disabledSkillsRoot())
-  if (!d) return { error: '技能不存在' }
-  try {
-    return readSkillFile(fs, path, d.dir, String(rel || ''))
-  } catch (err) {
-    return { error: String(err && err.message || err) }
-  }
-})
-/** Extract a zip with OS-native tooling (no runtime deps). Throws on failure. */
-function extractZip(zipPath, destDir) {
-  const { spawnSync } = require('child_process')
-  fs.mkdirSync(destDir, { recursive: true })
-  let r
-  if (process.platform === 'win32') {
-    const esc = (s) => s.replace(/'/g, "''")
-    r = spawnSync('powershell.exe', ['-NoProfile', '-Command',
-      `Expand-Archive -LiteralPath '${esc(zipPath)}' -DestinationPath '${esc(destDir)}' -Force`],
-      { windowsHide: true, timeout: 60_000 })
-  } else {
-    r = spawnSync('unzip', ['-o', '-q', zipPath, '-d', destDir], { timeout: 60_000 })
-  }
-  if (r.error) throw r.error
-  if (r.status !== 0) throw new Error(`解压失败 (exit ${r.status})：${String(r.stderr || '').slice(0, 300)}`)
-}
-
 // ---- proxy config ----
 ipcMain.handle('proxy:get', async () => readProxyConfig())
 ipcMain.handle('proxy:save', async (_event, config) => {
@@ -1801,86 +1747,6 @@ ipcMain.handle('proxy:test', async (_event, config, url) => {
     })
   } finally {
     probe.close()
-  }
-})
-
-ipcMain.handle('skills:installZip', async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(pluginWindow || mainWindow, {
-    title: '选择技能包（.zip，可含单个或多个技能）',
-    properties: ['openFile'],
-    filters: [{ name: 'Zip 压缩包', extensions: ['zip'] }],
-  })
-  if (canceled || filePaths.length === 0) return { ok: false, error: '' }
-  const zipPath = filePaths[0]
-  const tmp = path.join(app.getPath('userData'), `tmp-skill-${process.pid}-${Math.floor(performance.now())}`)
-  try {
-    extractZip(zipPath, tmp)
-    const { collectSkills } = require('./runtime.js')
-    const { found, rejected } = collectSkills(fs, tmp, path.basename(zipPath, '.zip'), path)
-    if (found.length === 0) {
-      return { ok: false, error: `压缩包里没有可识别的技能（需要 SKILL.md 目录包或 .md 文件）${rejected.length ? `；名称无法转为 kebab-case 的已跳过：${rejected.join(', ')}` : ''}` }
-    }
-    fs.mkdirSync(skillsDir(), { recursive: true })
-    // A disabled copy counts as existing: overwriting
-    // removes the disabled copy and installs the new one enabled.
-    const exists = (name) => skillExists(fs, path, skillsDir(), name, disabledSkillsRoot())
-    const conflicts = found.filter((s) => exists(s.name)).map((s) => s.name)
-
-    // Same-name skills: one prompt for the whole batch (overwrite, skip, or abort).
-    let overwrite = false
-    if (conflicts.length > 0) {
-      const { response } = await dialog.showMessageBox(pluginWindow || mainWindow, {
-        type: 'question',
-        title: '技能已存在',
-        message: `以下技能已存在：${conflicts.join('、')}`,
-        detail: '覆盖：用压缩包中的版本替换现有技能，原内容删除。跳过同名：只安装不冲突的技能。',
-        buttons: ['覆盖', '跳过同名', '取消安装'],
-        defaultId: 1,
-        cancelId: 2,
-      })
-      if (response === 2) return { ok: false, error: '已取消安装' }
-      overwrite = response === 0
-    }
-
-    const installed = []
-    const overwritten = []
-    const skipped = []
-    for (const s of found) {
-      const conflicted = exists(s.name)
-      if (conflicted && !overwrite) { skipped.push(s.name); continue }
-      if (conflicted) removeSkill(fs, path, skillsDir(), s.name, disabledSkillsRoot())
-      const dest = path.join(skillsDir(), s.kind === 'bundle' ? s.name : `${s.name}.md`)
-      if (s.kind === 'bundle') fs.cpSync(s.src, dest, { recursive: true })
-      else fs.copyFileSync(s.src, dest)
-      ;(conflicted ? overwritten : installed).push(s.name)
-    }
-    return { ok: installed.length + overwritten.length > 0, installed, overwritten, skipped, rejected,
-      error: installed.length + overwritten.length === 0 ? `全部同名跳过：${skipped.join(', ')}` : '' }
-  } catch (err) {
-    return { ok: false, error: String(err && err.message || err) }
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true })
-  }
-})
-ipcMain.handle('skills:delete', async (_event, name) => {
-  const n = String(name || '').trim()
-  if (!SKILL_NAME_RE.test(n) || n.length > 64) return { ok: false, error: '技能名无效' }
-  try {
-    if (!removeSkill(fs, path, skillsDir(), n, disabledSkillsRoot())) return { ok: false, error: '技能不存在' }
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: String(err && err.message || err) }
-  }
-})
-// Enable = move back to ~/.dsh/skills; disable = move to userData/disabled-skills/
-// (runtime.js setSkillEnabled). dsh's watcher picks up the rename without a
-// restart.
-ipcMain.handle('skills:setEnabled', async (_event, name, enabled) => {
-  const n = String(name || '').trim()
-  try {
-    return setSkillEnabled(fs, path, skillsDir(), n, enabled === true, disabledSkillsRoot())
-  } catch (err) {
-    return { ok: false, error: String(err && err.message || err) }
   }
 })
 

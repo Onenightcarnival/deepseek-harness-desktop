@@ -2,6 +2,8 @@
 const { contextBridge, ipcRenderer, webFrame } = require('electron')
 
 const initialState = ipcRenderer.sendSync('desktop:chrome-init')
+let currentLanguage = initialState?.language || 'zh'
+if (initialState) contextBridge.exposeInMainWorld('desktopLocale', { get: () => currentLanguage })
 
 // 配置 API 只存在于主进程验证过的配置中心本地页。
 if (initialState?.purpose === 'settings' && initialState.local) contextBridge.exposeInMainWorld('pluginApi', {
@@ -21,6 +23,13 @@ if (initialState?.purpose === 'settings' && initialState.local) contextBridge.ex
 /** 标记上游支持的平台布局，并同步本地页与原生窗口配色。 */
 function applyState(state) {
   const root = document.documentElement
+  currentLanguage = state.language || 'zh'
+  if (state.local && root.lang !== currentLanguage) {
+    root.lang = currentLanguage
+    window.dispatchEvent(new Event('desktop-language-change'))
+  }
+  const title = document.getElementById('desktop-titlebar')
+  if (title) title.textContent = state.purpose === 'settings' ? (currentLanguage === 'en' ? 'Configuration center' : '配置中心') : 'DeepSeek Harness'
   // 上游 data-platform 同时启用官方键盘桥；Web 壳使用独立的视觉标记。
   root.dataset.desktopPlatform = state.platform
   root.toggleAttribute('data-fullscreen', state.fullscreen)
@@ -55,7 +64,7 @@ function mountMenu() {
   `
   const bar = document.createElement('div')
   bar.setAttribute('role', 'menubar')
-  bar.setAttribute('aria-label', '应用菜单')
+  bar.setAttribute('aria-label', currentLanguage === 'en' ? 'App menu' : '应用菜单')
   let restoreEditor = () => {}
   document.addEventListener('focusout', event => {
     const editor = event.composedPath()[0]
@@ -72,7 +81,7 @@ function mountMenu() {
       else if (selection && ranges.length) { selection.removeAllRanges(); for (const range of ranges) selection.addRange(range) }
     }
   }, true)
-  const buttons = ['应用', '编辑'].map((label, index) => {
+  const buttons = (currentLanguage === 'en' ? ['App', 'Edit'] : ['应用', '编辑']).map((label, index) => {
     const button = document.createElement('button')
     button.textContent = label
     button.type = 'button'
@@ -86,7 +95,7 @@ function mountMenu() {
       button.setAttribute('aria-expanded', 'true')
       if (document.activeElement === host) restoreEditor()
       try { await ipcRenderer.invoke('desktop:chrome-menu', index ? 'edit' : 'application', rect.left, rect.bottom) }
-      catch (error) { console.error('菜单打开失败:', error) }
+      catch (error) { console.error('Menu failed to open:', error) }
       finally { button.setAttribute('aria-expanded', 'false') }
     }
     button.addEventListener('click', open)
@@ -99,6 +108,10 @@ function mountMenu() {
     })
     bar.append(button)
     return button
+  })
+  window.addEventListener('desktop-menu-language', () => {
+    bar.setAttribute('aria-label', currentLanguage === 'en' ? 'App menu' : '应用菜单')
+    buttons.forEach((button, i) => { button.textContent = (currentLanguage === 'en' ? ['App', 'Edit'] : ['应用', '编辑'])[i] })
   })
   shadow.append(style, bar)
   document.body.append(host)
@@ -124,13 +137,14 @@ function watchPalette() {
     const computed = getComputedStyle(probe)
     const value = { sidebar: hex(computed.backgroundColor), content: hex(computed.borderTopColor), text: hex(computed.color),
       dark: document.body.hasAttribute('data-ds-dark-theme') || document.documentElement.hasAttribute('data-ds-dark-theme'),
-      source: document.documentElement.dataset.dsThemeSource }
+      source: document.documentElement.dataset.dsThemeSource,
+      language: document.documentElement.lang.toLowerCase().startsWith('zh') ? 'zh' : 'en' }
     const next = JSON.stringify(value)
     if (next !== last) { last = next; ipcRenderer.send('desktop:chrome-palette', value) }
   }
   const schedule = () => { if (!pending) { pending = true; queueMicrotask(read) } }
   const observer = new MutationObserver(schedule)
-  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-ds-dark-theme', 'data-ds-theme-source'] })
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-ds-dark-theme', 'data-ds-theme-source', 'lang'] })
   observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-ds-dark-theme'] })
   observer.observe(document.head, { childList: true, subtree: true, characterData: true })
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', schedule)
@@ -142,6 +156,7 @@ if (initialState) {
   ipcRenderer.on('desktop:chrome-state', (_event, next) => {
     state = next
     if (document.documentElement) applyState(state)
+    window.dispatchEvent(new Event('desktop-menu-language'))
   })
   window.addEventListener('resize', () => { applyState(state); ipcRenderer.send('desktop:chrome-resize') })
   window.addEventListener('DOMContentLoaded', () => {
@@ -149,7 +164,7 @@ if (initialState) {
     if ((state.local && state.platform !== 'linux') || state.platform === 'darwin') {
       const title = document.createElement('header')
       title.id = 'desktop-titlebar'
-      title.textContent = state.purpose === 'settings' ? '配置中心' : 'DeepSeek Harness'
+      title.textContent = state.purpose === 'settings' ? (currentLanguage === 'en' ? 'Configuration center' : '配置中心') : 'DeepSeek Harness'
       document.body.prepend(title)
     }
     if (!state.local) {

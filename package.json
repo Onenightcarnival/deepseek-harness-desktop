@@ -25,6 +25,8 @@
     ],
     "files": [
       "main.js",
+      "desktop-i18n.js",
+      "splash.js",
       "runtime.js",
       "proxy-forward.js",
       "win-spawn-shim.js",

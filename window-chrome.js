@@ -33,7 +33,7 @@ function trustedChromeUrl(url, purpose, origin) {
 }
 
 /** 管理标题栏外观、全屏状态和 Windows 原生菜单的受限 IPC。 */
-function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.platform, getOrigin }) {
+function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.platform, getOrigin, getLanguage = () => 'zh', onLanguage = () => {} }) {
   const windows = new Map()
   const css = fs.readFileSync(path.join(__dirname, 'desktop.css'), 'utf8')
   let palette = chromePalette(nativeTheme.shouldUseDarkColors)
@@ -44,7 +44,7 @@ function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.pla
     return trustedChromeUrl(event.senderFrame.url, entry.purpose, getOrigin()) ? entry : null
   }
   function state(entry) {
-    return { platform, purpose: entry.purpose, palette,
+    return { platform, purpose: entry.purpose, palette, language: getLanguage(),
       fullscreen: entry.fullscreen, zoom: entry.window.webContents.getZoomFactor(),
       local: entry.window.webContents.getURL().startsWith('file:') }
   }
@@ -75,6 +75,7 @@ function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.pla
       !['sidebar', 'content', 'text'].every(key => /^#[0-9a-f]{6}$/i.test(value[key]))) return
     palette = { dark: value.dark, sidebar: value.sidebar, content: value.content, text: value.text }
     webPalette = true
+    if (['en', 'zh'].includes(value.language)) onLanguage(value.language)
     // 原生菜单跟随页面主题；系统模式保留操作系统的主题变化。
     nativeTheme.themeSource = ['system', 'light', 'dark'].includes(value.source)
       ? value.source : value.dark ? 'dark' : 'light'
@@ -113,7 +114,7 @@ function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.pla
       window.webContents.on('did-finish-load', () => update(entry))
       window.webContents.on('dom-ready', () => {
         if (trustedChromeUrl(window.webContents.getURL(), purpose, getOrigin())) {
-          window.webContents.insertCSS(css).catch(error => console.error('窗口样式加载失败:', error))
+          window.webContents.insertCSS(css).catch(error => console.error('Window stylesheet failed to load:', error))
         }
       })
       window.webContents.on('zoom-changed', () => update(entry))

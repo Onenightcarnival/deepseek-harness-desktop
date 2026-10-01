@@ -21,6 +21,8 @@
 | `plugins.html` | 插件、通用与代理三页；通用值存 userData/general.json |
 | `window-chrome.js` | 标题栏、可信主 frame IPC、主题与全屏同步 |
 | `preload-desktop.js` | 平台布局、菜单桥、主题探针；配置中心独占 pluginApi |
+| `desktop-i18n.js` | 桌面界面中英词典与插值 |
+| `splash.js` | 启动等待文案的语言同步 |
 | `desktop.css` / `splash.html` | 原生按钮安全区、拖拽区与主题 / 启动页 |
 | `stage-dsh.mjs` | 从 locks 安装并裁剪运行时，安装 pnpm，登记预置包 |
 | `update-locks.mjs` | 内核与插件版本、依赖闭包与锁文件更新 |
@@ -235,8 +237,8 @@ FIND_PROCESS 仅用于运行确认，不作为安装退出条件。真实文件�
 | 代码注释 | 职责、输入输出、契约与非显然的边界；函数级用 JSDoc，不复述代码 |
 | UI 文案 | 字段名称、状态、动作与必要提示；详细说明放帮助或文档，诊断细节按需展开 |
 
-用户可见文案简短、具体，术语一致。涉及数据采集、权限或不可逆操作的必要信息在操作处呈现。
+用户可见文案陈述结果，不解释动机；简短、具体，术语一致。涉及数据采集、权限或不可逆操作的必要信息在操作处呈现。
 
 - 主进程是无构建步骤的 CJS，构建依赖为 electron、electron-builder 与 semver（devDependencies），不引入打包器、框架或运行时依赖。能写成纯函数的逻辑放 `runtime.js` 这类无 Electron 依赖的模块。
-- 用户可见文案用中文，陈述结果，不解释动机。
+- 用户界面文案提供中文与英文，跟随内核页面语言。
 - 发版：推 `v*` 标签；锁定内核版本用 stage 步骤的 `DSH_VERSION` 环境变量。

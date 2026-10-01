@@ -15,7 +15,22 @@ const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, sa
   applyProxyEnv, PROXY_ENV_KEYS, normalizeGeneralSettings, hideToTrayEffective } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
 const { createWindowChrome } = require('./window-chrome.js')
-const windowChrome = createWindowChrome({ ipcMain, nativeTheme, Menu, getOrigin: () => currentWebUrl })
+const { translate, normalizeLanguage } = require('./desktop-i18n.js')
+let uiLanguage = 'zh'
+// Chromium localizes native accelerator names once, before app readiness.
+try {
+  uiLanguage = normalizeLanguage(JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'ui-language.json'), 'utf8')))
+  app.commandLine.appendSwitch('lang', uiLanguage === 'zh' ? 'zh-CN' : 'en-US')
+} catch { /* First launch uses the system locale. */ }
+const t = (key, ...values) => translate(key, uiLanguage, ...values)
+const windowChrome = createWindowChrome({ ipcMain, nativeTheme, Menu, getOrigin: () => currentWebUrl,
+  getLanguage: () => uiLanguage, onLanguage: language => {
+    if (language === uiLanguage) return
+    uiLanguage = language
+    try { fs.writeFileSync(path.join(app.getPath('userData'), 'ui-language.json'), JSON.stringify(language)) } catch { /* Optional preference persistence. */ }
+    buildMenu()
+    syncTray()
+  } })
 
 // Ready line with the one-time browser-trust token. The whole URL (query
 // included) is loaded as-is; the token exchange (303 → cookie) happens in
@@ -67,7 +82,7 @@ function getAppUpdater() {
       if (appUpdateState === 'downloading') {
         appUpdateState = 'available'
         buildMenu()
-        dialog.showMessageBox({ type: 'warning', title: 'DeepSeek Harness', message: '更新下载失败', detail: String((err && err.message) || err), buttons: ['好'] })
+        dialog.showMessageBox({ type: 'warning', title: 'DeepSeek Harness', message: t("更新下载失败"), detail: String((err && err.message) || err), buttons: [t("好")] })
       }
     })
     appUpdater = autoUpdater
@@ -97,9 +112,9 @@ async function offerRestartForUpdate(info) {
   const { response } = await dialog.showMessageBox({
     type: 'info',
     title: 'DeepSeek Harness',
-    message: `v${version} 已下载完成`,
-    detail: '重启后完成安装。选择「稍后」则在下次退出应用时安装。',
-    buttons: ['立即重启', '稍后'],
+    message: t("v{0} 已下载完成", version),
+    detail: t("重启后完成安装。选择「稍后」则在下次退出应用时安装。"),
+    buttons: [t("立即重启"), t("稍后")],
     defaultId: 0,
     cancelId: 1,
   })
@@ -123,7 +138,7 @@ async function checkAppUpdates(interactive) {
   if (!UPDATE_REPO) return
   if (appUpdateState === 'downloaded') { await offerRestartForUpdate(appUpdateInfo); return }
   if (appUpdateState === 'downloading') {
-    if (interactive) await dialog.showMessageBox({ type: 'info', title: 'DeepSeek Harness', message: '更新正在后台下载', detail: '下载完成后会提示重启。', buttons: ['好'] })
+    if (interactive) await dialog.showMessageBox({ type: 'info', title: 'DeepSeek Harness', message: t("更新正在后台下载"), detail: t("下载完成后会提示重启。"), buttons: [t("好")] })
     return
   }
   const updater = getAppUpdater()
@@ -140,9 +155,9 @@ async function checkAppUpdates(interactive) {
         const { response } = await dialog.showMessageBox({
           type: 'info',
           title: 'DeepSeek Harness',
-          message: `发现新版本 v${latest}（当前 v${app.getVersion()}）`,
-          detail: '在后台下载，完成后重启即可更新。',
-          buttons: ['后台下载', '前往下载页', '取消'],
+          message: t("发现新版本 v{0}（当前 v{1}）", latest, app.getVersion()),
+          detail: t("在后台下载，完成后重启即可更新。"),
+          buttons: [t("后台下载"), t("前往下载页"), t("取消")],
           defaultId: 0,
           cancelId: 2,
         })
@@ -154,7 +169,7 @@ async function checkAppUpdates(interactive) {
       if (interactive) {
         await dialog.showMessageBox({
           type: 'info', title: 'DeepSeek Harness',
-          message: `当前已是最新版本（v${app.getVersion()}）`, buttons: ['好'],
+          message: t("当前已是最新版本（v{0}）", app.getVersion()), buttons: [t("好")],
         })
       }
       return
@@ -174,9 +189,9 @@ async function checkAppUpdates(interactive) {
       const { response } = await dialog.showMessageBox({
         type: 'info',
         title: 'DeepSeek Harness',
-        message: `发现新版本 v${latest}（当前 v${app.getVersion()}）`,
+        message: t("发现新版本 v{0}（当前 v{1}）", latest, app.getVersion()),
         detail: rel.name || '',
-        buttons: ['前往下载', '取消'],
+        buttons: [t("前往下载"), t("取消")],
         defaultId: 0,
         cancelId: 1,
       })
@@ -184,14 +199,14 @@ async function checkAppUpdates(interactive) {
     } else if (interactive) {
       await dialog.showMessageBox({
         type: 'info', title: 'DeepSeek Harness',
-        message: `当前已是最新版本（v${app.getVersion()}）`, buttons: ['好'],
+        message: t("当前已是最新版本（v{0}）", app.getVersion()), buttons: [t("好")],
       })
     }
   } catch (err) {
     if (interactive) {
       await dialog.showMessageBox({
         type: 'warning', title: 'DeepSeek Harness',
-        message: '检查更新失败', detail: String(err && err.message || err), buttons: ['好'],
+        message: t("检查更新失败"), detail: String(err && err.message || err), buttons: [t("好")],
       })
     }
   }
@@ -292,7 +307,7 @@ async function checkCoreUpdates(interactive) {
       if (interactive) {
         await dialog.showMessageBox({
           type: 'info', title: 'DeepSeek Harness',
-          message: `dsh 内核已是最新（v${current}）`, buttons: ['好'],
+          message: t("dsh 内核已是最新（v{0}）", current), buttons: [t("好")],
         })
       }
       return
@@ -304,9 +319,9 @@ async function checkCoreUpdates(interactive) {
       if (interactive) {
         const { response } = await dialog.showMessageBox({
           type: 'info', title: 'DeepSeek Harness',
-          message: `npm 上有 dsh v${latest}，属于新的版本线（${releaseLine(latest)}）`,
-          detail: `本安装包内置 v${bundledVersion}（${releaseLine(bundledVersion)} 线）。预置插件与内核版本线绑定；跨线升级需下载新版桌面安装包。`,
-          buttons: ['检查应用更新', '好'], defaultId: 0, cancelId: 1,
+          message: t("npm 上有 dsh v{0}，属于新的版本线（{1}）", latest, releaseLine(latest)),
+          detail: t("本安装包内置 v{0}（{1} 线）。预置插件与内核版本线绑定；跨线升级需下载新版桌面安装包。", bundledVersion, releaseLine(bundledVersion)),
+          buttons: [t("检查应用更新"), t("好")], defaultId: 0, cancelId: 1,
         })
         if (response === 0) await checkAppUpdates(true)
       }
@@ -316,18 +331,18 @@ async function checkCoreUpdates(interactive) {
       if (interactive) {
         await dialog.showMessageBox({
           type: 'warning', title: 'DeepSeek Harness',
-          message: `dsh v${latest} 要求的 Node 版本高于本应用内置的 v${process.versions.node}`,
-          detail: '请等待新版桌面安装包。',
-          buttons: ['好'],
+          message: t("dsh v{0} 要求的 Node 版本高于本应用内置的 v{1}", latest, process.versions.node),
+          detail: t("请等待新版桌面安装包。"),
+          buttons: [t("好")],
         })
       }
       return
     }
     const { response } = await dialog.showMessageBox({
       type: 'info', title: 'DeepSeek Harness',
-      message: `发现 dsh 内核新版本 v${latest}（当前 v${current}）`,
-      detail: '下载后重启应用生效；新内核启动失败时自动回退到内置版本。',
-      buttons: ['下载并升级', '取消'], defaultId: 0, cancelId: 1,
+      message: t("发现 dsh 内核新版本 v{0}（当前 v{1}）", latest, current),
+      detail: t("下载后重启应用生效；新内核启动失败时自动回退到内置版本。"),
+      buttons: [t("下载并升级"), t("取消")], defaultId: 0, cancelId: 1,
     })
     if (response !== 0) return
     coreUpgradeBusy = true
@@ -335,8 +350,8 @@ async function checkCoreUpdates(interactive) {
       await installCoreRuntime(latest)
       const { response: r2 } = await dialog.showMessageBox({
         type: 'info', title: 'DeepSeek Harness',
-        message: `dsh v${latest} 已就绪`, detail: '重启应用后生效。',
-        buttons: ['立即重启', '稍后'], defaultId: 0, cancelId: 1,
+        message: t("dsh v{0} 已就绪", latest), detail: t("重启应用后生效。"),
+        buttons: [t("立即重启"), t("稍后")], defaultId: 0, cancelId: 1,
       })
       if (r2 === 0) { app.relaunch(); app.quit() }
     } finally {
@@ -346,7 +361,7 @@ async function checkCoreUpdates(interactive) {
     if (interactive) {
       await dialog.showMessageBox({
         type: 'warning', title: 'DeepSeek Harness',
-        message: '检查内核更新失败', detail: String(err && err.message || err), buttons: ['好'],
+        message: t("检查内核更新失败"), detail: String(err && err.message || err), buttons: [t("好")],
       })
     }
   }
@@ -408,7 +423,7 @@ async function installCoreRuntime(version) {
         resolve()
       } else {
         fs.rmSync(dir, { recursive: true, force: true })
-        reject(new Error(`内核下载失败 (pnpm exit ${code})\n${tail.slice(-1500)}`))
+        reject(new Error(t("内核下载失败 (pnpm exit {0})\n{1}", code, tail.slice(-1500))))
       }
     })
     child.on('error', reject)
@@ -594,8 +609,8 @@ function ensureDesktopPlugins(runtimeDir) {
 
 /** The pick dialog title and button in the app language. */
 function pickerStrings() {
-  const zh = String(app.getLocale() || '').toLowerCase().startsWith('zh')
-  return zh ? { title: '选择工作区目录', buttonLabel: '选择' } : { title: 'Select Workspace Directory', buttonLabel: 'Select' }
+  const zh = uiLanguage === 'zh'
+  return zh ? { title: t("选择工作区目录"), buttonLabel: t("选择") } : { title: 'Select Workspace Directory', buttonLabel: 'Select' }
 }
 
 /**
@@ -750,13 +765,13 @@ function openCliTerminal() {
       'title DeepSeek Harness CLI',
       `set "PATH=${binDir};%PATH%"`,
       ...proxyShimLines(true),
-      'echo dsh 命令行已就绪：可直接使用 dsh / pnpm 命令',
-      'echo 例如：dsh plugin --profile web add ^<插件包^>',
+      t("echo dsh 命令行已就绪：可直接使用 dsh / pnpm 命令"),
+      t("echo 例如：dsh plugin --profile web add ^<插件包^>"),
       'cmd /K',
       '',
     ].join('\r\n'))
     shell.openPath(cmdFile).then((err) => {
-      if (err) dialog.showErrorBox('无法打开命令行窗口', `${err}\n\n可手动运行该文件：\n${cmdFile}`)
+      if (err) dialog.showErrorBox(t("无法打开命令行窗口"), t("{0}\n\n可手动运行该文件：\n{1}", err, cmdFile))
     })
     return
   }
@@ -769,8 +784,8 @@ function openCliTerminal() {
       `export PATH="${binDir}:$PATH"`,
       ...proxyShimLines(false),
       'clear',
-      'echo "dsh 命令行已就绪：可直接使用 dsh / pnpm 命令"',
-      'echo "例如：dsh plugin --profile web add <插件包>"',
+      t("echo \"dsh 命令行已就绪：可直接使用 dsh / pnpm 命令\""),
+      t("echo \"例如：dsh plugin --profile web add <插件包>\""),
       'exec "${SHELL:-/bin/zsh}" -i',
       '',
     ].join('\n'), { mode: 0o755 })
@@ -897,7 +912,7 @@ function writeStubPackage(localNm, name) {
   fs.writeFileSync(path.join(stubDir, 'package.json'), JSON.stringify({ name, version: '0.0.1', main: 'index.js' }, null, 2))
   fs.writeFileSync(path.join(stubDir, 'index.js'), [
     "'use strict'",
-    `console.warn('dsh-desktop: 插件 ${name} 不在当前安装包中，已用空实现替代；重新安装该插件或安装含该插件的版本可恢复')`,
+    `console.warn('dsh-desktop: ${name} is missing from the runtime; using a stub until the plugin is reinstalled')`,
     `module.exports = { name: ${JSON.stringify(name)}, apply() {} }`,
     '',
   ].join('\n'))
@@ -943,7 +958,7 @@ function applyBootErrorFix(errText) {
           }
         }
         fs.renameSync(file, `${file}.broken-${Date.now()}`)
-        console.log(`boot heal: quarantined ${file}; 凭据需重新登录`)
+        console.log(`boot heal: quarantined ${file}; sign-in required`)
         return true
       } catch (err2) { console.error('credentials heal failed:', err2) }
     }
@@ -1110,15 +1125,15 @@ async function restorePresetPlugins() {
   if (names.length === 0) {
     await dialog.showMessageBox({
       type: 'info', title: 'DeepSeek Harness',
-      message: '当前版本没有预置插件', detail: '此安装包为精简版；预置插件随 full 版分发。', buttons: ['好'],
+      message: t("当前版本没有预置插件"), detail: t("此安装包为精简版；预置插件随 full 版分发。"), buttons: [t("好")],
     })
     return
   }
   const { response } = await dialog.showMessageBox({
     type: 'question', title: 'DeepSeek Harness',
-    message: '重新同步本版本的预置插件？',
-    detail: `以下插件将全部挂载：\n${names.join('\n')}\n\n需要重启应用。`,
-    buttons: ['同步并重启', '取消'], defaultId: 0, cancelId: 1,
+    message: t("重新同步本版本的预置插件？"),
+    detail: t("以下插件将全部挂载：\n{0}\n\n需要重启应用。", names.join('\n')),
+    buttons: [t("同步并重启"), t("取消")], defaultId: 0, cancelId: 1,
   })
   if (response !== 0) return
   try {
@@ -1251,6 +1266,9 @@ async function startServer() {
     healUnresolvableEntries()
 
     const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSHDESKTOP_DISABLED_SKILLS: path.join(app.getPath('userData'), 'disabled-skills') }
+    env.DSHDESKTOP_LOG_FILE = logFile()
+    env.PYTHONUTF8 = '1'
+    env.PYTHONIOENCODING = 'utf-8'
     // Electron-specific vars must not leak into the node child.
     delete env.ELECTRON_NO_ATTACH_CONSOLE
     // Expose the bundled dsh/pnpm CLI launchers to the server and its
@@ -1298,8 +1316,7 @@ async function startServer() {
       }
     }, STARTUP_TIMEOUT_MS)
 
-    const onChunk = (chunk) => {
-      const text = chunk.toString()
+    const onChunk = (text) => {
       tail = (tail + text).slice(-8000)
       if (logStream) logStream.write(text)
       if (!settled) {
@@ -1311,8 +1328,11 @@ async function startServer() {
         }
       }
     }
-    serverProc.stdout.on('data', onChunk)
-    serverProc.stderr.on('data', onChunk)
+
+    // Each pipe retains partial UTF-8 characters until the next data chunk.
+    serverProc.stdout.setEncoding('utf8').on('data', onChunk)
+    serverProc.stderr.setEncoding('utf8').on('data', onChunk)
+    serverProc.once('close', () => logStream?.end())
 
     serverProc.on('exit', (code) => {
       // a late exit of an already-replaced process leaves the current one
@@ -1329,8 +1349,8 @@ async function startServer() {
           dialog.showMessageBox(mainWindow, {
             type: 'error',
             title: 'DeepSeek Harness',
-            message: 'The dsh server stopped unexpectedly.',
-            detail: lf ? `See log: ${lf}` : String(code),
+            message: t('内核服务意外停止'),
+            detail: lf ? t('日志文件：{0}', lf) : String(code),
           }).then(() => app.quit())
         }
       }
@@ -1387,6 +1407,7 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null })
 }
 
+
 // ---- 通用配置: tray, close/start to tray, login item, keep awake ----
 function generalStorePath() { return path.join(app.getPath('userData'), 'general.json') }
 function readGeneralSettings() {
@@ -1419,12 +1440,6 @@ function syncTray() {
   if (generalSettings.trayIcon && tray === null) {
     tray = new Tray(trayImage())
     tray.setToolTip('DeepSeek Harness')
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: '打开 DeepSeek Harness', click: () => { showMainWindow() } },
-      { label: '配置中心…', click: () => { openPluginManager() } },
-      { type: 'separator' },
-      { label: '退出', click: () => { app.quit() } },
-    ]))
     // Windows / Linux: a click on the icon opens the window; macOS opens the menu.
     tray.on('click', () => { if (process.platform !== 'darwin') showMainWindow() })
     tray.on('double-click', () => { showMainWindow() })
@@ -1434,6 +1449,11 @@ function syncTray() {
     // without a tray a hidden window has no way back on Windows / Linux
     if (process.platform !== 'darwin' && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show()
   }
+  if (tray) tray.setContextMenu(Menu.buildFromTemplate([
+    { label: t('打开 DeepSeek Harness'), click: showMainWindow },
+    { label: t('配置中心…'), click: openPluginManager },
+    { type: 'separator' }, { label: t('退出'), click: () => app.quit() },
+  ]))
 }
 
 function syncLoginItem() {
@@ -1480,53 +1500,54 @@ ipcMain.handle('general:save', async (_event, values) => {
 })
 
 function buildMenu() {
+  const editItems = () => [['撤销','undo'],['重做','redo'],['剪切','cut'],['复制','copy'],['粘贴','paste'],['粘贴并匹配样式','pasteAndMatchStyle'],['删除','delete'],['全选','selectAll']].map(([label, role]) => ({label:t(label),role}))
   const isMac = process.platform === 'darwin'
   const template = [
-    ...(isMac ? [{ role: 'appMenu' }] : []),
-    { label: '文件', role: 'fileMenu' },
-    { label: '编辑', role: 'editMenu' },
+    ...(isMac ? [{ label: 'DeepSeek Harness', submenu: [{label:t('关于 DeepSeek Harness'),role:'about'}, {type:'separator'}, {label:t('服务'),role:'services'}, {type:'separator'}, {label:t('隐藏 DeepSeek Harness'),role:'hide'}, {label:t('隐藏其他应用'),role:'hideOthers'}, {label:t('显示全部'),role:'unhide'}, {type:'separator'}, {label:t('退出'),role:'quit'}] }] : []),
+    { label: t("文件"), role: 'fileMenu', submenu: [{label:t('关闭窗口'),role:'close'}] },
+    { label: t("编辑"), role: 'editMenu', submenu: editItems() },
     {
-      label: '查看',
+      label: t("查看"),
       submenu: [
-        { label: '重新加载', role: 'reload' }, { label: '强制重新加载', role: 'forceReload' }, { label: '开发者工具', role: 'toggleDevTools' },
+        { label: t("重新加载"), role: 'reload' }, { label: t("强制重新加载"), role: 'forceReload' }, { label: t("开发者工具"), role: 'toggleDevTools' },
         { type: 'separator' },
-        { label: '实际大小', role: 'resetZoom' }, { label: '放大', role: 'zoomIn' }, { label: '缩小', role: 'zoomOut' },
-        { type: 'separator' }, { label: '切换全屏', role: 'togglefullscreen' },
+        { label: t("实际大小"), role: 'resetZoom' }, { label: t("放大"), role: 'zoomIn' }, { label: t("缩小"), role: 'zoomOut' },
+        { type: 'separator' }, { label: t("切换全屏"), role: 'togglefullscreen' },
       ],
     },
-    { label: '窗口', role: 'windowMenu' },
+    { label: t("窗口"), role: 'windowMenu', submenu: [{label:t('最小化'),role:'minimize'},{label:t('缩放窗口'),role:'zoom'}, ...(isMac ? [{label:t('全部置于前台'),role:'front'}] : [])] },
     {
-      label: '插件',
+      label: t("插件"),
       submenu: [
-        { label: '配置中心…（插件 / 通用 / 代理）', click: () => { openPluginManager() } },
-        { label: '打开命令行窗口', click: () => { openCliTerminal() } },
+        { label: t("配置中心…（插件 / 通用 / 代理）"), click: () => { openPluginManager() } },
+        { label: t("打开命令行窗口"), click: () => { openCliTerminal() } },
         { type: 'separator' },
-        { label: '重新同步预置插件…', click: () => { restorePresetPlugins() } },
+        { label: t("重新同步预置插件…"), click: () => { restorePresetPlugins() } },
       ],
     },
     {
-      label: '帮助',
+      label: t("帮助"),
       submenu: [
-        { label: `内核版本：v${(activeRuntime && activeRuntime.version) || '?'}${activeRuntime && !activeRuntime.bundled ? '（已升级）' : ''}`, enabled: false },
-        { label: '检查内核更新…', click: () => { checkCoreUpdates(true) } },
+        { label: t("内核版本：v{0}{1}", (activeRuntime && activeRuntime.version) || '?', activeRuntime && !activeRuntime.bundled ? t("（已升级）") : ''), enabled: false },
+        { label: t("检查内核更新…"), click: () => { checkCoreUpdates(true) } },
         appUpdateState === 'downloaded'
-          ? { label: `重启以更新到 v${(appUpdateInfo && appUpdateInfo.version) || ''}…`, click: () => { offerRestartForUpdate(appUpdateInfo) } }
+          ? { label: t("重启以更新到 v{0}…", (appUpdateInfo && appUpdateInfo.version) || ''), click: () => { offerRestartForUpdate(appUpdateInfo) } }
           : appUpdateState === 'downloading'
-            ? { label: '正在下载应用更新…', enabled: false }
-            : { label: '检查应用更新…', click: () => { checkAppUpdates(true) } },
+            ? { label: t("正在下载应用更新…"), enabled: false }
+            : { label: t("检查应用更新…"), click: () => { checkAppUpdates(true) } },
         { type: 'separator' },
-        { label: 'GitHub 仓库', click: () => { if (UPDATE_REPO) shell.openExternal(`https://github.com/${UPDATE_REPO}`) } },
+        { label: t("GitHub 仓库"), click: () => { if (UPDATE_REPO) shell.openExternal(`https://github.com/${UPDATE_REPO}`) } },
       ],
     },
   ]
   const items = process.platform === 'win32' ? [
-    { id: 'desktop-application', label: '应用', submenu: [
-      { label: '配置中心…', accelerator: 'CmdOrCtrl+,', click: () => { openPluginManager() } },
+    { id: 'desktop-application', label: t("应用"), submenu: [
+      { label: t("配置中心…"), accelerator: 'CmdOrCtrl+,', click: () => { openPluginManager() } },
       { type: 'separator' },
       ...template.filter(item => item.role !== 'editMenu'),
-      { type: 'separator' }, { label: '退出', role: 'quit' },
+      { type: 'separator' }, { label: t("退出"), role: 'quit' },
     ] },
-    { id: 'desktop-edit', label: '编辑', role: 'editMenu' },
+    { id: 'desktop-edit', label: t("编辑"), role: 'editMenu', submenu: editItems() },
   ] : template
   Menu.setApplicationMenu(Menu.buildFromTemplate(items))
   if (process.platform === 'win32') for (const win of BrowserWindow.getAllWindows()) win.setMenuBarVisibility(false)
@@ -1561,7 +1582,7 @@ function openPluginManager() {
     height: 700,
     minWidth: 760,
     minHeight: 540,
-    title: '配置中心',
+    title: t("配置中心"),
     ...windowChrome.options(),
     parent: mainWindow || undefined,
     webPreferences: {
@@ -1613,9 +1634,9 @@ ipcMain.handle('plugins:run', async (_event, action, spec) => {
   // Args go through spawn(argv[]) without a shell; only whitespace/control
   // characters are rejected.
   if (cleaned.length === 0 || cleaned.length > 300 || /[\s'"`\\]/.test(cleaned)) {
-    return { code: -1, output: '无效的包名' }
+    return { code: -1, output: t("无效的包名") }
   }
-  if (action !== 'add' && action !== 'remove') return { code: -1, output: '无效操作' }
+  if (action !== 'add' && action !== 'remove') return { code: -1, output: t("无效操作") }
   const result = await runDshCli(['plugin', '--profile', 'web', action, cleaned])
   if (action === 'add' && result.code !== 0) {
     result.needsAllowBuilds = parseAllowBuildsRequests(result.output)
@@ -1639,15 +1660,15 @@ function localSpec(protocol, absPath) {
  * text-spec hygiene check; args go through spawn(argv[]).
  */
 ipcMain.handle('plugins:installLocal', async (_event, kind) => {
-  if (kind !== 'dir' && kind !== 'tgz') return { code: -1, output: '无效操作' }
+  if (kind !== 'dir' && kind !== 'tgz') return { code: -1, output: t("无效操作") }
   const opts = kind === 'dir'
-    ? { title: '选择插件目录（需含 package.json）', properties: ['openDirectory'] }
-    : { title: '选择插件包（npm pack 打出的 .tgz）', properties: ['openFile'], filters: [{ name: 'npm 包', extensions: ['tgz'] }] }
+    ? { title: t("选择插件目录（需含 package.json）"), properties: ['openDirectory'] }
+    : { title: t("选择插件包（npm pack 打出的 .tgz）"), properties: ['openFile'], filters: [{ name: t("npm 包"), extensions: ['tgz'] }] }
   const { canceled, filePaths } = await dialog.showOpenDialog(pluginWindow || mainWindow, opts)
   if (canceled || filePaths.length === 0) return { canceled: true, code: 0, output: '' }
   const target = filePaths[0]
   if (kind === 'dir' && !fs.existsSync(path.join(target, 'package.json'))) {
-    return { code: -1, output: `所选目录没有 package.json：\n${target}` }
+    return { code: -1, output: t("所选目录没有 package.json：\n{0}", target) }
   }
   const spec = localSpec(kind === 'dir' ? 'link' : 'file', target)
   const result = await runDshCli(['plugin', '--profile', 'web', 'add', spec])
@@ -1663,7 +1684,7 @@ ipcMain.handle('plugins:restart', async () => {
 // ---- proxy config ----
 ipcMain.handle('proxy:get', async () => readProxyConfig())
 ipcMain.handle('proxy:save', async (_event, config) => {
-  if (!config || typeof config !== 'object') return { ok: false, error: '数据格式无效' }
+  if (!config || typeof config !== 'object') return { ok: false, error: t("数据格式无效") }
   const c = {
     mode: config.mode === 'manual' ? 'manual' : config.mode === 'system' ? 'system' : 'none',
     host: String(config.host || '').trim(),
@@ -1677,12 +1698,12 @@ ipcMain.handle('proxy:save', async (_event, config) => {
     insecure: !!config.insecure,
   }
   if (c.mode === 'manual') {
-    if (!/^[\w.-]+$/.test(c.host) || c.host.length > 255) return { ok: false, error: '主机名无效' }
-    if (!/^\d{1,5}$/.test(c.port) || Number(c.port) < 1 || Number(c.port) > 65535) return { ok: false, error: '端口需为 1-65535' }
+    if (!/^[\w.-]+$/.test(c.host) || c.host.length > 255) return { ok: false, error: t("主机名无效") }
+    if (!/^\d{1,5}$/.test(c.port) || Number(c.port) < 1 || Number(c.port) > 65535) return { ok: false, error: t("端口需为 1-65535") }
   }
-  if (c.bypass.length > 2000 || /[\r\n\0]/.test(c.bypass)) return { ok: false, error: '例外列表格式无效' }
-  if (c.login.length > 200 || c.password.length > 200) return { ok: false, error: '用户名或密码过长' }
-  if (c.caPath && !fs.existsSync(c.caPath)) return { ok: false, error: 'CA 证书文件不存在' }
+  if (c.bypass.length > 2000 || /[\r\n\0]/.test(c.bypass)) return { ok: false, error: t("例外列表格式无效") }
+  if (c.login.length > 200 || c.password.length > 200) return { ok: false, error: t("用户名或密码过长") }
+  if (c.caPath && !fs.existsSync(c.caPath)) return { ok: false, error: t("CA 证书文件不存在") }
   try {
     // password persists only with "remember"; otherwise session-only
     sessionProxyPassword = c.auth && !c.remember ? c.password : ''
@@ -1696,9 +1717,9 @@ ipcMain.handle('proxy:save', async (_event, config) => {
 })
 ipcMain.handle('proxy:pickCa', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(pluginWindow || mainWindow, {
-    title: '选择代理的 CA 证书（PEM 格式）',
+    title: t("选择代理的 CA 证书（PEM 格式）"),
     properties: ['openFile'],
-    filters: [{ name: '证书文件', extensions: ['pem', 'crt', 'cer'] }],
+    filters: [{ name: t("证书文件"), extensions: ['pem', 'crt', 'cer'] }],
   })
   if (canceled || filePaths.length === 0) return { canceled: true }
   return { canceled: false, path: filePaths[0] }
@@ -1712,15 +1733,15 @@ ipcMain.handle('proxy:pickCa', async () => {
 ipcMain.handle('proxy:test', async (_event, config, url) => {
   const target = String(url || '').trim() || 'https://registry.npmjs.org/-/ping'
   let u
-  try { u = new URL(target) } catch { return { ok: false, detail: '测试地址无效（需以 http:// 或 https:// 开头）' } }
-  if (!/^https?:$/.test(u.protocol)) return { ok: false, detail: '测试地址需以 http:// 或 https:// 开头' }
+  try { u = new URL(target) } catch { return { ok: false, detail: t("测试地址无效（需以 http:// 或 https:// 开头）") } }
+  if (!/^https?:$/.test(u.protocol)) return { ok: false, detail: t("测试地址需以 http:// 或 https:// 开头") }
   const cfg = { ...(config || {}) }
   const probe = await createForwarder({ getConfig: () => cfg, resolveSystem: resolveSystemProxy })
-  if (!probe.port) return { ok: false, detail: '本地转发代理无法监听端口' }
+  if (!probe.port) return { ok: false, detail: t("本地转发代理无法监听端口") }
   try {
     const port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80)
     const route = await routeFor(cfg, resolveSystemProxy, u.hostname, port, u.protocol.slice(0, -1))
-    const label = route ? `${u.hostname} → 代理 ${route.host}:${route.port}，` : `${u.hostname} → 直连，`
+    const label = route ? t("{0} → 代理 {1}:{2}，", u.hostname, route.host, route.port) : t("{0} → 直连，", u.hostname)
     const env = applyProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, probe.port, cfg)
     const script = `
       const t0 = Date.now()
@@ -1737,10 +1758,10 @@ ipcMain.handle('proxy:test', async (_event, config, url) => {
         clearTimeout(timer)
         try {
           const r = JSON.parse(out.trim())
-          if (r.ok) resolve({ ok: true, detail: `${label}连通（HTTP ${r.status}，${r.ms}ms）` })
-          else resolve({ ok: false, detail: `${label}失败：${r.error || `HTTP ${r.status}`}` })
+          if (r.ok) resolve({ ok: true, detail: t("{0}连通（HTTP {1}，{2}ms）", label, r.status, r.ms) })
+          else resolve({ ok: false, detail: t("{0}失败：{1}", label, r.error || `HTTP ${r.status}`) })
         } catch {
-          resolve({ ok: false, detail: '测试进程异常退出' })
+          resolve({ ok: false, detail: t("测试进程异常退出") })
         }
       })
       child.on('error', (err) => { clearTimeout(timer); resolve({ ok: false, detail: String(err) }) })
@@ -1812,8 +1833,8 @@ async function loadWebUi(url) {
  */
 let restartingServer = false
 async function restartDshServer() {
-  if (restartingServer) return { ok: false, error: '正在重启中，请稍候' }
-  if (quitting) return { ok: false, error: '应用正在退出' }
+  if (restartingServer) return { ok: false, error: t("正在重启中，请稍候") }
+  if (quitting) return { ok: false, error: t("应用正在退出") }
   restartingServer = true
   try {
     killServer()
@@ -1843,6 +1864,8 @@ app.on('login', (event, _webContents, _details, authInfo, callback) => {
 
 app.whenReady().then(async () => {
   if (!hasInstanceLock) return
+  try { uiLanguage = normalizeLanguage(JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'ui-language.json'), 'utf8'))) }
+  catch { uiLanguage = normalizeLanguage(app.getLocale()) }
   resolveActiveRuntime()
   applyChromiumProxy(readProxyConfig())
   await startForwarder()
@@ -1861,9 +1884,9 @@ app.whenReady().then(async () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         await dialog.showMessageBox(mainWindow, {
           type: 'warning', title: 'DeepSeek Harness',
-          message: `升级的 dsh 内核（v${activeRuntime.version}）启动失败，已回退到内置版本`,
+          message: t("升级的 dsh 内核（v{0}）启动失败，已回退到内置版本", activeRuntime.version),
           detail: String(err && err.message || err).slice(0, 800),
-          buttons: ['重启应用'],
+          buttons: [t("重启应用")],
         })
       }
       app.relaunch()
@@ -1874,7 +1897,7 @@ app.whenReady().then(async () => {
       await dialog.showMessageBox(mainWindow, {
         type: 'error',
         title: 'DeepSeek Harness',
-        message: 'Failed to start the dsh server.',
+        message: t('内核服务启动失败'),
         detail: String(err && err.message || err),
       })
     }

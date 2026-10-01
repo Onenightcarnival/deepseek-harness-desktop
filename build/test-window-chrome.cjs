@@ -52,7 +52,8 @@ app.whenReady().then(async () => {
   const origin = `http://127.0.0.1:${server.address().port}`
   let activeOrigin = origin
   nativeTheme.themeSource = 'light'
-  const chrome = createWindowChrome({ ipcMain, nativeTheme, Menu, getOrigin: () => activeOrigin })
+  let language = 'zh'
+  const chrome = createWindowChrome({ ipcMain, nativeTheme, Menu, getOrigin: () => activeOrigin, getLanguage: () => language, onLanguage: value => { language = value } })
   let saved = null
   ipcMain.handle('plugins:list', () => ({ deps: { 'dsh-toolkit': '0.7.0' }, bundles: ['dsh-toolkit'] }))
   ipcMain.handle('general:get', () => ({ settings: {}, platform: process.platform }))
@@ -76,6 +77,7 @@ app.whenReady().then(async () => {
   await settings.loadFile(path.join(root, 'plugins.html'))
   await pause(250)
   assert.equal(await js('typeof pluginApi.generalGet'), 'function')
+  assert.equal(await js('typeof startupApi'), 'undefined')
   assert.equal(await js('typeof require'), 'undefined')
   assert.equal(Math.round(await js('document.querySelector("#content").getBoundingClientRect().top')), process.platform === 'win32' ? 40 : process.platform === 'darwin' ? 48 : 0)
   assert.equal(await js('getComputedStyle(document.querySelector("#content")).borderTopLeftRadius'), '16px')
@@ -113,6 +115,16 @@ app.whenReady().then(async () => {
   assert.equal(nativeTheme.themeSource, 'system', '跟随系统不固定深浅模式')
   await main.webContents.executeJavaScript('document.documentElement.dataset.dsThemeSource = "dark"; document.body.setAttribute("data-ds-dark-theme", "")')
   await pause(200)
+  await main.webContents.executeJavaScript('document.documentElement.lang = "en"')
+  await pause(250)
+  assert.equal(await js('document.documentElement.lang'), 'en')
+  assert.equal(await js('document.querySelector("#spec").value'), 'test-input')
+  await js(`document.querySelector('[data-pane="proxy"]').click()`)
+  assert(!/[\u4e00-\u9fff]/.test(await js('document.querySelector(".pane.active").innerText')), 'English proxy page must not contain Chinese UI text')
+  await capture('settings-english')
+  await main.webContents.executeJavaScript('document.documentElement.lang = "zh"')
+  await pause(250)
+  assert.equal(await js('document.documentElement.lang'), 'zh')
   await capture('settings-dark')
   if (process.platform === 'win32') {
     const safe = await main.webContents.executeJavaScript(`(() => {
@@ -200,6 +212,8 @@ app.whenReady().then(async () => {
     console.log('PASS: real staged kernel and full profile UI')
   }
   await main.loadFile(path.join(root, 'splash.html'))
+  assert.equal(await main.webContents.executeJavaScript('typeof startupApi'), 'undefined')
+  assert.equal(await main.webContents.executeJavaScript('document.querySelector(".log")'), null)
   assert.equal(await main.webContents.executeJavaScript('typeof pluginApi'), 'undefined')
   // 设置窗口导航到其他来源后不得保留配置桥。
   await settings.loadURL(origin)

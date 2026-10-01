@@ -9,10 +9,7 @@
  * absorbed. Both locks are rewritten in place.
  *
  * Usage:
- *   node update-locks.mjs 0.1.1-rc.2 \
- *     "@linxin666/dsh-client-ui-task-board@0.2.8" \
- *     "dsh-better-sidebar@0.15.0" \
- *     "@linxin666/dsh-ssh@0.2.8"
+ *   node update-locks.mjs <dsh-version> ["plugin@version" ...]
  *
  * Verify with `DSH_FLAVOR=full node stage-dsh.mjs` and a headless app boot
  * (AGENTS.md).
@@ -144,8 +141,7 @@ for (const [k, v] of [...Object.entries(lock.packages)]) {
 // removed or swapped preset plugins). The walk mirrors Node/npm resolution
 // over the lock's flat keys (`${key}/node_modules/${dep}`, then up) and
 // follows the pass 2 edge set (optional peers excluded). Runs here and again
-// at the end. Not `npm install --package-lock-only`: that rewrites peer
-// ranges from registry metadata and undoes pass 3's widening.
+// at the end. Peer ranges widened by pass 3 remain in the lock.
 lock.packages[''].dependencies = {
   '@deepseek-ai/dsh': `^${target}`,
   ...Object.fromEntries(Object.entries(pluginBumps).map(([n, v]) => [n, `^${v}`])),

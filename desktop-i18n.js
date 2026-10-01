@@ -40,7 +40,7 @@ const en = {
   "检查更新失败": "Update check failed",
   "dsh 内核已是最新（v{0}）": "The dsh kernel is up to date (v{0})",
   "npm 上有 dsh v{0}，属于新的版本线（{1}）": "dsh v{0} is available on npm in release line {1}",
-  "本安装包内置 v{0}（{1} 线）。预置插件与内核版本线绑定；跨线升级需下载新版桌面安装包。": "This build includes v{0} (release line {1}). Switching release lines requires a new desktop installer.",
+  "本安装包内置 v{0}（{1} 线）。跨版本线升级需下载新版桌面安装包。": "This build includes v{0} (release line {1}). Switching release lines requires a new desktop installer.",
   "检查应用更新": "Check app updates",
   "dsh v{0} 要求的 Node 版本高于本应用内置的 v{1}": "dsh v{0} requires a newer Node version than the bundled v{1}",
   "请等待新版桌面安装包。": "A newer desktop installer is required.",
@@ -123,7 +123,7 @@ const en = {
   "移除": "Remove",
   "完成": "Done",
   "失败（exit {0}）": "Failed (exit {0})",
-  "该插件安装时需要执行构建脚本，桌面版不代为放行。": "This plugin requires build scripts. Approval is required.",
+  "该插件需要构建脚本审批。": "This plugin requires build-script approval.",
   "按上方 dsh 的提示编辑 allowBuilds 配置后，在「插件 → 打开命令行窗口」中重新安装。": "Configure allowBuilds as shown above, then reinstall using Plugins → Open terminal.",
   "（本地插件）": "(local plugin)",
   "目录以软链方式安装，改动代码后重启应用生效；插件自身依赖需先在该目录执行 pnpm install。": "Directory installs use a link. Run pnpm install in that directory and restart after code changes.",
@@ -173,7 +173,9 @@ const en = {
   "some-dsh-plugin@1.2.0 或 github:owner/repo": "some-dsh-plugin@1.2.0 or github:owner/repo",
   "系统证书库": "System certificate store",
   "正在启动…": "Starting…",
-  "应用菜单": "App menu"
+  "应用菜单": "App menu",
+  "诊断详情": "Diagnostic details",
+  "处理中…": "Working…"
 }
 function normalizeLanguage(value) { return String(value || '').toLowerCase().startsWith('zh') ? 'zh' : 'en' }
 function translate(key, language, ...values) { return (normalizeLanguage(language) === 'zh' ? key : en[key] ?? key).replace(/\{(\d+)\}/g, (_, n) => String(values[Number(n)] ?? '')) }

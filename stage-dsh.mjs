@@ -184,8 +184,7 @@ if (fs.existsSync(pty)) {
 // sharp: the native @img package is used; the wasm fallback is dropped.
 rm(path.join(nm, '@img', 'sharp-wasm32'))
 
-// Files the runtime never opens (install time on Windows scales with the
-// file count):
+// Runtime file exclusions:
 // - sourcemaps and .pdb debug symbols;
 // - TypeScript declarations (*.d.ts / *.d.mts / *.d.cts);
 // - package prose (README / CHANGELOG / HISTORY / CONTRIBUTING / SECURITY /

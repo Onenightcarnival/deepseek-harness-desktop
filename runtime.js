@@ -1,7 +1,7 @@
 /**
  * Pure helpers for the desktop shell: runtime selection and version logic,
- * managed config blocks, the common-settings registry, proxy
- * env. Plain CJS, no Electron imports.
+ * general settings, launcher migration and proxy environments.
+ * Plain CJS with no Electron imports.
  *
  * A runtime is a directory holding node_modules/@deepseek-ai/dsh: the bundled
  * one in resources/dsh, upgraded ones under userData/runtimes/<version>. The

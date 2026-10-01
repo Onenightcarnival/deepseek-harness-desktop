@@ -320,7 +320,7 @@ async function checkCoreUpdates(interactive) {
         const { response } = await dialog.showMessageBox({
           type: 'info', title: 'DeepSeek Harness',
           message: t("npm 上有 dsh v{0}，属于新的版本线（{1}）", latest, releaseLine(latest)),
-          detail: t("本安装包内置 v{0}（{1} 线）。预置插件与内核版本线绑定；跨线升级需下载新版桌面安装包。", bundledVersion, releaseLine(bundledVersion)),
+          detail: t("本安装包内置 v{0}（{1} 线）。跨版本线升级需下载新版桌面安装包。", bundledVersion, releaseLine(bundledVersion)),
           buttons: [t("检查应用更新"), t("好")], defaultId: 0, cancelId: 1,
         })
         if (response === 0) await checkAppUpdates(true)
@@ -691,8 +691,7 @@ function writeCliLaunchers() {
     fs.writeFileSync(path.join(binDir, 'node.cmd'),
       `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n${winProxy}"${exe}" %*\r\n`)
     if (fs.existsSync(pnpmCjs)) {
-      // --config.minimum-release-age=0: pnpm's 24h release gate is off (the
-      //   dsh ecosystem ships daily rc releases).
+      // --config.minimum-release-age=0 disables the release-age gate.
       // --config.auto-install-peers=false: peers come from the app closure
       //   at runtime.
       // Both keys work only as CLI flags before the subcommand (env and
@@ -822,7 +821,7 @@ function pkgEntryOf(pj) {
   return undefined
 }
 
-/** Does <base>/<name> hold a loadable copy of the package (entry file exists)? */
+/** Whether <base>/<name> contains a package with an existing JS entry. */
 function pkgUsableAt(base, name) {
   const pkgDir = path.join(base, ...name.split('/'))
   try {
@@ -832,12 +831,9 @@ function pkgUsableAt(base, name) {
 }
 
 /**
- * Is <base>/<name> an intact package for bundle/dependency purposes? Weaker
- * than pkgUsableAt: intact = valid manifest and every declared artifact
- * (entry, bundle patch) present. A meta bundle package (manifest +
- * cordis.patch.yml, no JS entry) passes; a package declaring nothing needs
- * its implicit index.js; `dsh plugin remove` remnants (package.json without
- * code) fail.
+ * Whether <base>/<name> has a valid manifest and all declared artifacts.
+ * Meta bundles may omit a JS entry. With no entry or bundle patch, the
+ * package must contain index.js or dsh metadata.
  */
 function pkgIntactAt(base, name) {
   const pkgDir = path.join(base, ...name.split('/'))
@@ -1218,8 +1214,7 @@ function syncPresetPlugins() {
     pkg.dsh.profile.bundles ??= []
     let changed = false
 
-    // Remove what we manage but no longer want (flavor switch, trimmed
-    // manifest, unresolvable, excluded).
+    // Withdraw managed entries absent from the resolved preset set.
     for (const name of managed) {
       if (desired.includes(name)) continue
       if (pkg.dsh.profile.bundles.includes(name) || pkg.dependencies[name]) {
@@ -1807,11 +1802,8 @@ async function bootServerWithHeal() {
 }
 
 /**
- * Load the web UI from a fresh ready URL. `dsh-auth-*` cookies of previous
- * server instances on 127.0.0.1 are dropped first: each instance sets its
- * own 30-day cookie, cookies are scoped by host not port, and a few dozen
- * of them push the request header past Node's limit (431 on the bundle
- * URL).
+ * Load the ready URL after removing all 127.0.0.1 `dsh-auth-*` cookies.
+ * Authentication cookies are scoped by host and shared across service ports.
  */
 let currentWebUrl = null
 async function loadWebUi(url) {

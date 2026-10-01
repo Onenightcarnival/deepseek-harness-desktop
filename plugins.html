@@ -116,7 +116,11 @@
       <button id="add-tgz" class="ghost"><span data-i18n="从 .tgz 安装">从 .tgz 安装</span></button>
     </div>
     <div class="card" id="installed" style="margin-bottom:12px"><span data-i18n="加载中…">加载中…</span></div>
-    <div class="log" id="log"></div>
+    <div class="msg" id="plugin-status" role="status"></div>
+    <details id="plugin-details" hidden>
+      <summary data-i18n="诊断详情">诊断详情</summary>
+      <div class="log" id="log"></div>
+    </details>
     <div class="row" style="margin-top:10px; display:none" id="restart-plugins">
       <span class="spacer"></span><button class="primary" onclick="pluginApi.restart()"><span data-i18n="重启应用生效">重启应用生效</span></button>
     </div>
@@ -192,8 +196,17 @@
   const t = (key, ...values) => desktopI18n.translate(key, document.documentElement.lang, ...values)
   document.documentElement.lang = window.desktopLocale?.get() || 'zh'
   const $ = (id) => document.getElementById(id)
-  const log = (t) => { $('log').textContent += t + '\n'; $('log').scrollTop = 1e9 }
+  const log = (t) => { $('plugin-details').hidden = false; $('log').textContent += t + '\n'; $('log').scrollTop = 1e9 }
   let busy = false
+  let pluginStatus = { key: '', values: [], kind: '' }
+  function showPluginStatus(key, kind = '', ...values) {
+    pluginStatus = { key, values, kind }
+    renderPluginStatus()
+  }
+  function renderPluginStatus() {
+    $('plugin-status').textContent = t(pluginStatus.key, ...pluginStatus.values)
+    $('plugin-status').className = 'msg ' + pluginStatus.kind
+  }
 
   // ---- nav ----
   for (const b of document.querySelectorAll('#nav button')) {
@@ -230,14 +243,19 @@
   }
   function setPluginBusy(v) {
     busy = v
+    if (v) showPluginStatus("处理中…")
     for (const id of ['add', 'add-dir', 'add-tgz']) $(id).disabled = v
   }
   function logResult(res) {
+    const needsApproval = res.code !== 0 && res.needsAllowBuilds?.length > 0
+    if (needsApproval) showPluginStatus("该插件需要构建脚本审批。", 'err')
+    else if (res.code === 0) showPluginStatus("完成", 'ok')
+    else showPluginStatus("失败（exit {0}）", 'err', res.code)
     log((res.output || '').trim()); log(res.code === 0 ? t("完成") : t("失败（exit {0}）", res.code))
     if (res.code === 0) $('restart-plugins').style.display = 'flex'
     if (res.code !== 0 && res.needsAllowBuilds && res.needsAllowBuilds.length > 0) {
       log('')
-      log(t("该插件安装时需要执行构建脚本，桌面版不代为放行。"))
+      log(t("该插件需要构建脚本审批。"))
       log(t("按上方 dsh 的提示编辑 allowBuilds 配置后，在「插件 → 打开命令行窗口」中重新安装。"))
     }
   }
@@ -253,6 +271,7 @@
     if (busy) return
     setPluginBusy(true)
     const res = await pluginApi.installLocal(kind)
+    if (res.canceled) showPluginStatus('')
     if (!res.canceled) {
       log(`> dsh plugin --profile web add ${res.spec || t("（本地插件）")}`)
       logResult(res)
@@ -387,6 +406,7 @@
   function translateStatic() {
     for(const el of document.querySelectorAll('[data-i18n]')) el.textContent=t(el.dataset.i18n)
     for(const el of document.querySelectorAll('[data-i18n-placeholder]')) el.placeholder=t(el.dataset.i18nPlaceholder)
+    renderPluginStatus()
   }
   translateStatic()
   window.addEventListener('desktop-language-change', () => { translateStatic(); renderGeneral(); refreshPlugins() })

@@ -34,6 +34,8 @@
 
 stage 按 DSH_FLAVOR 选择预置清单，将精确版本写入运行时的 `preset-plugins.json`（seed / carry）。`syncPresetPlugins` 每次启动同步 seed 组。
 
+原生菜单与窗口配色跟随页面主题。`data-ds-theme-source` 同步到 `nativeTheme.themeSource`，`system` 保留系统主题监听。
+
 ## 代理链路
 
 `proxy-forward.js` 按连接决定子进程的代理路由。

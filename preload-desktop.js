@@ -123,13 +123,14 @@ function watchPalette() {
     if (!getComputedStyle(probe).getPropertyValue('--dsw-specific-sidebar-fill').trim()) return
     const computed = getComputedStyle(probe)
     const value = { sidebar: hex(computed.backgroundColor), content: hex(computed.borderTopColor), text: hex(computed.color),
-      dark: document.body.hasAttribute('data-ds-dark-theme') || document.documentElement.hasAttribute('data-ds-dark-theme') }
+      dark: document.body.hasAttribute('data-ds-dark-theme') || document.documentElement.hasAttribute('data-ds-dark-theme'),
+      source: document.documentElement.dataset.dsThemeSource }
     const next = JSON.stringify(value)
     if (next !== last) { last = next; ipcRenderer.send('desktop:chrome-palette', value) }
   }
-  const schedule = () => { if (!pending) { pending = true; requestAnimationFrame(read) } }
+  const schedule = () => { if (!pending) { pending = true; queueMicrotask(read) } }
   const observer = new MutationObserver(schedule)
-  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-ds-dark-theme'] })
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-ds-dark-theme', 'data-ds-theme-source'] })
   observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-ds-dark-theme'] })
   observer.observe(document.head, { childList: true, subtree: true, characterData: true })
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', schedule)

@@ -75,6 +75,9 @@ function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.pla
       !['sidebar', 'content', 'text'].every(key => /^#[0-9a-f]{6}$/i.test(value[key]))) return
     palette = { dark: value.dark, sidebar: value.sidebar, content: value.content, text: value.text }
     webPalette = true
+    // 原生菜单跟随页面主题；系统模式保留操作系统的主题变化。
+    nativeTheme.themeSource = ['system', 'light', 'dark'].includes(value.source)
+      ? value.source : value.dark ? 'dark' : 'light'
     for (const item of windows.values()) update(item)
   })
   ipcMain.handle('desktop:chrome-menu', async (event, name, x, y) => {

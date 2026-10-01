@@ -1483,18 +1483,18 @@ function buildMenu() {
   const isMac = process.platform === 'darwin'
   const template = [
     ...(isMac ? [{ role: 'appMenu' }] : []),
-    { role: 'fileMenu' },
-    { role: 'editMenu' },
+    { label: '文件', role: 'fileMenu' },
+    { label: '编辑', role: 'editMenu' },
     {
-      label: 'View',
+      label: '查看',
       submenu: [
-        { role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' },
+        { label: '重新加载', role: 'reload' }, { label: '强制重新加载', role: 'forceReload' }, { label: '开发者工具', role: 'toggleDevTools' },
         { type: 'separator' },
-        { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
-        { type: 'separator' }, { role: 'togglefullscreen' },
+        { label: '实际大小', role: 'resetZoom' }, { label: '放大', role: 'zoomIn' }, { label: '缩小', role: 'zoomOut' },
+        { type: 'separator' }, { label: '切换全屏', role: 'togglefullscreen' },
       ],
     },
-    { role: 'windowMenu' },
+    { label: '窗口', role: 'windowMenu' },
     {
       label: '插件',
       submenu: [

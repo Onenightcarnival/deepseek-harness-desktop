@@ -104,6 +104,15 @@ app.whenReady().then(async () => {
   await main.webContents.executeJavaScript('document.body.setAttribute("data-ds-dark-theme", "")')
   await pause(250)
   assert.equal(await js('getComputedStyle(document.querySelector("#content")).backgroundColor'), 'rgb(20, 20, 20)')
+  assert.equal(nativeTheme.themeSource, 'dark', '原生菜单跟随深色页面')
+  await main.webContents.executeJavaScript('document.documentElement.dataset.dsThemeSource = "light"; document.body.removeAttribute("data-ds-dark-theme")')
+  await pause(200)
+  assert.equal(nativeTheme.themeSource, 'light', '原生菜单跟随浅色页面')
+  await main.webContents.executeJavaScript('document.documentElement.dataset.dsThemeSource = "system"')
+  await pause(200)
+  assert.equal(nativeTheme.themeSource, 'system', '跟随系统不固定深浅模式')
+  await main.webContents.executeJavaScript('document.documentElement.dataset.dsThemeSource = "dark"; document.body.setAttribute("data-ds-dark-theme", "")')
+  await pause(200)
   await capture('settings-dark')
   if (process.platform === 'win32') {
     const safe = await main.webContents.executeJavaScript(`(() => {

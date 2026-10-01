@@ -29,7 +29,7 @@ function applyState(state) {
     window.dispatchEvent(new Event('desktop-language-change'))
   }
   const title = document.getElementById('desktop-titlebar')
-  if (title) title.textContent = state.purpose === 'settings' ? (currentLanguage === 'en' ? 'Configuration center' : '配置中心') : 'DeepSeek Harness'
+  if (title) title.textContent = state.purpose === 'settings' ? (currentLanguage === 'en' ? 'Configuration center' : '配置中心') : state.platform === 'darwin' ? '' : 'DeepSeek Harness'
   // 上游 data-platform 同时启用官方键盘桥；Web 壳使用独立的视觉标记。
   root.dataset.desktopPlatform = state.platform
   root.toggleAttribute('data-fullscreen', state.fullscreen)

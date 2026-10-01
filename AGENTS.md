@@ -82,7 +82,7 @@
 - `data-desktop-platform` 标识桌面布局；不得设置会启用官方原生键盘桥的 `data-platform`。
 - Windows 使用 `data-windows-titlebar`、`data-fullscreen`、`data-window-drag`、`data-shell-overlay` 和 `--dsw-*` 配色 token；拖拽区使用 `env(titlebar-area-width)`。
 - Windows 隐藏原生菜单栏，保留 Menu 与快捷键。
-- macOS 标题栏预留 48px；frame 前三列为侧栏、主内容和右栏，布局选择器不匹配编译类名。
+- macOS 标题栏预留 48px，拖拽区与侧栏使用同一不透明底色；frame 前三列为侧栏、主内容和右栏，布局选择器不匹配编译类名。
 - `data-ds-theme-source` 同步到 `nativeTheme.themeSource`；system 保留系统主题监听。
 - 共享 preload 仅启用于受管窗口主 frame、精确本地文件或当前内核来源；pluginApi 仅暴露给配置中心本地页。
 - 目录选择器 host 与 client-ui 成对挂载，替换 directory-picker-auto；经 `stdio[3]='ipc'` 请求主进程打开系统目录对话框，取消返回 null，abort 后丢弃结果。
@@ -232,7 +232,7 @@ node -e "require('./runtime.js')"
 
 - `node build/test-window-chrome.cjs` 使用 staging 内的隔离 userData，覆盖 IPC 来源隔离、主题、配置控件、原生菜单、按钮安全区、缩放与全屏；截图位于 staging/window-chrome-test/。全屏检查会短暂显示窗口。
 - `DSHDESKTOP_TEST_ELECTRON` 指定 Electron；同时设置 DSHDESKTOP_TEST_RUNTIME（含 node_modules）和 DSHDESKTOP_TEST_HOME（staging 内隔离 profile）时验证真实内核。
-- macOS 原生按钮与 vibrancy 在 macOS 验证；Windows 检查其布局与选项。
+- macOS 原生按钮与标题栏配色 在 macOS 验证；Windows 检查其布局与选项。
 - Linux 冒烟可用 `xvfb-run electron <仓库目录> --no-sandbox`；验收服务就绪、HTTP 可访问和无 Uncaught 日志。
 - 页面检查通过 Playwright 注入 pluginApi 或 CDP 连接；CDP 检查结束时断开连接，调用 browser.close() 会关闭 Electron。
 - Linux 关闭窗口检查发送 WM_DELETE_WINDOW ClientMessage；XDestroyWindow 和渲染进程 window.close() 不覆盖 BrowserWindow close 的 preventDefault 路径。

@@ -30,7 +30,8 @@ app.whenReady().then(async () => {
   const light = chromePalette(false), dark = chromePalette(true)
   assert.equal(chromeOptions('win32', dark).titleBarOverlay.height, 40)
   assert.equal(chromeOptions('darwin', light).titleBarStyle, 'hiddenInset')
-  assert.equal(chromeOptions('darwin', dark).vibrancy, 'sidebar')
+  assert.equal(chromeOptions('darwin', dark).backgroundColor, dark.sidebar)
+  assert.equal(chromeOptions('darwin', dark).vibrancy, undefined)
   assert.equal(chromeOptions('linux', dark).titleBarStyle, undefined)
   const settingsUrl = pathToFileURL(path.join(root, 'plugins.html')).href
   assert(trustedChromeUrl(settingsUrl, 'settings', null))
@@ -164,10 +165,11 @@ app.whenReady().then(async () => {
   if (settings.isFullScreen()) assert.equal(await js('document.querySelector("#content").getBoundingClientRect().top'), 0)
   settings.setFullScreen(false)
   await pause(700)
-  // macOS 布局模拟；原生红黄绿按钮和 vibrancy 需在 macOS 运行本测试验收。
+  // macOS 布局模拟；原生红黄绿按钮 需在 macOS 运行本测试验收。
   settings.setSize(960, 700)
   await pause(100)
   await js(`document.documentElement.dataset.desktopPlatform='darwin';document.documentElement.style.setProperty('--desktop-titlebar-height','48px')`)
+  assert.equal(await js('getComputedStyle(document.body).backgroundColor'), await js('getComputedStyle(document.querySelector("#desktop-titlebar")).backgroundColor'))
   await capture('settings-mac-layout')
   if (process.env.DSHDESKTOP_TEST_RUNTIME && process.env.DSHDESKTOP_TEST_HOME) {
     const { spawn } = require('node:child_process')

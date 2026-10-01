@@ -17,7 +17,7 @@
 }
 html[data-desktop-local] body { background: var(--desktop-sidebar); color: var(--desktop-text); }
 html[data-desktop-platform=darwin],
-html[data-desktop-platform=darwin] body { background: transparent !important; }
+html[data-desktop-platform=darwin] body { background: var(--desktop-sidebar) !important; }
 #desktop-titlebar {
   position: fixed; z-index: 1100; top: 0;
   left: env(titlebar-area-x, 0px); width: env(titlebar-area-width, 100%);
@@ -26,7 +26,10 @@ html[data-desktop-platform=darwin] body { background: transparent !important; }
   color: var(--desktop-text); -webkit-app-region: drag;
   font: 12px -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-html[data-desktop-platform=darwin] #desktop-titlebar { padding-left: var(--desktop-traffic-clearance, 88px); }
+html[data-desktop-platform=darwin] #desktop-titlebar {
+  padding-left: var(--desktop-traffic-clearance, 88px);
+  background: var(--desktop-sidebar);
+}
 html[data-fullscreen] #desktop-titlebar { display: none; }
 html[data-desktop-local] body,
 html[data-desktop-platform=darwin] body { box-sizing: border-box; padding-top: var(--desktop-titlebar-height); }
@@ -44,7 +47,7 @@ html[data-windows-titlebar][data-fullscreen] { --dsh-frame-chrome-top: var(--dsh
 /* 内核 frame 的前三列依次为侧栏、主内容和右栏；保持 Web 快捷键协议。 */
 html[data-desktop-platform=darwin] :has(> [data-shell-overlay]) { background: transparent; }
 html[data-desktop-platform=darwin] :has(> [data-shell-overlay]) > div:first-child {
-  background: color-mix(in srgb, var(--desktop-sidebar) 50%, transparent); border-right: none;
+  background: var(--desktop-sidebar); border-right: none;
 }
 html[data-desktop-platform=darwin] :has(> [data-shell-overlay]) > div:nth-child(2) {
   background: var(--desktop-content); border-radius: 16px 0 0 0;

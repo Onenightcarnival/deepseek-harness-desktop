@@ -17,8 +17,7 @@ function chromeOptions(platform, palette) {
   if (platform === 'win32') return { ...base, titleBarStyle: 'hidden',
     titleBarOverlay: { height: 40, color: palette.sidebar, symbolColor: palette.text } }
   if (platform === 'darwin') return { ...base, titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 18 }, vibrancy: 'sidebar',
-    visualEffectState: 'active', backgroundColor: '#00000000' }
+    trafficLightPosition: { x: 16, y: 18 } }
   return base
 }
 
@@ -53,11 +52,7 @@ function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.pla
     if (win.isDestroyed() || win.webContents.isDestroyed()) return
     if (platform === 'win32') win.setTitleBarOverlay({ color: palette.sidebar, symbolColor: palette.text,
       height: Math.round(Math.max(40, 40 * win.webContents.getZoomFactor())) })
-    if (platform === 'darwin') {
-      const vibrant = win.isVisible() && !win.isMinimized()
-      win.setVibrancy(vibrant ? 'sidebar' : null)
-      win.setBackgroundColor(vibrant ? '#00000000' : palette.sidebar)
-    } else win.setBackgroundColor(palette.sidebar)
+    win.setBackgroundColor(palette.sidebar)
     win.webContents.send('desktop:chrome-state', state(entry))
   }
   ipcMain.on('desktop:chrome-init', (event) => {

@@ -206,11 +206,91 @@ app.whenReady().then(async () => {
     if (process.platform === 'win32') assert(await main.webContents.executeJavaScript('document.documentElement.hasAttribute("data-windows-titlebar")'))
     assert.equal(await main.webContents.executeJavaScript('document.documentElement.hasAttribute("data-platform")'), false, 'Web 壳不得启用官方专用键盘协议')
     assert.equal(await main.webContents.executeJavaScript('typeof pluginApi'), 'undefined')
-    await main.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === '继续')?.click()`)
+    await main.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button')).find(button => /^(继续|Continue)$/.test(button.textContent.trim()))?.click()`)
     await pause(250)
     await main.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })
     await pause(200)
     fs.writeFileSync(path.join(output, 'main-runtime.png'), (await main.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG())
+    if (process.platform === 'darwin') {
+      const page = script => main.webContents.executeJavaScript(script)
+      main.show(); main.focus()
+      const clickControl = async selector => {
+        const point = await page(`(() => { const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; })()`)
+        const zoom = main.webContents.getZoomFactor()
+        const position = { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) }
+        main.webContents.sendInputEvent({ type: 'mouseMove', ...position })
+        main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...position })
+        main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...position })
+      }
+      const toggle = async () => clickControl(await page('document.querySelector("[data-desktop-frame]").hasAttribute("data-sidebar-collapsed")') ? '[data-desktop-leading-toggle]' : '[data-desktop-sidebar-toggle]')
+      const setTheme = async label => {
+        await page(`Array.from(document.querySelectorAll('button')).find(button => /^(Settings|设置)$/.test(button.textContent.trim())).click()`)
+        await pause(200)
+        await page(`Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`)
+        main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+        main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
+        await pause(500)
+      }
+      const snapshot = () => page(`(() => {
+        const frame=document.querySelector('[data-desktop-frame]'), center=document.querySelector('[data-desktop-center]'), sidebar=document.querySelector('[data-desktop-sidebar]');
+        const control=document.querySelector(frame.hasAttribute('data-sidebar-collapsed') ? '[data-desktop-leading-toggle]' : '[data-desktop-sidebar-toggle]');
+        return {top:center.getBoundingClientRect().top, sidebar:sidebar.getBoundingClientRect().width, collapsed:frame.hasAttribute('data-sidebar-collapsed'), visible:control.contains(document.elementFromPoint(control.getBoundingClientRect().x+14, control.getBoundingClientRect().y+14)), controlX:control.getBoundingClientRect().x, controlY:control.getBoundingClientRect().y, radius:getComputedStyle(center).borderTopLeftRadius, overflow:document.documentElement.scrollWidth>innerWidth};
+      })()`)
+      if ((await snapshot()).collapsed) { await toggle(); await pause(700) }
+      await setTheme('Light')
+      let layout = await snapshot()
+      assert.equal(layout.top, 0, JSON.stringify(layout))
+      assert(layout.sidebar >= 200, JSON.stringify(layout))
+      assert.equal(layout.radius, '0px')
+      assert(layout.controlY >= 0 && layout.controlY < 48, JSON.stringify(layout))
+      assert(await page('document.querySelector("[data-desktop-logo-row]").getBoundingClientRect().top >= 48'), '品牌行应位于原生窗口按钮下方')
+      assert.equal(layout.overflow, false)
+      assert.equal(layout.visible, true, JSON.stringify(layout))
+      const captureMain = async name => fs.writeFileSync(path.join(output, name + '.png'), (await main.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG())
+      await captureMain('main-mac-integrated-light')
+      await setTheme('Dark')
+      assert(await page('document.body.hasAttribute("data-ds-dark-theme")'), '深色主题应同步到内核')
+      await captureMain('main-mac-integrated-dark')
+      await toggle(); await pause(700)
+      layout = await snapshot()
+      assert.equal(layout.sidebar, 0, JSON.stringify(layout))
+      assert.equal(layout.top, 0, JSON.stringify(layout))
+      assert(layout.controlX >= 88, JSON.stringify(layout))
+      assert.equal(layout.overflow, false)
+      assert.equal(layout.visible, true, JSON.stringify(layout))
+      assert(await page(`(() => {
+        const seat=document.querySelector('#desktop-leading'), button=seat.querySelector('button');
+        return seat.parentElement === document.body && !seat.closest('[data-desktop-sidebar]') && getComputedStyle(seat).webkitAppRegion === 'no-drag' && getComputedStyle(button).webkitAppRegion === 'no-drag';
+      })()`), '折叠入口必须位于侧栏之外的独立非拖拽区域')
+      for (let i = 0; i < 3; i++) {
+        await toggle(); await pause(700)
+        assert((await snapshot()).sidebar >= 200, '坐标点击应展开侧栏')
+        await toggle(); await pause(700)
+        assert.equal((await snapshot()).sidebar, 0, '坐标点击应折叠侧栏')
+      }
+      await captureMain('main-mac-integrated-collapsed')
+      main.webContents.setZoomFactor(1.25); await pause(300)
+      layout = await snapshot()
+      assert(layout.controlX * 1.25 >= 87, JSON.stringify(layout))
+      assert.equal(layout.top, 0)
+      await toggle(); await pause(700)
+      assert((await snapshot()).sidebar >= 200, '缩放后坐标点击应展开侧栏')
+      await toggle(); await pause(700)
+      assert.equal((await snapshot()).sidebar, 0)
+      main.webContents.setZoomFactor(1); await pause(300)
+      main.show()
+      main.setFullScreen(true); await pause(1200)
+      if (!(await snapshot()).collapsed) { await toggle(); await pause(700) }
+      layout = await snapshot()
+      assert.equal(layout.top, 0)
+      assert.equal(layout.controlX, 12, JSON.stringify(layout))
+      assert.equal(layout.visible, true, JSON.stringify(layout))
+      main.setFullScreen(false); await pause(1200)
+      if ((await snapshot()).collapsed) { await toggle(); await pause(700) }
+      assert((await snapshot()).sidebar >= 200, '侧栏应能重新展开')
+      main.hide()
+      console.log('PASS: coordinate clicks, independent leading controls, integrated Mac frame, sidebar toggle, native-button clearance and zoom')
+    }
     console.log('PASS: real staged kernel and full profile UI')
   }
   await main.loadFile(path.join(root, 'splash.html'))

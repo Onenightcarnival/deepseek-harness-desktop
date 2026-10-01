@@ -44,14 +44,44 @@ html[data-windows-titlebar] :has(> [data-shell-overlay])::before {
 }
 /* 全屏保留应用菜单与侧栏切换按钮所在行，避免交互区域重叠。 */
 html[data-windows-titlebar][data-fullscreen] { --dsh-frame-chrome-top: var(--dsh-windows-titlebar-height); }
-/* 内核 frame 的前三列依次为侧栏、主内容和右栏；保持 Web 快捷键协议。 */
-html[data-desktop-platform=darwin] :has(> [data-shell-overlay]) { background: transparent; }
-html[data-desktop-platform=darwin] :has(> [data-shell-overlay]) > div:first-child {
-  background: var(--desktop-sidebar); border-right: none;
+/* macOS 主窗口：侧栏和内容延伸至顶部，原生按钮位于侧栏上沿。 */
+html[data-desktop-platform=darwin]:not([data-desktop-local]) {
+  --desktop-sidebar-surface: linear-gradient(180deg, color-mix(in srgb, var(--desktop-sidebar) 76%, #8aa3c7), color-mix(in srgb, var(--desktop-sidebar) 84%, #9995ab));
+  --dsh-frame-overlay-top: calc(var(--desktop-titlebar-height) + 20px);
 }
-html[data-desktop-platform=darwin] :has(> [data-shell-overlay]) > div:nth-child(2) {
-  background: var(--desktop-content); border-radius: 16px 0 0 0;
+html[data-desktop-platform=darwin][data-desktop-dark]:not([data-desktop-local]) {
+  --desktop-sidebar-surface: linear-gradient(180deg, color-mix(in srgb, var(--desktop-sidebar) 94%, #8aa3c7), color-mix(in srgb, var(--desktop-sidebar) 97%, #9995ab));
 }
-@media (prefers-reduced-transparency: reduce) {
-  html[data-desktop-platform=darwin] body { background: var(--desktop-sidebar) !important; }
+html[data-desktop-platform=darwin]:not([data-desktop-local]) body { padding-top: 0; }
+html[data-desktop-platform=darwin]:not([data-desktop-local]) #desktop-titlebar {
+  width: max(var(--desktop-traffic-clearance), var(--desktop-sidebar-width, 280px));
+  background: transparent; padding: 0; z-index: 10;
 }
+[data-desktop-frame] { background: var(--desktop-content); }
+[data-desktop-sidebar] { position: relative; background: var(--desktop-sidebar-surface) !important; border-right: none !important; }
+[data-desktop-sidebar-root] { background: transparent !important; padding-top: var(--desktop-titlebar-height) !important; }
+[data-desktop-logo-row] { height: 44px !important; padding-top: 0 !important; padding-bottom: 0 !important; }
+[data-desktop-sidebar-toggle] {
+  position: absolute !important; top: calc((var(--desktop-titlebar-height) - 28px) / 2); right: 12px;
+  z-index: 30; width: 28px !important; height: 28px !important; -webkit-app-region: no-drag;
+}
+[data-desktop-center] { background: var(--desktop-content); border-radius: 0 !important; }
+[data-desktop-frame] > div:nth-child(3) { background: var(--desktop-content); }
+[data-desktop-frame] > [data-side] { top: var(--desktop-titlebar-height); }
+/* 收起侧栏后，切换与新建按钮保留在窗口按钮右侧。 */
+[data-desktop-frame][data-sidebar-collapsed] { grid-template-columns: var(--desktop-collapsed-columns) !important; --dsh-frame-leading-clearance: calc(var(--desktop-traffic-clearance) + 76px); }
+[data-desktop-frame][data-sidebar-collapsed] [data-desktop-sidebar] { visibility: hidden; }
+#desktop-leading {
+  position: fixed; z-index: 15; top: calc((var(--desktop-titlebar-height) - 28px) / 2); left: var(--desktop-traffic-clearance);
+  display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag;
+}
+#desktop-leading[hidden] { display: none; }
+#desktop-leading button {
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--desktop-text); cursor: pointer; -webkit-app-region: no-drag;
+}
+#desktop-leading button:hover { background: var(--dsw-alias-interactive-bg-hover, #8883); }
+#desktop-leading button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+[data-desktop-frame][data-sidebar-collapsed] [data-desktop-center]:not(:has([data-conversation-header-leading])) { padding-top: var(--desktop-titlebar-height); }
+html[data-desktop-platform=darwin][data-fullscreen] { --desktop-traffic-clearance: 12px !important; --dsh-frame-overlay-top: 20px; }

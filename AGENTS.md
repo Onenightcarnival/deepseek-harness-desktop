@@ -82,7 +82,7 @@
 - `data-desktop-platform` 标识桌面布局；不得设置会启用官方原生键盘桥的 `data-platform`。
 - Windows 使用 `data-windows-titlebar`、`data-fullscreen`、`data-window-drag`、`data-shell-overlay` 和 `--dsw-*` 配色 token；拖拽区使用 `env(titlebar-area-width)`。
 - Windows 隐藏原生菜单栏，保留 Menu 与快捷键。
-- macOS 标题栏预留 48px，拖拽区与侧栏使用同一不透明底色；frame 前三列为侧栏、主内容和右栏，布局选择器不匹配编译类名。
+- macOS 主内容延伸至窗口顶部；侧栏顶部预留 48px 原生按钮与拖拽区，折叠后将切换与新建入口放在侧栏外的独立非拖拽区域，位于窗口按钮右侧。配置中心保留 48px 标题栏。frame 前三列为侧栏、主内容和右栏，布局选择器不匹配编译类名。
 - `data-ds-theme-source` 同步到 `nativeTheme.themeSource`；system 保留系统主题监听。
 - 共享 preload 仅启用于受管窗口主 frame、精确本地文件或当前内核来源；pluginApi 仅暴露给配置中心本地页。
 - 目录选择器 host 与 client-ui 成对挂载，替换 directory-picker-auto；经 `stdio[3]='ipc'` 请求主进程打开系统目录对话框，取消返回 null，abort 后丢弃结果。

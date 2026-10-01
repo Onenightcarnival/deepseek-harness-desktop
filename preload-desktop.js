@@ -46,6 +46,76 @@ function applyState(state) {
   for (const key of ['sidebar', 'content', 'text']) root.style.setProperty(`--desktop-${key}`, state.palette[key])
 }
 
+/** 标记 Web 侧栏的结构节点，窗口控制随侧栏宽度与折叠状态定位。 */
+function watchMacLayout() {
+  const root = document.documentElement
+  let frame, sidebar, pending = false
+  // 折叠入口独立于零宽侧栏，保留完整的原生鼠标命中区域。
+  const leading = document.createElement('div')
+  leading.id = 'desktop-leading'
+  leading.hidden = true
+  const controls = ['toggle', 'new-session'].map(action => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.setAttribute(`data-desktop-leading-${action}`, '')
+    const selector = action === 'toggle' ? '[data-desktop-sidebar-toggle]' : '[data-desktop-new-session]'
+    button.addEventListener('click', () => sidebar?.querySelector(selector)?.click())
+    leading.append(button)
+    return { button, selector, icon: '' }
+  })
+  document.body.append(leading)
+  const resize = new ResizeObserver(() => schedule())
+  const mark = (element, name) => { if (element && !element.hasAttribute(name)) element.setAttribute(name, '') }
+  const update = () => {
+    pending = false
+    const next = document.querySelector('[data-shell-overlay]')?.parentElement
+    if (!next || next.children[0]?.hasAttribute('data-shell-overlay')) { leading.hidden = true; return }
+    if (next !== frame) {
+      resize.disconnect()
+      frame = next
+      sidebar = frame.children[0]
+      resize.observe(sidebar)
+    }
+    mark(frame, 'data-desktop-frame')
+    mark(sidebar, 'data-desktop-sidebar')
+    mark(frame.children[1], 'data-desktop-center')
+    const row = sidebar.querySelector('[data-window-drag]')
+    mark(row, 'data-desktop-logo-row')
+    mark(row?.parentElement, 'data-desktop-sidebar-root')
+    const buttons = row?.querySelectorAll('button[aria-label]')
+    mark(buttons?.[buttons.length - 1], 'data-desktop-sidebar-toggle')
+    mark(row?.parentElement.querySelector(':scope > button[aria-label]'), 'data-desktop-new-session')
+    const collapsed = frame.hasAttribute('data-sidebar-collapsed')
+    for (const control of controls) {
+      const source = sidebar.querySelector(control.selector)
+      const svg = source?.querySelector(':scope > svg') || source?.querySelector('svg')
+      if (svg && control.icon !== svg.outerHTML) {
+        control.icon = svg.outerHTML
+        control.button.replaceChildren(svg.cloneNode(true))
+      }
+      for (const name of ['aria-label', 'aria-keyshortcuts']) {
+        const value = source?.getAttribute(name)
+        if (value !== control.button.getAttribute(name)) {
+          if (value === null || value === undefined) control.button.removeAttribute(name)
+          else control.button.setAttribute(name, value)
+        }
+      }
+      control.button.title = source?.getAttribute('aria-label') || ''
+      control.button.disabled = !source || source.disabled
+    }
+    if (!collapsed && leading.contains(document.activeElement)) sidebar.querySelector('[data-desktop-sidebar-toggle]')?.focus({ preventScroll: true })
+    leading.hidden = !collapsed || !row
+    const width = `${collapsed ? 0 : sidebar.getBoundingClientRect().width}px`
+    if (root.style.getPropertyValue('--desktop-sidebar-width') !== width) root.style.setProperty('--desktop-sidebar-width', width)
+    const columns = frame.style.gridTemplateColumns.replace(/^[\d.]+px/, '0px')
+    if (frame.style.getPropertyValue('--desktop-collapsed-columns') !== columns) frame.style.setProperty('--desktop-collapsed-columns', columns)
+  }
+  const schedule = () => { if (!pending) { pending = true; requestAnimationFrame(update) } }
+  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-sidebar-collapsed', 'style', 'aria-label'] })
+  window.addEventListener('resize', schedule)
+  schedule()
+}
+
 /** Windows 两个入口调用原生菜单，鼠标打开菜单时保留编辑器焦点。 */
 function mountMenu() {
   const host = document.createElement('div')
@@ -164,11 +234,12 @@ if (initialState) {
     if ((state.local && state.platform !== 'linux') || state.platform === 'darwin') {
       const title = document.createElement('header')
       title.id = 'desktop-titlebar'
-      title.textContent = state.purpose === 'settings' ? (currentLanguage === 'en' ? 'Configuration center' : '配置中心') : 'DeepSeek Harness'
+      title.textContent = state.purpose === 'settings' ? (currentLanguage === 'en' ? 'Configuration center' : '配置中心') : state.platform === 'darwin' ? '' : 'DeepSeek Harness'
       document.body.prepend(title)
     }
     if (!state.local) {
       if (state.platform === 'win32') mountMenu()
+      if (state.platform === 'darwin') watchMacLayout()
       watchPalette()
     }
   }, { once: true })

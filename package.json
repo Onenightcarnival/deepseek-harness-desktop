@@ -34,6 +34,12 @@
       "plugins.html",
       "preload-desktop.js",
       "window-chrome.js",
+      "desktop-browser.js",
+      "desktop-browser-ipc.js",
+      "desktop-browser-runtime.js",
+      "vendor/deepseek-desktop/*.js",
+      "vendor/deepseek-desktop/channels.json",
+      "vendor/deepseek-desktop/LICENSE",
       "desktop.css",
       "build/icon.png"
     ],

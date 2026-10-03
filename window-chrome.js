@@ -45,7 +45,8 @@ function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.pla
   function state(entry) {
     return { platform, purpose: entry.purpose, palette, language: getLanguage(),
       fullscreen: entry.fullscreen, zoom: entry.window.webContents.getZoomFactor(),
-      local: entry.window.webContents.getURL().startsWith('file:') }
+      local: entry.window.webContents.getURL().startsWith('file:'),
+      browser: entry.purpose === 'main' && entry.window.webContents.getLastWebPreferences().webviewTag === true }
   }
   function update(entry) {
     const win = entry.window

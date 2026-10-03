@@ -15,6 +15,9 @@ const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, sa
   applyProxyEnv, PROXY_ENV_KEYS, normalizeGeneralSettings, hideToTrayEffective } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
 const { createWindowChrome } = require('./window-chrome.js')
+const { createDesktopBrowser } = require('./desktop-browser.js')
+let desktopBrowser = null
+const browserSessions = new Set()
 const { translate, normalizeLanguage } = require('./desktop-i18n.js')
 let uiLanguage = 'zh'
 // Chromium localizes native accelerator names once, before app readiness.
@@ -496,7 +499,8 @@ async function resolveSystemProxy(url) {
  * window traffic and update checks. Node child processes go through the
  * forwarder instead. Chromium bypasses loopback implicitly.
  */
-async function applyChromiumProxy(config) {
+async function applyChromiumProxy(config, target) {
+  if (!target) return Promise.all([session.defaultSession, ...browserSessions].map(item => applyChromiumProxy(config, item)))
   const c = config || PROXY_DEFAULTS
   try {
     if (c.mode === 'manual' && String(c.host || '').trim() && String(c.port ?? '').trim()) {
@@ -504,14 +508,14 @@ async function applyChromiumProxy(config) {
       // same separators as runtime.js bypassPatterns: one list for the
       // shell window and the forwarder
       for (const part of String(c.bypass || '').split(/[,;\s]+/)) { if (part.trim()) bypass.push(part.trim()) }
-      await session.defaultSession.setProxy({
+      await target.setProxy({
         proxyRules: `http://${String(c.host).trim()}:${String(c.port).trim()}`,
         proxyBypassRules: bypass.join(','),
       })
     } else if (c.mode === 'none') {
-      await session.defaultSession.setProxy({ mode: 'direct' })
+      await target.setProxy({ mode: 'direct' })
     } else {
-      await session.defaultSession.setProxy({ mode: 'system' })
+      await target.setProxy({ mode: 'system' })
     }
   } catch { /* previous proxy setting stays in effect */ }
 }
@@ -1369,11 +1373,13 @@ function createWindow() {
       nodeIntegration: false,
       spellcheck: false,
       sandbox: true,
+      webviewTag: true,
       preload: path.join(__dirname, 'preload-desktop.js'),
     },
   })
 
   windowChrome.attach(mainWindow, 'main')
+  desktopBrowser.attach(mainWindow)
   mainWindow.loadFile(path.join(__dirname, 'splash.html'))
 
   // Open external links in the system browser, keep the app on the local UI.
@@ -1499,7 +1505,8 @@ function buildMenu() {
   const isMac = process.platform === 'darwin'
   const template = [
     ...(isMac ? [{ label: 'DeepSeek Harness', submenu: [{label:t('关于 DeepSeek Harness'),role:'about'}, {type:'separator'}, {label:t('服务'),role:'services'}, {type:'separator'}, {label:t('隐藏 DeepSeek Harness'),role:'hide'}, {label:t('隐藏其他应用'),role:'hideOthers'}, {label:t('显示全部'),role:'unhide'}, {type:'separator'}, {label:t('退出'),role:'quit'}] }] : []),
-    { label: t("文件"), role: 'fileMenu', submenu: [{label:t('关闭窗口'),role:'close'}] },
+    desktopBrowser ? desktopBrowser.shortcuts.fileMenu({ fileMenu: t('文件'), closePage: t('关闭页面') })
+      : { label: t("文件"), role: 'fileMenu', submenu: [{label:t('关闭窗口'),role:'close'}] },
     { label: t("编辑"), role: 'editMenu', submenu: editItems() },
     {
       label: t("查看"),
@@ -1859,6 +1866,9 @@ app.whenReady().then(async () => {
   try { uiLanguage = normalizeLanguage(JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'ui-language.json'), 'utf8'))) }
   catch { uiLanguage = normalizeLanguage(app.getLocale()) }
   resolveActiveRuntime()
+  desktopBrowser = createDesktopBrowser({ getWindow: () => mainWindow, getUrl: () => currentWebUrl,
+    runtimeDir: activeRuntime.dir, userData: app.getPath('userData'), updateMenu: buildMenu,
+    configureSession: target => { browserSessions.add(target); return applyChromiumProxy(readProxyConfig(), target) } })
   applyChromiumProxy(readProxyConfig())
   await startForwarder()
   generalSettings = readGeneralSettings()
@@ -1908,6 +1918,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', stopServer)
 app.on('will-quit', () => {
+  desktopBrowser?.dispose()
   // Shims are persistent files while the forwarder dies with the app: they
   // are rewritten scrub-only (direct) on the way out and the next launch
   // writes the fresh port back. A crash skips this; the next launch heals

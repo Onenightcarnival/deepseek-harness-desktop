@@ -19,5 +19,10 @@
 #         config:
 #           apiKeyEnv: EXA_API_KEY
 #
-# 空列表：沿用官方默认组合。
-[]
+# 主窗口提供官方浏览器与键盘桥。
+- id: ui-sidebar-browser
+  disabled: false
+
+# 侧栏保留设置入口；不挂载官方账号菜单。
+- id: ui-settings-account
+  disabled: true

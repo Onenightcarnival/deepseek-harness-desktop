@@ -11,6 +11,7 @@ const en = {
 "删除": "Delete",
 "全选": "Select all",
 "关闭窗口": "Close window",
+"关闭页面": "Close page",
 "最小化": "Minimize",
 "缩放窗口": "Zoom window",
 "全部置于前台": "Bring all to front",

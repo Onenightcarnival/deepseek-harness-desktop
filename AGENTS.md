@@ -48,6 +48,9 @@
 | `plugins.html` | 配置中心界面 |
 | `window-chrome.js` | 标题栏、可信主 frame IPC、主题与全屏同步 |
 | `preload-desktop.js` | 平台布局、菜单桥、主题探针与配置中心 pluginApi |
+| `desktop-browser.js` / `desktop-browser-ipc.js` / `desktop-browser-runtime.js` | 官方浏览器与快捷键接入、主 frame 来源校验、活动内核依赖解析 |
+| `vendor/deepseek-desktop/` | 固定提交的官方源码、生成的 CommonJS 和 MIT 许可证 |
+| `build/sync-official-browser.cjs` | 生成或校验官方浏览器与快捷键适配产物 |
 | `desktop-i18n.js` | 中英文文案与插值 |
 | `splash.js` | 启动页语言同步 |
 | `desktop.css` / `splash.html` | 原生按钮安全区、拖拽区、主题与启动页 |
@@ -79,13 +82,15 @@
 
 ### 窗口与 IPC
 
-- `data-desktop-platform` 标识桌面布局；不得设置会启用官方原生键盘桥的 `data-platform`。
+- `data-desktop-platform` 标识桌面布局；已接入官方浏览器和原生键盘桥的可信主界面同时设置 `data-platform`。启动页、配置窗口与外部网页不设置 `data-platform`，不暴露 `dshDesktop`。
 - Windows 使用 `data-windows-titlebar`、`data-fullscreen`、`data-window-drag`、`data-shell-overlay` 和 `--dsw-*` 配色 token；拖拽区使用 `env(titlebar-area-width)`。
 - Windows 隐藏原生菜单栏，保留 Menu 与快捷键。
 - macOS 主内容延伸至窗口顶部；侧栏顶部预留 48px 原生按钮与拖拽区，折叠后将切换与新建入口放在侧栏外的独立非拖拽区域，位于窗口按钮右侧。配置中心保留 48px 标题栏。frame 前三列为侧栏、主内容和右栏，布局选择器不匹配编译类名。
 - `data-ds-theme-source` 同步到 `nativeTheme.themeSource`；system 保留系统主题监听。
 - 共享 preload 仅启用于受管窗口主 frame、精确本地文件或当前内核来源；pluginApi 仅暴露给配置中心本地页。
 - 目录选择器 host 与 client-ui 成对挂载，替换 directory-picker-auto；经 `stdio[3]='ipc'` 请求主进程打开系统目录对话框，取消返回 null，abort 后丢弃结果。
+- 主窗口启用 `webviewTag`；官方 guest 管理器校验租约、归属和分区，固定网页隔离策略。浏览器和快捷键 IPC 只接受当前内核来源的受管主 frame。
+- `desktop-patch.yml` 在 web profile 中启用官方 `ui-sidebar-browser`。浏览器行为见 [README](README.md#浏览器)，源码同步契约见 [vendor README](vendor/deepseek-desktop/README.md)。
 
 ### 代理链路
 
@@ -214,6 +219,7 @@ node --check main.js
 node --check runtime.js
 node --check window-chrome.js
 node --check preload-desktop.js
+node build/sync-official-browser.cjs --check
 node build/test-server-output.cjs
 node build/test-windows-execution-level.cjs
 node build/test-uv-removal.cjs
@@ -231,6 +237,7 @@ node -e "require('./runtime.js')"
 ### Electron
 
 - `node build/test-window-chrome.cjs` 使用 staging 内的隔离 userData，覆盖 IPC 来源隔离、主题、配置控件、原生菜单、按钮安全区、缩放与全屏；截图位于 staging/window-chrome-test/。全屏检查会短暂显示窗口。
+- `node build/test-desktop-browser.cjs` 使用 staging 隔离目录和本机 HTTP 页面验证官方浏览器界面、原生快捷键、保活、网页权限、工作区分区、弹窗及主 frame IPC。测试短暂显示窗口以验证真实键盘焦点；沿用 `DSHDESKTOP_TEST_ELECTRON` 与 `DSHDESKTOP_TEST_RUNTIME`。设置 `DSHDESKTOP_TEST_FULL=1` 同时激活运行时清单中的 full 预置插件。
 - `DSHDESKTOP_TEST_ELECTRON` 指定 Electron；同时设置 DSHDESKTOP_TEST_RUNTIME（含 node_modules）和 DSHDESKTOP_TEST_HOME（staging 内隔离 profile）时验证真实内核。
 - macOS 原生按钮与标题栏配色 在 macOS 验证；Windows 检查其布局与选项。
 - Linux 冒烟可用 `xvfb-run electron <仓库目录> --no-sandbox`；验收服务就绪、HTTP 可访问和无 Uncaught 日志。

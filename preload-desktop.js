@@ -180,10 +180,15 @@ function watchMacLayout() {
     mark(frame, 'data-desktop-frame')
     mark(sidebar, 'data-desktop-sidebar')
     mark(frame.children[1], 'data-desktop-center')
-    const row = sidebar.querySelector('[data-window-drag]')
+    // The kernel's macOS desktop layout (data-platform=darwin) renders a
+    // native-button strip above the brand row; both carry data-window-drag.
+    const drags = Array.from(sidebar.querySelectorAll('[data-window-drag]'))
+    const strip = drags.length > 1 ? drags[0] : null
+    const row = drags[drags.length - 1]
+    mark(strip, 'data-desktop-top-strip')
     mark(row, 'data-desktop-logo-row')
     mark(row?.parentElement, 'data-desktop-sidebar-root')
-    const buttons = row?.querySelectorAll('button[aria-label]')
+    const buttons = (strip ?? row)?.querySelectorAll('button[aria-label]')
     mark(buttons?.[buttons.length - 1], 'data-desktop-sidebar-toggle')
     mark(row?.parentElement.querySelector(':scope > button[aria-label]'), 'data-desktop-new-session')
     const collapsed = frame.hasAttribute('data-sidebar-collapsed')

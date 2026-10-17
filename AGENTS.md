@@ -85,7 +85,7 @@
 - `data-desktop-platform` 标识桌面布局；已接入官方浏览器和原生键盘桥的可信主界面同时设置 `data-platform`。启动页、配置窗口与外部网页不设置 `data-platform`，不暴露 `dshDesktop`。
 - Windows 使用 `data-windows-titlebar`、`data-fullscreen`、`data-window-drag`、`data-shell-overlay` 和 `--dsw-*` 配色 token；拖拽区使用 `env(titlebar-area-width)`。
 - Windows 隐藏原生菜单栏，保留 Menu 与快捷键。
-- macOS 主内容延伸至窗口顶部；侧栏顶部预留 48px 原生按钮与拖拽区，折叠后将切换与新建入口放在侧栏外的独立非拖拽区域，位于窗口按钮右侧。配置中心保留 48px 标题栏。frame 前三列为侧栏、主内容和右栏，布局选择器不匹配编译类名。
+- macOS 主内容延伸至窗口顶部；侧栏顶部预留 48px 原生按钮与拖拽区，折叠后将切换与新建入口放在侧栏外的独立非拖拽区域，位于窗口按钮右侧。主界面带 `data-platform=darwin` 时内核侧栏自带原生按钮条（`data-desktop-top-strip`），该条即 48px 标题栏区域，品牌行（最后一个 `data-window-drag`）紧随其下，不再叠加顶部留白。配置中心保留 48px 标题栏。frame 前三列为侧栏、主内容和右栏，布局选择器不匹配编译类名。
 - `data-ds-theme-source` 同步到 `nativeTheme.themeSource`；system 保留系统主题监听。
 - 共享 preload 仅启用于受管窗口主 frame、精确本地文件或当前内核来源；pluginApi 仅暴露给配置中心本地页。
 - 目录选择器 host 与 client-ui 成对挂载，替换 directory-picker-auto；经 `stdio[3]='ipc'` 请求主进程打开系统目录对话框，取消返回 null，abort 后丢弃结果。
@@ -152,7 +152,7 @@
 | staging | npm ci --force 使用 locks/<flavor>.package-lock.json；锁根依赖须匹配插件清单 |
 | 锁更新 | 更新 resolved/integrity、依赖闭包并报告依赖结构变化 |
 | 平台依赖 | 保留 os/cpu/libc；仅由可选依赖可达的子树标记 optional |
-| 版本解析 | 非 lockstep 包按引用区间交集选版；冲突区间使用嵌套私有副本 |
+| 版本解析 | 非 lockstep 包按引用区间交集选版；冲突区间使用嵌套私有副本。`@deepseek-ai/dsh*` 区间按 includePrerelease 判定，与内核预检一致；内核包不嵌套副本，滞后的插件 peer 放宽记录 |
 | peer | 闭包包含自动安装的 peer；不递归安装可选 peer，但校验已存在的同名包；禁止 --legacy-peer-deps |
 | 注册表请求 | 包含超时、重试与进度输出；临时文件使用系统临时目录 |
 | better-locale | full 清单 carry 组显式固定版本 |

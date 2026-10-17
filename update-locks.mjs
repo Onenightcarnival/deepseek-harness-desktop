@@ -106,6 +106,11 @@ const added = []
 const { createRequire } = await import('node:module')
 const require = createRequire(import.meta.url)
 const semver = require('semver')
+// Core packages are one lockstep release: a referrer's range on them is
+// evaluated with prereleases admitted, as dsh-app-boot evaluates plugin
+// requirements against the running core (">=0.2.0-rc.2" accepts 0.2.1-rc.2).
+const CORE_NAME = /^@deepseek-ai\/dsh(?:-|$)/
+const refSatisfies = (name, version, range) => semver.satisfies(version, range, { includePrerelease: CORE_NAME.test(name) })
 const requiredRefs = (v) => Object.entries({
   ...v.dependencies,
   ...v.optionalDependencies,
@@ -115,7 +120,7 @@ async function ensure(name, range) {
   if (!name || have.has(name)) return
   const doc = await reg(name)
   const version = doc.versions[range] ? range // exact pin (plugin seeds)
-    : range && semver.satisfies(target, range) ? target // lockstep names first
+    : range && refSatisfies(name, target, range) ? target // lockstep names first
     : (range && semver.maxSatisfying(Object.keys(doc.versions), range)) ?? doc['dist-tags'].latest
   const v = doc.versions[version]
   if (!v) throw new Error(`${name}@${version} 不在 registry`)
@@ -193,9 +198,9 @@ for (let round = 0; round < 3; round++) {
     const name = k.replace(/^.*node_modules\//, '')
     if (isLockstep(name, e) || pluginBumps[name]) continue
     const wanted = ranges.get(name) ?? []
-    if (wanted.every((r) => semver.satisfies(e.version, r))) continue
+    if (wanted.every((r) => refSatisfies(name, e.version, r))) continue
     const doc = await reg(name)
-    const fits = Object.keys(doc.versions).filter((v) => wanted.every((r) => semver.satisfies(v, r)))
+    const fits = Object.keys(doc.versions).filter((v) => wanted.every((r) => refSatisfies(name, v, r)))
     if (fits.length === 0) continue // unsatisfiable; pass 3 widens the range
     const pick = semver.rsort(fits)[0]
     if (pick === e.version) continue
@@ -224,13 +229,15 @@ for (let round = 0; round < 4; round++) {
     if (!k) continue
     for (const [d, r] of requiredRefs(e)) {
       const hit = resolveKey(k, d)
-      if (hit !== undefined && semver.satisfies(lock.packages[hit].version, r)) continue
-      if (hit === undefined) continue // pass 2 guarantees an entry; defensive
+      if (hit !== undefined && refSatisfies(d, lock.packages[hit].version, r)) continue
+      if (hit !== undefined && CORE_NAME.test(d)) continue // one core release per tree; pass 3 widens the lagging range
       const doc = await reg(d)
       const pick = semver.maxSatisfying(Object.keys(doc.versions), r)
       if (pick === null) continue // unsatisfiable; pass 3 widens the range
       const v = doc.versions[pick]
-      const key = `${k}/node_modules/${d}`
+      // No entry reachable from the referrer (the name exists only in another
+      // subtree): hoist one. Otherwise nest a private copy beside the referrer.
+      const key = hit === undefined ? `node_modules/${d}` : `${k}/node_modules/${d}`
       lock.packages[key] = {
         version: pick, resolved: v.dist.tarball, integrity: v.dist.integrity,
         ...(v.dependencies ? { dependencies: v.dependencies } : {}),

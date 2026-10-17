@@ -78,6 +78,20 @@ app.whenReady().then(async () => {
   await waitFor(() => js('!!document.querySelector("[data-shell-overlay]")'), 'application UI')
   assert.equal(await js('typeof dshDesktop.browser.acquire'), 'function')
   assert.equal(await js('document.documentElement.dataset.platform'), process.platform)
+  if (process.platform === 'darwin') {
+    // The kernel's macOS layout owns the native-button strip; the brand row sits directly below it.
+    if (await js('document.querySelector("[data-desktop-frame]")?.hasAttribute("data-sidebar-collapsed")')) {
+      await js(`document.querySelector('[data-desktop-leading-toggle]').click()`); await pause(800)
+    }
+    const layout = await js(`(() => { const strip=document.querySelector('[data-desktop-top-strip]'), row=document.querySelector('[data-desktop-logo-row]'), root=document.querySelector('[data-desktop-sidebar-root]');
+      return { strip: strip && strip.getBoundingClientRect().height, rowTop: row && row.getBoundingClientRect().top, rowHeight: row && row.getBoundingClientRect().height, brand: !!row?.querySelector('svg'), rootPadding: root && getComputedStyle(root).paddingTop, toggleTop: document.querySelector('[data-desktop-sidebar-toggle]')?.getBoundingClientRect().top } })()`)
+    assert.equal(layout.strip, 48, JSON.stringify(layout))
+    assert.equal(layout.rowTop, 48, JSON.stringify(layout))
+    assert.equal(layout.rowHeight, 44, JSON.stringify(layout))
+    assert.equal(layout.brand, true, JSON.stringify(layout))
+    assert.equal(layout.rootPadding, '0px', JSON.stringify(layout))
+    assert.equal(layout.toggleTop, 10, JSON.stringify(layout))
+  }
   await js(`Array.from(document.querySelectorAll('button')).find(b=>/^(继续|Continue)$/.test(b.textContent.trim()))?.click()`)
   main.show(); main.focus(); await pause(500)
   key(main.webContents, 't', [primary])

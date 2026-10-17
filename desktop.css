@@ -60,7 +60,10 @@ html[data-desktop-platform=darwin]:not([data-desktop-local]) #desktop-titlebar {
 [data-desktop-frame] { background: var(--desktop-content); }
 [data-desktop-sidebar] { position: relative; background: var(--desktop-sidebar-surface) !important; border-right: none !important; }
 [data-desktop-sidebar-root] { background: transparent !important; padding-top: var(--desktop-titlebar-height) !important; }
-[data-desktop-logo-row] { height: 44px !important; padding-top: 0 !important; padding-bottom: 0 !important; }
+[data-desktop-logo-row] { height: 44px !important; padding-top: 0 !important; padding-bottom: 0 !important; margin-top: 0 !important; }
+/* 内核 macOS 布局自带的原生按钮条即标题栏区域；不再叠加顶部留白。 */
+[data-desktop-top-strip] { height: var(--desktop-titlebar-height) !important; margin-top: 0 !important; }
+[data-desktop-sidebar-root]:has(> [data-desktop-top-strip]) { padding-top: 0 !important; }
 [data-desktop-sidebar-toggle] {
   position: absolute !important; top: calc((var(--desktop-titlebar-height) - 28px) / 2); right: 12px;
   z-index: 30; width: 28px !important; height: 28px !important; -webkit-app-region: no-drag;

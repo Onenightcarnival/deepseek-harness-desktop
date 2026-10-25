@@ -1,6 +1,6 @@
 # DeepSeek Harness Desktop
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方桌面安装包，支持 Windows 与 macOS。当前内置内核：`0.2.1-rc.2`。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方桌面安装包，支持 Windows 与 macOS。当前内置内核：`0.2.1-rc.3`。
 
 应用在本机随机端口运行 dsh Web UI。数据与配置位于 `~/.dsh`，与命令行版共享。默认关窗退出；开启托盘模式后，关窗保留服务与任务。
 
@@ -60,7 +60,7 @@ Windows 桌面程序默认请求管理员权限，由系统 UAC 确认。内核�
 | 检查应用更新 | GitHub Release | Windows 后台下载整包，立即重启或下次退出时安装；macOS 打开下载页 |
 | 检查内核更新 | npm `@deepseek-ai/dsh` | 安装到用户数据目录 `runtimes/<版本>/`，重启生效；失败回退内置版本 |
 
-内核仅支持同一版本线内升级，例如 `0.2.1-rc.1 → 0.2.1-rc.2`。跨版本线使用新安装包。
+内核仅支持同一版本线内升级，例如 `0.2.1-rc.2 → 0.2.1-rc.3`。跨版本线使用新安装包。
 
 ## 配置中心
 

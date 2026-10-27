@@ -17,8 +17,8 @@ if (!process.versions.electron) {
   process.exit(run.status ?? 1)
 }
 
-const { app, BrowserWindow, ipcMain, nativeTheme, Menu } = require('electron')
-const { chromeOptions, chromePalette, trustedChromeUrl, createWindowChrome } = require('../window-chrome.js')
+const { app, BrowserWindow, WebContentsView, ipcMain, nativeTheme, Menu } = require('electron')
+const { chromeOptions, chromePalette, trustedChromeUrl, contextMenuItems, createWindowChrome } = require('../window-chrome.js')
 app.setPath('userData', path.join(output, `user-data-${process.pid}`))
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -38,6 +38,20 @@ app.whenReady().then(async () => {
   assert(!trustedChromeUrl(settingsUrl + '?foreign', 'settings', null))
   assert(!trustedChromeUrl('http://127.0.0.1:1235/', 'main', 'http://127.0.0.1:1234/'))
   assert(!trustedChromeUrl('http://127.0.0.1:1234/', 'settings', 'http://127.0.0.1:1234/'))
+  const splashUrl = pathToFileURL(path.join(root, 'splash.html')).href
+  assert(trustedChromeUrl(splashUrl, 'splash', null))
+  assert(!trustedChromeUrl(splashUrl, 'main', 'http://127.0.0.1:1234/'), '主窗口不再信任启动页')
+  assert(!trustedChromeUrl(splashUrl, 'settings', null))
+
+  // 右键菜单模板：可编辑区域给编辑角色并按 editFlags 置灰，选中文本只给复制，其余不弹出。
+  assert.deepEqual(contextMenuItems({ isEditable: false, selectionText: '', editFlags: {} }), [])
+  const copyOnly = contextMenuItems({ isEditable: false, selectionText: 'x', editFlags: { canCopy: true } }, key => key + '!')
+  assert.deepEqual(copyOnly, [{ role: 'copy', label: '复制!', enabled: true, accelerator: '' }])
+  const editable = contextMenuItems({ isEditable: true, selectionText: '', editFlags: { canUndo: false, canPaste: true } })
+  assert.deepEqual(editable.filter(item => item.role).map(item => item.role), ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'])
+  assert.equal(editable[0].enabled, false)
+  assert.equal(editable.find(item => item.role === 'paste').enabled, true)
+  assert.equal(editable.filter(item => item.type === 'separator').length, 2)
 
   // 使用内核相同的公开主题 token 和 frame DOM 契约。
   server = require('node:http').createServer((_req, res) => {
@@ -293,6 +307,24 @@ app.whenReady().then(async () => {
     }
     console.log('PASS: real staged kernel and full profile UI')
   }
+  // 启动页覆盖层：登记为 splash 用途的本地页，不暴露任何桥。
+  const overlay = new WebContentsView({ webPreferences: { preload: path.join(root, 'preload-desktop.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  chrome.attachView(main, overlay)
+  main.contentView.addChildView(overlay)
+  overlay.setBounds({ x: 0, y: 0, width: 960, height: 700 })
+  await overlay.webContents.loadFile(path.join(root, 'splash.html'))
+  await pause(250)
+  const ojs = source => overlay.webContents.executeJavaScript(source)
+  assert.equal(await ojs('document.documentElement.hasAttribute("data-desktop-local")'), true)
+  assert.equal(await ojs('document.documentElement.dataset.desktopPlatform'), process.platform)
+  assert.match(await ojs('document.getElementById("stage").textContent'), /^(正在启动…|Starting…)$/)
+  assert.equal(await ojs('typeof pluginApi'), 'undefined')
+  assert.equal(await ojs('typeof dshDesktop'), 'undefined')
+  main.contentView.removeChildView(overlay)
+  overlay.webContents.close()
+  await pause(100)
+  console.log('PASS: splash overlay registration')
+
   await main.loadFile(path.join(root, 'splash.html'))
   assert.equal(await main.webContents.executeJavaScript('typeof startupApi'), 'undefined')
   assert.equal(await main.webContents.executeJavaScript('document.querySelector(".log")'), null)

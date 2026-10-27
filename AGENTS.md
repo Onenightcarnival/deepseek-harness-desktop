@@ -46,7 +46,7 @@
 | `plugins/dsh-desktop-activity` | 每 2 秒读取 agents/jobs，经 IPC 上报忙闲 |
 | `proxy-forward.js` | HTTP / CONNECT 转发与逐连接路由 |
 | `plugins.html` | 配置中心界面 |
-| `window-chrome.js` | 标题栏、可信主 frame IPC、主题与全屏同步 |
+| `window-chrome.js` | 标题栏、可信主 frame IPC、主题与全屏同步、右键菜单 |
 | `preload-desktop.js` | 平台布局、菜单桥、主题探针与配置中心 pluginApi |
 | `desktop-browser.js` / `desktop-browser-ipc.js` / `desktop-browser-runtime.js` | 官方浏览器与快捷键接入、主 frame 来源校验、活动内核依赖解析 |
 | `vendor/deepseek-desktop/` | 固定提交的官方源码、生成的 CommonJS 和 MIT 许可证 |
@@ -83,11 +83,13 @@
 ### 窗口与 IPC
 
 - `data-desktop-platform` 标识桌面布局；已接入官方浏览器和原生键盘桥的可信主界面同时设置 `data-platform`。启动页、配置窗口与外部网页不设置 `data-platform`，不暴露 `dshDesktop`。
+- 启动页是主窗口上的 `WebContentsView` 覆盖层（purpose `splash`），内核启动与重启期间覆盖主内容；主 webContents 只加载内核界面。`loadWebUi` 在界面加载完成后调用 `navigationHistory.clear()` 并移除覆盖层，主窗口历史不保留可后退的页面。
+- 主窗口与配置中心的右键菜单由主进程构建：可编辑区域提供撤销 / 重做 / 剪切 / 复制 / 粘贴 / 全选并按 `editFlags` 置灰，选中文本提供复制，其余不弹出；角色标签走 `desktop-i18n.js`，accelerator 为空。启动页与 webview 不提供右键菜单。
 - Windows 使用 `data-windows-titlebar`、`data-fullscreen`、`data-window-drag`、`data-shell-overlay` 和 `--dsw-*` 配色 token；拖拽区使用 `env(titlebar-area-width)`。
 - Windows 隐藏原生菜单栏，保留 Menu 与快捷键。
 - macOS 主内容延伸至窗口顶部；侧栏顶部预留 48px 原生按钮与拖拽区，折叠后将切换与新建入口放在侧栏外的独立非拖拽区域，位于窗口按钮右侧。主界面带 `data-platform=darwin` 时内核侧栏自带原生按钮条（`data-desktop-top-strip`），该条即 48px 标题栏区域，品牌行（最后一个 `data-window-drag`）紧随其下，不再叠加顶部留白。配置中心保留 48px 标题栏。frame 前三列为侧栏、主内容和右栏，布局选择器不匹配编译类名。
 - `data-ds-theme-source` 同步到 `nativeTheme.themeSource`；system 保留系统主题监听。
-- 共享 preload 仅启用于受管窗口主 frame、精确本地文件或当前内核来源；pluginApi 仅暴露给配置中心本地页。
+- 共享 preload 仅启用于受管窗口主 frame、精确本地文件或当前内核来源：main 仅当前内核来源，settings 仅 `plugins.html`，splash 仅 `splash.html`；pluginApi 仅暴露给配置中心本地页。
 - 目录选择器 host 与 client-ui 成对挂载，替换 directory-picker-auto；经 `stdio[3]='ipc'` 请求主进程打开系统目录对话框，取消返回 null，abort 后丢弃结果。
 - 主窗口启用 `webviewTag`；官方 guest 管理器校验租约、归属和分区，固定网页隔离策略。浏览器和快捷键 IPC 只接受当前内核来源的受管主 frame。
 - `desktop-patch.yml` 在 web profile 中启用官方 `ui-sidebar-browser`。浏览器行为见 [README](README.md#浏览器)，源码同步契约见 [vendor README](vendor/deepseek-desktop/README.md)。

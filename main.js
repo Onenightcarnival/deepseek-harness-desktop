@@ -7,7 +7,7 @@
  */
 'use strict'
 
-const { app, BrowserWindow, dialog, shell, Menu, Tray, nativeImage, nativeTheme, powerSaveBlocker, ipcMain, session, net: electronNet } = require('electron')
+const { app, BrowserWindow, WebContentsView, dialog, shell, Menu, Tray, nativeImage, nativeTheme, powerSaveBlocker, ipcMain, session, net: electronNet } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
@@ -26,7 +26,7 @@ try {
   app.commandLine.appendSwitch('lang', uiLanguage === 'zh' ? 'zh-CN' : 'en-US')
 } catch { /* First launch uses the system locale. */ }
 const t = (key, ...values) => translate(key, uiLanguage, ...values)
-const windowChrome = createWindowChrome({ ipcMain, nativeTheme, Menu, getOrigin: () => currentWebUrl,
+const windowChrome = createWindowChrome({ ipcMain, nativeTheme, Menu, getOrigin: () => currentWebUrl, translate: key => t(key),
   getLanguage: () => uiLanguage, onLanguage: language => {
     if (language === uiLanguage) return
     uiLanguage = language
@@ -1380,7 +1380,7 @@ function createWindow() {
 
   windowChrome.attach(mainWindow, 'main')
   desktopBrowser.attach(mainWindow)
-  mainWindow.loadFile(path.join(__dirname, 'splash.html'))
+  showSplash()
 
   // Open external links in the system browser, keep the app on the local UI.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1405,7 +1405,48 @@ function createWindow() {
     e.preventDefault()
     mainWindow.hide()
   })
-  mainWindow.on('closed', () => { mainWindow = null })
+  mainWindow.on('closed', () => { mainWindow = null; hideSplash() })
+}
+
+/**
+ * Startup overlay: splash.html in a WebContentsView above the main window
+ * while the dsh server boots or restarts. The main webContents only ever
+ * loads the web UI, so the window history never holds a page to go back to.
+ */
+let splash = null
+function showSplash() {
+  if (splash || !mainWindow || mainWindow.isDestroyed()) return
+  const view = new WebContentsView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      preload: path.join(__dirname, 'preload-desktop.js'),
+    },
+  })
+  const window = mainWindow
+  const fit = () => {
+    if (window.isDestroyed()) return
+    const [width, height] = window.getContentSize()
+    view.setBounds({ x: 0, y: 0, width, height })
+  }
+  splash = { view, window, fit }
+  view.setBackgroundColor(windowChrome.options().backgroundColor)
+  windowChrome.attachView(window, view)
+  window.contentView.addChildView(view)
+  window.on('resize', fit)
+  fit()
+  view.webContents.loadFile(path.join(__dirname, 'splash.html'))
+}
+function hideSplash() {
+  if (!splash) return
+  const { view, window, fit } = splash
+  splash = null
+  if (!window.isDestroyed()) {
+    window.off('resize', fit)
+    window.contentView.removeChildView(view)
+  }
+  if (!view.webContents.isDestroyed()) view.webContents.close()
 }
 
 
@@ -1822,7 +1863,13 @@ async function loadWebUi(url) {
       if (c.name.startsWith('dsh-auth-')) await jar.remove(`http://${host}${c.path || '/'}`, c.name)
     }
   } catch { /* stale cookies only matter once they pile up */ }
-  if (mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(url)
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    await mainWindow.loadURL(url)
+    // A server restart changes the port: drop the previous document so
+    // mouse back/forward buttons and media keys have nowhere to navigate.
+    mainWindow.webContents.navigationHistory.clear()
+    hideSplash()
+  }
 }
 
 /**
@@ -1836,8 +1883,8 @@ async function restartDshServer() {
   if (quitting) return { ok: false, error: t("应用正在退出") }
   restartingServer = true
   try {
+    showSplash()
     killServer()
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadFile(path.join(__dirname, 'splash.html'))
     const url = await bootServerWithHeal()
     await loadWebUi(url)
     return { ok: true }

@@ -21,40 +21,64 @@ function chromeOptions(platform, palette) {
   return base
 }
 
-/** 只接受受管窗口主 frame 的本地页或当前内核来源。 */
+const LOCAL_PAGES = { settings: 'plugins.html', splash: 'splash.html' }
+
+/** 只接受受管窗口主 frame 的本地页或当前内核来源：main 仅内核来源，settings 与 splash 仅对应本地文件。 */
 function trustedChromeUrl(url, purpose, origin) {
   try {
     const parsed = new URL(url)
-    const file = purpose === 'settings' ? 'plugins.html' : 'splash.html'
-    if (parsed.href === pathToFileURL(path.join(__dirname, file)).href) return true
+    const file = LOCAL_PAGES[purpose]
+    if (file) return parsed.href === pathToFileURL(path.join(__dirname, file)).href
     return purpose === 'main' && !!origin && parsed.origin === new URL(origin).origin
   } catch { return false }
 }
 
-/** 管理标题栏外观、全屏状态和 Windows 原生菜单的受限 IPC。 */
-function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.platform, getOrigin, getLanguage = () => 'zh', onLanguage = () => {} }) {
+const EDIT_ROLES = { undo: '撤销', redo: '重做', cut: '剪切', copy: '复制', paste: '粘贴', selectAll: '全选' }
+
+/**
+ * 右键菜单模板：可编辑区域提供编辑角色并按 editFlags 置灰，选中文本提供复制，其余不弹出。
+ * 空 accelerator 抑制角色自带的快捷键标注。
+ */
+function contextMenuItems(params, translate = key => key) {
+  const { isEditable, selectionText = '', editFlags = {} } = params
+  const role = (name, enabled) => ({ role: name, label: translate(EDIT_ROLES[name]), enabled: enabled !== false, accelerator: '' })
+  if (isEditable) {
+    return [
+      role('undo', editFlags.canUndo), role('redo', editFlags.canRedo), { type: 'separator' },
+      role('cut', editFlags.canCut), role('copy', editFlags.canCopy), role('paste', editFlags.canPaste), { type: 'separator' },
+      role('selectAll', editFlags.canSelectAll),
+    ]
+  }
+  if (selectionText.length > 0) return [role('copy', editFlags.canCopy)]
+  return []
+}
+
+/** 管理标题栏外观、全屏状态、右键菜单和 Windows 原生菜单的受限 IPC。 */
+function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.platform, getOrigin, getLanguage = () => 'zh', onLanguage = () => {}, translate = key => key }) {
   const windows = new Map()
   const css = fs.readFileSync(path.join(__dirname, 'desktop.css'), 'utf8')
   let palette = chromePalette(nativeTheme.shouldUseDarkColors)
   let webPalette = false
   function source(event) {
     const entry = windows.get(event.sender.id)
-    if (!entry || entry.window.isDestroyed() || event.senderFrame !== event.sender.mainFrame) return null
+    if (!entry || entry.window.isDestroyed() || entry.contents.isDestroyed() || event.senderFrame !== entry.contents.mainFrame) return null
     return trustedChromeUrl(event.senderFrame.url, entry.purpose, getOrigin()) ? entry : null
   }
   function state(entry) {
     return { platform, purpose: entry.purpose, palette, language: getLanguage(),
-      fullscreen: entry.fullscreen, zoom: entry.window.webContents.getZoomFactor(),
-      local: entry.window.webContents.getURL().startsWith('file:'),
-      browser: entry.purpose === 'main' && entry.window.webContents.getLastWebPreferences().webviewTag === true }
+      fullscreen: entry.fullscreen, zoom: entry.contents.getZoomFactor(),
+      local: entry.contents.getURL().startsWith('file:'),
+      browser: entry.purpose === 'main' && entry.contents.getLastWebPreferences().webviewTag === true }
   }
   function update(entry) {
     const win = entry.window
-    if (win.isDestroyed() || win.webContents.isDestroyed()) return
-    if (platform === 'win32') win.setTitleBarOverlay({ color: palette.sidebar, symbolColor: palette.text,
-      height: Math.round(Math.max(40, 40 * win.webContents.getZoomFactor())) })
-    win.setBackgroundColor(palette.sidebar)
-    win.webContents.send('desktop:chrome-state', state(entry))
+    if (win.isDestroyed() || entry.contents.isDestroyed()) return
+    if (entry.contents === win.webContents) {
+      if (platform === 'win32') win.setTitleBarOverlay({ color: palette.sidebar, symbolColor: palette.text,
+        height: Math.round(Math.max(40, 40 * win.webContents.getZoomFactor())) })
+      win.setBackgroundColor(palette.sidebar)
+    }
+    entry.contents.send('desktop:chrome-state', state(entry))
   }
   ipcMain.on('desktop:chrome-init', (event) => {
     const entry = source(event)
@@ -79,7 +103,7 @@ function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.pla
   })
   ipcMain.handle('desktop:chrome-menu', async (event, name, x, y) => {
     const entry = source(event)
-    if (!entry || platform !== 'win32' || !['application', 'edit'].includes(name) ||
+    if (!entry || entry.purpose === 'splash' || platform !== 'win32' || !['application', 'edit'].includes(name) ||
       !Number.isFinite(x) || !Number.isFinite(y)) return
     const menu = Menu.getApplicationMenu()?.getMenuItemById(`desktop-${name}`)?.submenu
     if (!menu) return
@@ -94,29 +118,45 @@ function createWindowChrome({ ipcMain, nativeTheme, Menu, platform = process.pla
     palette = chromePalette(nativeTheme.shouldUseDarkColors)
     for (const entry of windows.values()) update(entry)
   })
+  /** 登记一个 webContents；覆盖层视图与其宿主窗口共享全屏与显示状态。 */
+  function register(window, contents, purpose) {
+    const entry = { window, contents, purpose, fullscreen: window.isFullScreen() }
+    const id = contents.id
+    windows.set(id, entry)
+    if (platform === 'win32' && contents === window.webContents) window.setMenuBarVisibility(false)
+    // Windows 在事件回调内的 isFullScreen() 仍可能是切换前的值。
+    const listeners = [
+      ['enter-full-screen', () => { entry.fullscreen = true; update(entry) }],
+      ['leave-full-screen', () => { entry.fullscreen = false; update(entry) }],
+      ...['show', 'restore', 'hide', 'minimize'].map(event => [event, () => update(entry)]),
+    ]
+    for (const [event, listener] of listeners) window.on(event, listener)
+    contents.on('did-finish-load', () => update(entry))
+    contents.on('dom-ready', () => {
+      if (trustedChromeUrl(contents.getURL(), purpose, getOrigin())) {
+        contents.insertCSS(css).catch(error => console.error('Window stylesheet failed to load:', error))
+      }
+    })
+    contents.on('zoom-changed', () => update(entry))
+    if (purpose !== 'splash') {
+      contents.on('context-menu', (_event, params) => {
+        const items = contextMenuItems(params, translate)
+        if (items.length > 0 && !window.isDestroyed()) Menu.buildFromTemplate(items).popup({ window })
+      })
+    }
+    const release = () => {
+      windows.delete(id)
+      if (!window.isDestroyed()) for (const [event, listener] of listeners) window.off(event, listener)
+    }
+    contents.once('destroyed', release)
+    window.once('closed', release)
+  }
   return {
     options: () => chromeOptions(platform, palette),
-    attach(window, purpose) {
-      const entry = { window, purpose, fullscreen: window.isFullScreen() }
-      windows.set(window.webContents.id, entry)
-      const id = window.webContents.id
-      if (platform === 'win32') window.setMenuBarVisibility(false)
-      // Windows 在事件回调内的 isFullScreen() 仍可能是切换前的值。
-      window.on('enter-full-screen', () => { entry.fullscreen = true; update(entry) })
-      window.on('leave-full-screen', () => { entry.fullscreen = false; update(entry) })
-      for (const event of ['show', 'restore', 'hide', 'minimize']) {
-        window.on(event, () => update(entry))
-      }
-      window.webContents.on('did-finish-load', () => update(entry))
-      window.webContents.on('dom-ready', () => {
-        if (trustedChromeUrl(window.webContents.getURL(), purpose, getOrigin())) {
-          window.webContents.insertCSS(css).catch(error => console.error('Window stylesheet failed to load:', error))
-        }
-      })
-      window.webContents.on('zoom-changed', () => update(entry))
-      window.on('closed', () => windows.delete(id))
-    },
+    attach(window, purpose) { register(window, window.webContents, purpose) },
+    /** 登记启动页覆盖层（purpose splash）；视图销毁时自动撤销登记。 */
+    attachView(window, view) { register(window, view.webContents, 'splash') },
   }
 }
 
-module.exports = { chromePalette, chromeOptions, trustedChromeUrl, createWindowChrome }
+module.exports = { chromePalette, chromeOptions, trustedChromeUrl, contextMenuItems, createWindowChrome }

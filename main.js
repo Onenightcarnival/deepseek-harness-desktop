@@ -11,7 +11,7 @@ const { app, BrowserWindow, WebContentsView, dialog, shell, Menu, Tray, nativeIm
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
-const { ENTRY_REL, compareVersions, releaseLine, runtimeVersion, pickRuntime, satisfiesNode, prependEnvPath,
+const { ENTRY_REL, compareVersions, runtimeVersion, prependEnvPath,
   applyProxyEnv, PROXY_ENV_KEYS, normalizeGeneralSettings, hideToTrayEffective } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
 const { createWindowChrome } = require('./window-chrome.js')
@@ -236,21 +236,8 @@ function bundledDshDir() {
   return path.join(__dirname, 'staging', `${process.platform}-${process.arch}`, 'dsh')
 }
 
-/** Directory holding in-place core upgrades (userData/runtimes/<version>). */
-function runtimesDir() {
-  return path.join(app.getPath('userData'), 'runtimes')
-}
-
-/** The active runtime: newest upgraded one, else the bundled one. */
-let activeRuntime = null
-function resolveActiveRuntime() {
-  activeRuntime = pickRuntime(runtimesDir(), bundledDshDir())
-  return activeRuntime
-}
-
 function dshEntry() {
-  if (!activeRuntime) resolveActiveRuntime()
-  return path.join(activeRuntime.dir, ENTRY_REL)
+  return path.join(bundledDshDir(), ENTRY_REL)
 }
 
 /**
@@ -288,149 +275,6 @@ function withNodePreloadEnv(env) {
     env.NODE_OPTIONS = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ${inject}` : inject
   }
   return env
-}
-
-/**
- * Check npm for a newer @deepseek-ai/dsh core than the active runtime, and
- * offer an in-place upgrade (installed with the bundled pnpm into
- * userData/runtimes/<version>; a relaunch activates it).
- */
-let coreUpgradeBusy = false
-async function checkCoreUpdates(interactive) {
-  if (coreUpgradeBusy) return
-  try {
-    const res = await electronNet.fetch('https://registry.npmjs.org/@deepseek-ai/dsh/latest', {
-      headers: { accept: 'application/json', 'user-agent': 'dsh-desktop' },
-    })
-    if (!res.ok) throw new Error(`npm registry ${res.status}`)
-    const meta = await res.json()
-    const latest = meta.version
-    const current = (activeRuntime && activeRuntime.version) || '0.0.0'
-    if (!latest || compareVersions(latest, current) <= 0) {
-      if (interactive) {
-        await dialog.showMessageBox({
-          type: 'info', title: 'DeepSeek Harness',
-          message: t("dsh 内核已是最新（v{0}）", current), buttons: [t("好")],
-        })
-      }
-      return
-    }
-    // Same release line only: presets are pinned to the bundled core's line.
-    // Cross-line upgrades ship as a new desktop build.
-    const bundledVersion = runtimeVersion(bundledDshDir()) || current
-    if (releaseLine(latest) !== releaseLine(bundledVersion)) {
-      if (interactive) {
-        const { response } = await dialog.showMessageBox({
-          type: 'info', title: 'DeepSeek Harness',
-          message: t("npm 上有 dsh v{0}，属于新的版本线（{1}）", latest, releaseLine(latest)),
-          detail: t("本安装包内置 v{0}（{1} 线）。跨版本线升级需下载新版桌面安装包。", bundledVersion, releaseLine(bundledVersion)),
-          buttons: [t("检查应用更新"), t("好")], defaultId: 0, cancelId: 1,
-        })
-        if (response === 0) await checkAppUpdates(true)
-      }
-      return
-    }
-    if (!satisfiesNode(process.versions.node, meta.engines && meta.engines.node)) {
-      if (interactive) {
-        await dialog.showMessageBox({
-          type: 'warning', title: 'DeepSeek Harness',
-          message: t("dsh v{0} 要求的 Node 版本高于本应用内置的 v{1}", latest, process.versions.node),
-          detail: t("请等待新版桌面安装包。"),
-          buttons: [t("好")],
-        })
-      }
-      return
-    }
-    const { response } = await dialog.showMessageBox({
-      type: 'info', title: 'DeepSeek Harness',
-      message: t("发现 dsh 内核新版本 v{0}（当前 v{1}）", latest, current),
-      detail: t("下载后重启应用生效；新内核启动失败时自动回退到内置版本。"),
-      buttons: [t("下载并升级"), t("取消")], defaultId: 0, cancelId: 1,
-    })
-    if (response !== 0) return
-    coreUpgradeBusy = true
-    try {
-      await installCoreRuntime(latest)
-      const { response: r2 } = await dialog.showMessageBox({
-        type: 'info', title: 'DeepSeek Harness',
-        message: t("dsh v{0} 已就绪", latest), detail: t("重启应用后生效。"),
-        buttons: [t("立即重启"), t("稍后")], defaultId: 0, cancelId: 1,
-      })
-      if (r2 === 0) { app.relaunch(); app.quit() }
-    } finally {
-      coreUpgradeBusy = false
-    }
-  } catch (err) {
-    if (interactive) {
-      await dialog.showMessageBox({
-        type: 'warning', title: 'DeepSeek Harness',
-        message: t("检查内核更新失败"), detail: String(err && err.message || err), buttons: [t("好")],
-      })
-    }
-  }
-}
-
-/** Install @deepseek-ai/dsh@version into userData/runtimes/<version> with the bundled pnpm. */
-async function installCoreRuntime(version) {
-  return new Promise((resolve, reject) => {
-    const dir = path.join(runtimesDir(), version)
-    fs.rmSync(dir, { recursive: true, force: true })
-    fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-runtime', private: true }, null, 2))
-    const pnpmCjs = pnpmEntry()
-    if (!pnpmCjs) { reject(new Error('bundled pnpm missing')); return }
-    // Full flavor: the upgraded runtime carries the preset plugins at the
-    // exact staged versions (the profile resolves plugins from the active
-    // runtime's app closure).
-    const presetSpecs = []
-    try {
-      const presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8'))
-      for (const group of [presets.seed, presets.carry]) {
-        for (const [name, v] of Object.entries(group || {})) presetSpecs.push(`${name}@${v}`)
-      }
-    } catch { /* minimal flavor */ }
-    const child = spawn(process.execPath, [...nodePreloadArgs(), pnpmCjs, '--config.minimum-release-age=0', '--config.auto-install-peers=false', 'add', `@deepseek-ai/dsh@${version}`, ...presetSpecs, '--ignore-scripts'], {
-      cwd: dir,
-      env: withNodePreloadEnv(withProxyEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '1' })),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-    let tail = ''
-    const onChunk = (c) => { tail = (tail + c.toString()).slice(-4000) }
-    child.stdout.on('data', onChunk)
-    child.stderr.on('data', onChunk)
-    child.on('exit', (code) => {
-      if (code === 0 && runtimeVersion(dir) === version) {
-        ensureDesktopPlugins(dir)
-        // Presets are registered as dependencies of the dsh app manifest
-        // (same as stage-dsh.mjs); the profile resolves through the app's
-        // dependency closure, not the runtime root manifest.
-        if (presetSpecs.length > 0) {
-          try {
-            const appManifestPath = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
-            const appManifest = JSON.parse(fs.readFileSync(appManifestPath, 'utf8'))
-            appManifest.dependencies ??= {}
-            for (const spec of presetSpecs) {
-              const name = spec.slice(0, spec.lastIndexOf('@'))
-              appManifest.dependencies[name] ??= '*'
-            }
-            fs.writeFileSync(appManifestPath, JSON.stringify(appManifest, null, 2))
-          } catch (err) {
-            console.error('preset registration in upgraded runtime failed:', err)
-          }
-        }
-        // keep only the freshly installed runtime
-        for (const name of fs.readdirSync(runtimesDir())) {
-          if (name !== version) fs.rmSync(path.join(runtimesDir(), name), { recursive: true, force: true })
-        }
-        resolve()
-      } else {
-        fs.rmSync(dir, { recursive: true, force: true })
-        reject(new Error(t("内核下载失败 (pnpm exit {0})\n{1}", code, tail.slice(-1500))))
-      }
-    })
-    child.on('error', reject)
-  })
 }
 
 function logFile() {
@@ -679,8 +523,7 @@ function writeCliLaunchers() {
   const binDir = path.join(app.getPath('userData'), 'bin')
   fs.mkdirSync(binDir, { recursive: true })
   const entry = dshEntry()
-  // pnpm ships with the bundled runtime only; upgraded runtimes under
-  // userData/runtimes have no tools/ directory.
+  // pnpm ships with the bundled runtime.
   const pnpmCjs = pnpmEntry()
   const exe = process.execPath
   const npxShim = path.join(binDir, 'npx-shim.js')
@@ -864,7 +707,7 @@ function healUnresolvableEntries() {
   try {
     const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
     const localNm = path.join(profileDir, 'node_modules')
-    const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
+    const runtimeNm = path.join(bundledDshDir(), 'node_modules')
     const candidates = new Set()
     for (const file of ['cordis.yml', 'cordis.patch.yml']) {
       let text = ''
@@ -964,7 +807,7 @@ function applyBootErrorFix(errText) {
     }
     const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
     const localNm = path.join(profileDir, 'node_modules')
-    const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
+    const runtimeNm = path.join(bundledDshDir(), 'node_modules')
     const names = new Set()
     // bare specifier form: Cannot find package '@scope/pkg' imported from …
     for (const m of errText.matchAll(/Cannot find (?:package|module) '((?:@[a-z0-9~][\w.-]*\/)?[a-z0-9~][\w.-]*)'/g)) names.add(m[1])
@@ -1114,43 +957,6 @@ function addPresetExclusion(name) {
 }
 
 /**
- * Manual resync: clear this version's duplicate-id exclusions and stale
- * preset stubs, then relaunch; the boot sync re-applies every preset the
- * build ships.
- */
-async function restorePresetPlugins() {
-  let presets = {}
-  try { presets = JSON.parse(fs.readFileSync(path.join(bundledDshDir(), 'preset-plugins.json'), 'utf8')).seed || {} } catch { /* minimal */ }
-  const names = Object.keys(presets)
-  if (names.length === 0) {
-    await dialog.showMessageBox({
-      type: 'info', title: 'DeepSeek Harness',
-      message: t("当前版本没有预置插件"), detail: t("此安装包为精简版；预置插件随 full 版分发。"), buttons: [t("好")],
-    })
-    return
-  }
-  const { response } = await dialog.showMessageBox({
-    type: 'question', title: 'DeepSeek Harness',
-    message: t("重新同步本版本的预置插件？"),
-    detail: t("以下插件将全部挂载：\n{0}\n\n需要重启应用。", names.join('\n')),
-    buttons: [t("同步并重启"), t("取消")], defaultId: 0, cancelId: 1,
-  })
-  if (response !== 0) return
-  try {
-    fs.rmSync(presetExclusionsPath(), { force: true })
-    const localNm = path.join(app.getPath('home'), '.dsh', 'profiles', 'web', 'node_modules')
-    for (const name of names) {
-      const dir = path.join(localNm, ...name.split('/'))
-      if (fs.existsSync(path.join(dir, '.dsh-desktop-stub'))) fs.rmSync(dir, { recursive: true, force: true })
-    }
-  } catch (err) {
-    console.error('preset resync failed:', err)
-  }
-  app.relaunch()
-  app.quit()
-}
-
-/**
  * Declarative preset sync, run before every server boot in every flavor:
  * the preset portion of the user profile is made to match
  * preset-plugins.json exactly (minus this version's duplicate-id exclusions
@@ -1175,7 +981,7 @@ function syncPresetPlugins() {
     if (Object.keys(manifest).length === 0 && managed.length === 0) return
     const profileDir = path.join(app.getPath('home'), '.dsh', 'profiles', 'web')
     const localNm = path.join(profileDir, 'node_modules')
-    const runtimeNm = path.join((activeRuntime && activeRuntime.dir) || bundledDshDir(), 'node_modules')
+    const runtimeNm = path.join(bundledDshDir(), 'node_modules')
     const resolvable = (name) => pkgIntactAt(localNm, name) || pkgIntactAt(runtimeNm, name)
 
     // Preset leftovers in the profile's own node_modules shadow the closure
@@ -1260,7 +1066,7 @@ async function startServer() {
       reject(new Error(`bundled dsh not found at ${entry}`))
       return
     }
-    ensureDesktopPlugins(activeRuntime.dir)
+    ensureDesktopPlugins(bundledDshDir())
     syncPresetPlugins()
     healUnresolvableEntries()
 
@@ -1449,7 +1255,6 @@ function hideSplash() {
   if (!view.webContents.isDestroyed()) view.webContents.close()
 }
 
-
 // ---- 通用配置: tray, close/start to tray, login item, keep awake ----
 function generalStorePath() { return path.join(app.getPath('userData'), 'general.json') }
 function readGeneralSettings() {
@@ -1564,15 +1369,12 @@ function buildMenu() {
       submenu: [
         { label: t("配置中心…（插件 / 通用 / 代理）"), click: () => { openPluginManager() } },
         { label: t("打开命令行窗口"), click: () => { openCliTerminal() } },
-        { type: 'separator' },
-        { label: t("重新同步预置插件…"), click: () => { restorePresetPlugins() } },
       ],
     },
     {
       label: t("帮助"),
       submenu: [
-        { label: t("内核版本：v{0}{1}", (activeRuntime && activeRuntime.version) || '?', activeRuntime && !activeRuntime.bundled ? t("（已升级）") : ''), enabled: false },
-        { label: t("检查内核更新…"), click: () => { checkCoreUpdates(true) } },
+        { label: t("内核版本：v{0}", runtimeVersion(bundledDshDir()) || '?'), enabled: false },
         appUpdateState === 'downloaded'
           ? { label: t("重启以更新到 v{0}…", (appUpdateInfo && appUpdateInfo.version) || ''), click: () => { offerRestartForUpdate(appUpdateInfo) } }
           : appUpdateState === 'downloading'
@@ -1912,9 +1714,8 @@ app.whenReady().then(async () => {
   if (!hasInstanceLock) return
   try { uiLanguage = normalizeLanguage(JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'ui-language.json'), 'utf8'))) }
   catch { uiLanguage = normalizeLanguage(app.getLocale()) }
-  resolveActiveRuntime()
   desktopBrowser = createDesktopBrowser({ getWindow: () => mainWindow, getUrl: () => currentWebUrl,
-    runtimeDir: activeRuntime.dir, userData: app.getPath('userData'), updateMenu: buildMenu,
+    runtimeDir: bundledDshDir(), userData: app.getPath('userData'), updateMenu: buildMenu,
     configureSession: target => { browserSessions.add(target); return applyChromiumProxy(readProxyConfig(), target) } })
   applyChromiumProxy(readProxyConfig())
   await startForwarder()
@@ -1926,22 +1727,6 @@ app.whenReady().then(async () => {
     const url = await bootServerWithHeal()
     await loadWebUi(url)
   } catch (err) {
-    // An upgraded core that fails to boot is quarantined; the app relaunches
-    // on the bundled runtime.
-    if (activeRuntime && !activeRuntime.bundled) {
-      try { fs.renameSync(activeRuntime.dir, `${activeRuntime.dir}.broken-${Date.now()}`) } catch { /* keep going */ }
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        await dialog.showMessageBox(mainWindow, {
-          type: 'warning', title: 'DeepSeek Harness',
-          message: t("升级的 dsh 内核（v{0}）启动失败，已回退到内置版本", activeRuntime.version),
-          detail: String(err && err.message || err).slice(0, 800),
-          buttons: [t("重启应用")],
-        })
-      }
-      app.relaunch()
-      app.quit()
-      return
-    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       await dialog.showMessageBox(mainWindow, {
         type: 'error',

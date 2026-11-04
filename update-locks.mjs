@@ -185,11 +185,17 @@ const refreshed = []
 const isLockstep = (name, entry) => name.startsWith('@deepseek-ai/') && entry.version === target
 for (let round = 0; round < 3; round++) {
   const ranges = new Map()
+  const coreRanges = new Map()
   for (const [k, e] of Object.entries(lock.packages)) {
     if (!k) continue
+    const referrer = k.replace(/^.*node_modules\//, '')
     for (const [n, r] of Object.entries({ ...e.dependencies, ...e.optionalDependencies, ...e.peerDependencies })) {
       if (!ranges.has(n)) ranges.set(n, [])
       ranges.get(n).push(r)
+      if (isLockstep(referrer, e)) {
+        if (!coreRanges.has(n)) coreRanges.set(n, [])
+        coreRanges.get(n).push(r)
+      }
     }
   }
   let changed = 0
@@ -200,7 +206,15 @@ for (let round = 0; round < 3; round++) {
     const wanted = ranges.get(name) ?? []
     if (wanted.every((r) => refSatisfies(name, e.version, r))) continue
     const doc = await reg(name)
-    const fits = Object.keys(doc.versions).filter((v) => wanted.every((r) => refSatisfies(name, v, r)))
+    let fits = Object.keys(doc.versions).filter((v) => wanted.every((r) => refSatisfies(name, v, r)))
+    // Irreconcilable ranges: the lockstep core keeps the hoisted entry (a
+    // peer shared by every core package must stay at one location); lagging
+    // plugin referrers get nested private copies in pass 2c or widened peers
+    // in pass 3.
+    if (fits.length === 0) {
+      const core = coreRanges.get(name) ?? []
+      if (core.length > 0) fits = Object.keys(doc.versions).filter((v) => core.every((r) => refSatisfies(name, v, r)))
+    }
     if (fits.length === 0) continue // unsatisfiable; pass 3 widens the range
     const pick = semver.rsort(fits)[0]
     if (pick === e.version) continue

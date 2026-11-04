@@ -1,6 +1,6 @@
 # Official desktop browser sources
 
-Source: [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness/tree/5badb15009ae1756c3afe0ae0cef1faafc290ccc/apps/desktop/src), commit `5badb15009ae1756c3afe0ae0cef1faafc290ccc`. License: [MIT](LICENSE).
+Source: [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness/tree/66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db/apps/desktop/src), commit `66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`. License: [MIT](LICENSE).
 
 | Source | Runtime responsibility |
 |---|---|
@@ -18,6 +18,6 @@ Adaptations are confined to the generator and shell adapters:
 - IPC authentication uses the current owned main frame and local dsh origin.
 - Keyboard snapshot publication uses the same origin check instead of `dsh-app://app/`.
 - Keyboard protocol and atomic writes resolve from the active dsh runtime.
-- The sandbox preload contains the browser, keyboard and shortcut API sections; other official product APIs are excluded.
+- The sandbox preload contains the browser, keyboard and shortcut API sections; other official product APIs (`deviceInfo`, `fileActions`, `fileDrag`, `updates`) are excluded.
 
 Browser UI and navigation controllers come from the installed `@deepseek-ai/dsh-client-ui-sidebar-browser` package. User behavior is documented in the root [README](../../README.md#浏览器).

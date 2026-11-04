@@ -1,11 +1,10 @@
 /**
- * Pure helpers for the desktop shell: runtime selection and version logic,
- * general settings, launcher migration and proxy environments.
- * Plain CJS with no Electron imports.
+ * Pure helpers for the desktop shell: version logic, general settings,
+ * launcher migration and proxy environments. Plain CJS with no Electron
+ * imports.
  *
- * A runtime is a directory holding node_modules/@deepseek-ai/dsh: the bundled
- * one in resources/dsh, upgraded ones under userData/runtimes/<version>. The
- * active runtime is the highest-version valid one, else the bundled one.
+ * The runtime is the directory holding node_modules/@deepseek-ai/dsh bundled
+ * in resources/dsh.
  */
 'use strict'
 const fs = require('fs')
@@ -43,64 +42,8 @@ function runtimeVersion(dir) {
   }
 }
 
-/**
- * Pick the active runtime: the highest-version valid dir under runtimesDir
- * that is newer than the bundled version; otherwise the bundled runtime.
- * @returns {{dir: string, version: string|null, bundled: boolean}}
- */
-function pickRuntime(runtimesDir, bundledDir) {
-  const bundledVersion = runtimeVersion(bundledDir)
-  let best = { dir: bundledDir, version: bundledVersion, bundled: true }
-  let entries = []
-  try { entries = fs.readdirSync(runtimesDir) } catch { /* no runtimes dir */ }
-  for (const name of entries) {
-    if (name.startsWith('.') || name.includes('broken')) continue
-    const dir = path.join(runtimesDir, name)
-    const version = runtimeVersion(dir)
-    if (version === null) continue
-    if (best.version === null || compareVersions(version, best.version) > 0) {
-      best = { dir, version, bundled: false }
-    }
-  }
-  return best
-}
 
-/**
- * Rough semver-range check of a concrete version against an engines.node
- * expression like "^22.19.0 || >=24.0.0". Unknown range syntax counts as
- * satisfied; the boot-failure fallback covers that case.
- */
-function satisfiesNode(nodeVersion, enginesExpr) {
-  if (!enginesExpr) return true
-  const v = String(nodeVersion).replace(/^v/, '')
-  const ranges = String(enginesExpr).split('||').map((s) => s.trim()).filter(Boolean)
-  if (ranges.length === 0) return true
-  for (const range of ranges) {
-    let m
-    if ((m = /^>=\s*([\d.]+)$/.exec(range))) {
-      if (compareVersions(v, m[1]) >= 0) return true
-    } else if ((m = /^\^\s*([\d.]+)$/.exec(range))) {
-      const base = m[1]
-      const major = base.split('.')[0]
-      if (v.split('.')[0] === major && compareVersions(v, base) >= 0) return true
-    } else {
-      return true // unknown range syntax counts as satisfied
-    }
-  }
-  return false
-}
-
-/**
- * Release line of a dsh version: major.minor.patch without the prerelease
- * tag ("0.1.2-rc.1" -> "0.1.2"). The in-app core upgrade stays within the
- * bundled core's line.
- */
-function releaseLine(v) {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(v))
-  return m ? `${m[1]}.${m[2]}.${m[3]}` : String(v)
-}
-
-module.exports = { ENTRY_REL, compareVersions, runtimeVersion, pickRuntime, satisfiesNode, releaseLine }
+module.exports = { ENTRY_REL, compareVersions, runtimeVersion }
 
 /**
  * Prepend a directory to an env object's PATH using case-insensitive key matching.

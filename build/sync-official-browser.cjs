@@ -41,8 +41,10 @@ const product = read('preload-app')
 const start = product.indexOf('function createProductApi()')
 const end = product.indexOf('    updates:', start)
 if (start < 0 || end < 0) throw new Error('Official preload API boundary changed')
+// Product sections outside the browser, keyboard and shortcut APIs are not generated.
 const api = product.slice(start, end).replace('createProductApi()', 'createDesktopBrowserApi()')
-  .replace(/^    deviceInfo:.*\n/m, '') + '  }\n}\n'
+  .replace(/^    deviceInfo:.*\n/m, '')
+  .replace(/^    (?:fileActions|fileDrag): \{\n(?:(?!^    \},?$).*\n)*?^    \},\n/gm, '') + '  }\n}\n'
 const generated = header + `const DESKTOP_IPC = ${JSON.stringify(ipc, null, 2)}\n` + compile(bridge + '\n' + api)
 const preload = path.join(root, 'preload-desktop.js')
 const source = normalize(fs.readFileSync(preload, 'utf8'))

@@ -16,7 +16,7 @@ async function test() {
   const noop = () => {}
   const context = vm.createContext({
     path, process: { env: {}, platform: 'win32', execPath: process.execPath }, setTimeout, clearTimeout,
-    app: { getPath: () => __dirname }, activeRuntime: { dir: __dirname },
+    app: { getPath: () => __dirname }, bundledDshDir: () => __dirname,
     fs: { existsSync: () => true, writeFileSync: noop, createWriteStream: () => output },
     dshEntry: () => 'kernel.js', logFile: () => 'dsh-server.log',
     ensureDesktopPlugins: noop, syncPresetPlugins: noop, healUnresolvableEntries: noop,

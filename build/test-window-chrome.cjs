@@ -191,7 +191,7 @@ app.whenReady().then(async () => {
     assert(home.startsWith(path.join(root, 'staging') + path.sep), '内核测试 home 必须在 staging 内')
     const entry = path.join(path.resolve(process.env.DSHDESKTOP_TEST_RUNTIME), 'node_modules/@deepseek-ai/dsh/lib/bin.js')
     kernel = spawn(process.execPath, ['--expose-internals', '--require', path.join(root, 'win-spawn-shim.js'), entry,
-      'web', '--no-open', '--port', '0'], { cwd: home, windowsHide: true,
+      'web', '--patch', path.join(root, 'desktop-patch.yml'), '--no-open', '--port', '0'], { cwd: home, windowsHide: true,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: home, DSH_AGENTS_HOME: path.join(home, 'agents') }, stdio: ['ignore', 'pipe', 'pipe'] })
     const url = await new Promise((resolve, reject) => {
       let log = ''
@@ -220,7 +220,13 @@ app.whenReady().then(async () => {
     if (process.platform === 'win32') assert(await main.webContents.executeJavaScript('document.documentElement.hasAttribute("data-windows-titlebar")'))
     assert.equal(await main.webContents.executeJavaScript('document.documentElement.hasAttribute("data-platform")'), false, 'Web 壳不得启用官方专用键盘协议')
     assert.equal(await main.webContents.executeJavaScript('typeof pluginApi'), 'undefined')
-    await main.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button')).find(button => /^(继续|Continue)$/.test(button.textContent.trim()))?.click()`)
+    // The preview notice and the model onboarding mount after the frame;
+    // dismiss each once it shows.
+    for (let i = 0, misses = 0; i < 40 && misses < 5; i++) {
+      const dismissed = await main.webContents.executeJavaScript(`(() => { const button = Array.from(document.querySelectorAll('button')).find(button => /^(继续|Continue|稍后配置|Configure later)$/.test(button.textContent.trim())); if (button) { button.click(); return true } return false })()`)
+      misses = dismissed ? 0 : misses + 1
+      await pause(200)
+    }
     await pause(250)
     await main.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })
     await pause(200)
@@ -237,10 +243,15 @@ app.whenReady().then(async () => {
         main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...position })
       }
       const toggle = async () => clickControl(await page('document.querySelector("[data-desktop-frame]").hasAttribute("data-sidebar-collapsed")') ? '[data-desktop-leading-toggle]' : '[data-desktop-sidebar-toggle]')
+      const buttons = () => page('Array.from(document.querySelectorAll("button")).map(b => b.textContent.trim() || b.getAttribute("aria-label") || b.title).filter(Boolean).join(" | ")')
+      const click = async (test, what) => {
+        const hit = await page(`(() => { const button = Array.from(document.querySelectorAll('button')).find(button => ${test}); if (!button) return false; button.click(); return true })()`)
+        assert(hit, `${what} 按钮缺失；现有按钮：` + await buttons())
+      }
       const setTheme = async label => {
-        await page(`Array.from(document.querySelectorAll('button')).find(button => /^(Settings|设置)$/.test(button.textContent.trim())).click()`)
+        await click('/^(Settings|设置)$/.test(button.textContent.trim() || button.getAttribute("aria-label") || button.title || "")', '设置')
         await pause(200)
-        await page(`Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`)
+        await click(`button.textContent.trim() === ${JSON.stringify(label)}`, label)
         main.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
         main.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
         await pause(500)

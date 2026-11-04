@@ -39,8 +39,8 @@
 
 | 文件 | 职责 |
 |---|---|
-| `main.js` | 服务进程、窗口、菜单、更新、CLI 启动器、配置中心 IPC、托盘与系统唤醒 |
-| `runtime.js` | 版本选择、Node engines 校验、配置归一化与代理函数 |
+| `main.js` | 服务进程、窗口、菜单、应用更新、CLI 启动器、配置中心 IPC、托盘与系统唤醒 |
+| `runtime.js` | 版本比较、配置归一化与代理函数 |
 | `win-spawn-shim.js` | 子进程窗口策略、隐形宿主控制台与预加载传播 |
 | `plugins/dsh-desktop-directory-picker` | 工作区系统目录选择器 |
 | `plugins/dsh-desktop-activity` | 每 2 秒读取 agents/jobs，经 IPC 上报忙闲 |
@@ -53,7 +53,7 @@
 | `build/sync-official-browser.cjs` | 生成或校验官方浏览器与快捷键适配产物 |
 | `desktop-i18n.js` | 中英文文案与插值 |
 | `splash.js` | 启动页语言同步 |
-| `desktop.css` / `splash.html` | 原生按钮安全区、拖拽区、主题与启动页 |
+| `desktop.css` / `splash.html` | 原生按钮安全区、拖拽区、主题、启动页与预置插件的临时兼容规则 |
 | `stage-dsh.mjs` | 安装与裁剪运行时、安装 pnpm、登记预置包 |
 | `update-locks.mjs` | 更新内核、插件与依赖闭包的锁文件 |
 | `afterPack.js` | 将 staging 复制到 resources/dsh，过滤 tools/uv |
@@ -77,7 +77,6 @@
 | 单实例 | 仅持有 hasInstanceLock 的进程启动服务；second-instance 恢复主窗口 |
 | 退出 | before-quit 设置 quitting；close 事件按托盘设置隐藏或关闭窗口 |
 | 服务意外退出 | 先恢复主窗口，再显示错误 |
-| 内核回退 | 升级内核未通过 Node 校验或启动失败时隔离至 `.broken-*`，回退内置版本 |
 | 系统唤醒 | agents running、inbox.nextTurn/nextStep 非空或 jobs running/stopping 时视为忙；选项开启且忙时持有 prevent-app-suspension，服务退出即释放 |
 
 ### 窗口与 IPC
@@ -118,7 +117,6 @@
 - 预置包登记为 dsh 应用依赖；激活条目同时写入 profile 的 dependencies 和 dsh.profile.bundles。
 - syncPresetPlugins 每次启动同步 seed 名单和版本，跳过不可解析或当前版本排除的包；managed-presets.json 记录托管名单，用户自行安装的插件不在同步范围内。
 - profile 内预置包的残缺或版本不匹配副本在同步时清理；已移出 seed 的托管条目撤活。
-- installCoreRuntime 为升级内核安装并登记同一组预置包。
 - 桌面自带 `plugins/<name>` 是纯 JS 包；stage 和 ensureDesktopPlugins 将其复制到活动运行时并登记为应用依赖，不写入 profile 或 preset-plugins.json。
 - `--patch` 在用户 profile 层之后应用，用户配置不能覆盖 desktop-patch.yml。
 
@@ -145,7 +143,7 @@
 | 签名 | 未配置 publisherName 时 electron-updater 跳过签名校验 |
 | 安装 | quitAndInstall(true, true) 使用 `/S --updated --force-run`，进入 isUpdated 路径 |
 
-用户更新入口、平台行为与内核版本线限制见 [README 的更新说明](README.md#更新)。
+用户更新入口与平台行为见 [README 的更新说明](README.md#更新)；内核随安装包固定。
 
 ## 构建约束
 
@@ -154,12 +152,12 @@
 | staging | npm ci --force 使用 locks/<flavor>.package-lock.json；锁根依赖须匹配插件清单 |
 | 锁更新 | 更新 resolved/integrity、依赖闭包并报告依赖结构变化 |
 | 平台依赖 | 保留 os/cpu/libc；仅由可选依赖可达的子树标记 optional |
-| 版本解析 | 非 lockstep 包按引用区间交集选版；冲突区间使用嵌套私有副本。`@deepseek-ai/dsh*` 区间按 includePrerelease 判定，与内核预检一致；内核包不嵌套副本，滞后的插件 peer 放宽记录 |
+| 版本解析 | 非 lockstep 包按引用区间交集选版；交集为空时按内核包的区间选顶层条目，滞后的引用方使用嵌套私有副本。`@deepseek-ai/dsh*` 区间按 includePrerelease 判定，与内核预检一致；内核包不嵌套副本，滞后的插件 peer 放宽记录 |
 | peer | 闭包包含自动安装的 peer；不递归安装可选 peer，但校验已存在的同名包；禁止 --legacy-peer-deps |
 | 注册表请求 | 包含超时、重试与进度输出；临时文件使用系统临时目录 |
 | better-locale | full 清单 carry 组显式固定版本 |
 | pnpm | 固定 11 线，接受 cjs/mjs 入口，从 bundledDshDir()/tools 读取 |
-| pnpm 参数 | shim 和 installCoreRuntime 在子命令前传 --config.minimum-release-age=0、--config.auto-install-peers=false |
+| pnpm 参数 | shim 在子命令前传 --config.minimum-release-age=0、--config.auto-install-peers=false |
 | CLI | 分发 dsh、pnpm、node、npx 启动器 |
 | 打包 | afterPack 复制运行时 node_modules；仓库位于 pnpm workspace 外 |
 | Python MCP | toolkit 配置中心管理 uv/uvx；桌面不下载、捆绑或生成其启动器 |
@@ -240,7 +238,7 @@ node -e "require('./runtime.js')"
 
 - `node build/test-window-chrome.cjs` 使用 staging 内的隔离 userData，覆盖 IPC 来源隔离、主题、配置控件、原生菜单、按钮安全区、缩放与全屏；截图位于 staging/window-chrome-test/。全屏检查会短暂显示窗口。
 - `node build/test-desktop-browser.cjs` 使用 staging 隔离目录和本机 HTTP 页面验证官方浏览器界面、原生快捷键、保活、网页权限、工作区分区、弹窗及主 frame IPC。测试短暂显示窗口以验证真实键盘焦点；沿用 `DSHDESKTOP_TEST_ELECTRON` 与 `DSHDESKTOP_TEST_RUNTIME`。设置 `DSHDESKTOP_TEST_FULL=1` 同时激活运行时清单中的 full 预置插件。
-- `DSHDESKTOP_TEST_ELECTRON` 指定 Electron；同时设置 DSHDESKTOP_TEST_RUNTIME（含 node_modules）和 DSHDESKTOP_TEST_HOME（staging 内隔离 profile）时验证真实内核。
+- `DSHDESKTOP_TEST_ELECTRON` 指定 Electron；同时设置 DSHDESKTOP_TEST_RUNTIME（含 node_modules）和 DSHDESKTOP_TEST_HOME（staging 内隔离 profile）时验证真实内核。 真实内核以 `desktop-patch.yml` 组合启动，与应用一致；预览提示与模型引导弹窗在 frame 之后挂载，测试轮询关闭。
 - macOS 原生按钮与标题栏配色 在 macOS 验证；Windows 检查其布局与选项。
 - Linux 冒烟可用 `xvfb-run electron <仓库目录> --no-sandbox`；验收服务就绪、HTTP 可访问和无 Uncaught 日志。
 - 页面检查通过 Playwright 注入 pluginApi 或 CDP 连接；CDP 检查结束时断开连接，调用 browser.close() 会关闭 Electron。

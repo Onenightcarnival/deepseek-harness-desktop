@@ -1,6 +1,6 @@
 # DeepSeek Harness Desktop
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方桌面安装包，支持 Windows 与 macOS。当前内置内核：`0.2.1-rc.5`。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方桌面安装包，支持 Windows 与 macOS。当前内置内核：`0.2.2-rc.1`。
 
 应用在本机随机端口运行 dsh Web UI。数据与配置位于 `~/.dsh`，与命令行版共享。默认关窗退出；开启托盘模式后，关窗保留服务与任务。
 
@@ -55,14 +55,9 @@ Windows 桌面程序默认请求管理员权限，由系统 UAC 确认。内核�
 
 ## 更新
 
-更新由「帮助」菜单手动触发，第一项显示当前内核版本。
+应用更新由「帮助」菜单手动触发，来源为 GitHub Release：Windows 后台下载整包，立即重启或下次退出时安装；macOS 打开下载页。菜单第一项显示内置内核版本。
 
-| 操作 | 来源 | 生效方式 |
-|---|---|---|
-| 检查应用更新 | GitHub Release | Windows 后台下载整包，立即重启或下次退出时安装；macOS 打开下载页 |
-| 检查内核更新 | npm `@deepseek-ai/dsh` | 安装到用户数据目录 `runtimes/<版本>/`，重启生效；失败回退内置版本 |
-
-内核仅支持同一版本线内升级，例如 `0.2.1-rc.3 → 0.2.1-rc.5`。跨版本线使用新安装包。
+内核随安装包固定，不单独更新；新内核版本通过新版安装包提供。
 
 ## 配置中心
 
@@ -102,7 +97,6 @@ TLS 选项包含系统证书库、自定义 CA 和关闭证书校验。密码可
 
 | 操作 | 行为 |
 |---|---|
-| 重新同步预置插件 | 清除当前版本的冲突排除记录，重启并恢复预置 |
 | 打开命令行窗口 | 打开终端，PATH 包含应用的 dsh / pnpm / node / npx；沿用代理设置 |
 
 长期使用 CLI 可将用户数据目录的 `bin/` 加入 PATH。

@@ -88,3 +88,5 @@ html[data-desktop-platform=darwin]:not([data-desktop-local]) #desktop-titlebar {
 #desktop-leading button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 [data-desktop-frame][data-sidebar-collapsed] [data-desktop-center]:not(:has([data-conversation-header-leading])) { padding-top: var(--desktop-titlebar-height); }
 html[data-desktop-platform=darwin][data-fullscreen] { --desktop-traffic-clearance: 12px !important; --dsh-frame-overlay-top: 20px; }
+/* 预置 better-sidebar 0.30.0 在内核 0.2.2 的设置导航里显示双图标：它用 ::before 绘制自己的图标并隐藏 `> svg:first-child`，而 0.2.2 把默认图标包进了 span。上游适配 settings.section.icon 后删除。 */
+[data-dsh-better-sidebar-settings-nav] > [class*="_navIcon"] { display: none; }

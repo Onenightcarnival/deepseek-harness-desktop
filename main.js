@@ -14,6 +14,8 @@ const fs = require('fs')
 const { ENTRY_REL, compareVersions, runtimeVersion, prependEnvPath,
   applyProxyEnv, PROXY_ENV_KEYS, normalizeGeneralSettings, hideToTrayEffective } = require('./runtime.js')
 const { createForwarder, routeFor } = require('./proxy-forward.js')
+const featured = require('./featured.js')
+const crypto = require('crypto')
 const { createWindowChrome } = require('./window-chrome.js')
 const { createDesktopBrowser } = require('./desktop-browser.js')
 let desktopBrowser = null
@@ -1524,6 +1526,268 @@ ipcMain.handle('plugins:installLocal', async (_event, kind) => {
 ipcMain.handle('plugins:restart', async () => {
   app.relaunch()
   app.quit()
+})
+
+// ---- featured plugins (dsh-toolkit releases) ----
+const FEATURED_CACHE_TTL_MS = 60 * 60 * 1000
+const GITHUB_HEADERS = { accept: 'application/vnd.github+json', 'user-agent': 'dsh-desktop' }
+function featuredCachePath() { return path.join(app.getPath('userData'), 'featured-cache.json') }
+function featuredDownloadDir() { return path.join(app.getPath('userData'), 'featured-downloads') }
+/** Cache: releases listing with ETag, pinned kernel per tag, checksums per tag. */
+function readFeaturedCache() {
+  try {
+    const cache = JSON.parse(fs.readFileSync(featuredCachePath(), 'utf8'))
+    return { releases: [], kernels: {}, sums: {}, ...cache }
+  } catch { return { releases: [], kernels: {}, sums: {} } }
+}
+function writeFeaturedCache(cache) {
+  try { fs.writeFileSync(featuredCachePath(), JSON.stringify(cache)) } catch { /* Cache only. */ }
+}
+
+/**
+ * GitHub releases of FEATURED_REPO. The listing is reused for an hour and
+ * revalidated with its ETag; a failed request keeps the cached listing and
+ * reports the error.
+ */
+async function fetchFeaturedReleases(force) {
+  const cache = readFeaturedCache()
+  const fresh = cache.fetchedAt && Date.now() - cache.fetchedAt < FEATURED_CACHE_TTL_MS
+  if (fresh && !force && cache.releases.length > 0) return { cache, fromCache: true }
+  const headers = { ...GITHUB_HEADERS }
+  if (cache.etag && cache.releases.length > 0) headers['if-none-match'] = cache.etag
+  let res
+  try {
+    res = await electronNet.fetch(`https://api.github.com/repos/${featured.FEATURED_REPO}/releases?per_page=30`, { headers })
+  } catch (err) {
+    return { cache, fromCache: true, error: String((err && err.message) || err) }
+  }
+  if (res.status === 304) {
+    cache.fetchedAt = Date.now()
+    writeFeaturedCache(cache)
+    return { cache, fromCache: true }
+  }
+  if (!res.ok) return { cache, fromCache: true, error: `GitHub API ${res.status}` }
+  cache.releases = featured.normalizeReleases(await res.json())
+  cache.etag = res.headers.get('etag') || null
+  cache.fetchedAt = Date.now()
+  writeFeaturedCache(cache)
+  return { cache, fromCache: false }
+}
+
+/** Kernel version a toolkit tag pins (root package.json). Tags are immutable, so the answer is cached for good. */
+async function resolveFeaturedKernel(cache, tag) {
+  if (Object.prototype.hasOwnProperty.call(cache.kernels, tag)) return cache.kernels[tag]
+  const url = `https://raw.githubusercontent.com/${featured.FEATURED_REPO}/${encodeURIComponent(tag)}/package.json`
+  const res = await electronNet.fetch(url, { headers: { 'user-agent': 'dsh-desktop' } })
+  if (!res.ok) throw new Error(`GitHub raw ${res.status}`)
+  const kernel = featured.pinnedKernel(await res.json())
+  cache.kernels[tag] = kernel
+  writeFeaturedCache(cache)
+  return kernel
+}
+
+/** `SHA256SUMS.txt` of a release as { fileName: digest }; empty when the release has none. */
+async function fetchFeaturedSums(cache, release) {
+  if (cache.sums[release.tag]) return cache.sums[release.tag]
+  const asset = release.assets.find(a => a.name === 'SHA256SUMS.txt')
+  if (!asset) return {}
+  const res = await electronNet.fetch(asset.url, { headers: { 'user-agent': 'dsh-desktop' } })
+  if (!res.ok) throw new Error(`SHA256SUMS.txt ${res.status}`)
+  const sums = featured.parseSha256Sums(await res.text())
+  cache.sums[release.tag] = sums
+  writeFeaturedCache(cache)
+  return sums
+}
+
+/** Installed versions of catalog packages, read from the profile's node_modules. */
+function featuredInstalled() {
+  const root = path.join(app.getPath('home'), '.dsh', 'profiles', featured.FEATURED_PROFILE, 'node_modules')
+  const installed = {}
+  for (const entry of featured.FEATURED_PACKAGES) {
+    if (entry.kind === 'file') continue
+    try {
+      installed[entry.name] = String(JSON.parse(fs.readFileSync(path.join(root, entry.name, 'package.json'), 'utf8')).version)
+    } catch { /* Not installed. */ }
+  }
+  return installed
+}
+
+/**
+ * The catalog shown by the configuration center: bundled kernel, newest
+ * release, the release pinned to this kernel and every package's state.
+ * Kernels are resolved newest-first and stop at the first match.
+ */
+async function featuredCatalog(force) {
+  const kernel = runtimeVersion(bundledDshDir())
+  const { cache, fromCache, error } = await fetchFeaturedReleases(force)
+  const releases = cache.releases.map(rel => ({ ...rel, kernel: cache.kernels[rel.tag] }))
+  let compatible = null
+  let resolveError = null
+  for (const rel of releases) {
+    try {
+      rel.kernel = await resolveFeaturedKernel(cache, rel.tag)
+    } catch (err) {
+      resolveError = String((err && err.message) || err)
+      break
+    }
+    if (kernel && rel.kernel === kernel) { compatible = rel; break }
+  }
+  if (compatible) {
+    try { compatible.sums = await fetchFeaturedSums(cache, compatible) } catch { compatible.sums = {} }
+  }
+  const latest = releases[0] || null
+  return {
+    kernel,
+    fromCache,
+    fetchedAt: cache.fetchedAt || null,
+    error: error || resolveError || null,
+    latest: latest ? { version: latest.version, kernel: latest.kernel ?? null, htmlUrl: latest.htmlUrl } : null,
+    compatible: compatible ? { version: compatible.version, tag: compatible.tag, htmlUrl: compatible.htmlUrl, publishedAt: compatible.publishedAt } : null,
+    packages: featured.catalogRows(compatible, featuredInstalled()),
+    releasesUrl: `https://github.com/${featured.FEATURED_REPO}/releases`,
+  }
+}
+
+/**
+ * Download a release asset to `dest` through Chromium networking (proxy
+ * settings apply), report progress and verify the SHA-256 when known. A
+ * partial file is written next to `dest` and removed on failure.
+ */
+async function downloadFeaturedAsset(asset, dest, onProgress) {
+  const res = await electronNet.fetch(asset.url, { headers: { 'user-agent': 'dsh-desktop' } })
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+  const total = Number(res.headers.get('content-length')) || asset.size || 0
+  fs.mkdirSync(path.dirname(dest), { recursive: true })
+  const partial = `${dest}.part`
+  const hash = crypto.createHash('sha256')
+  const out = fs.createWriteStream(partial)
+  const failed = new Promise((_, reject) => out.once('error', reject))
+  let received = 0
+  try {
+    const reader = res.body.getReader()
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), failed])
+      if (done) break
+      hash.update(value)
+      received += value.length
+      if (!out.write(value)) await Promise.race([new Promise(resolve => out.once('drain', resolve)), failed])
+      onProgress(received, total)
+    }
+    await Promise.race([new Promise(resolve => out.end(resolve)), failed])
+  } catch (err) {
+    out.destroy()
+    fs.rmSync(partial, { force: true })
+    throw err
+  }
+  const digest = hash.digest('hex')
+  if (asset.sha256 && digest !== asset.sha256) {
+    fs.rmSync(partial, { force: true })
+    throw new Error(t("校验失败：SHA-256 不匹配"))
+  }
+  fs.rmSync(dest, { force: true })
+  fs.renameSync(partial, dest)
+  return digest
+}
+
+/** Keep only the installed archive of a package; older downloads are removed. */
+function pruneFeaturedDownloads(entry, keep) {
+  try {
+    for (const name of fs.readdirSync(featuredDownloadDir())) {
+      const file = path.join(featuredDownloadDir(), name)
+      if (file !== keep && name.startsWith(`${entry.asset}-`) && name.endsWith(`.${entry.ext}`)) fs.rmSync(file, { force: true })
+    }
+  } catch { /* Housekeeping only. */ }
+}
+
+let featuredBusy = false
+function sendFeaturedProgress(payload) {
+  if (pluginWindow && !pluginWindow.isDestroyed()) pluginWindow.webContents.send('featured:progress', payload)
+}
+
+ipcMain.handle('featured:catalog', async (_event, force) => {
+  try {
+    return await featuredCatalog(Boolean(force))
+  } catch (err) {
+    return { kernel: runtimeVersion(bundledDshDir()), error: String((err && err.message) || err), packages: [], latest: null, compatible: null, releasesUrl: `https://github.com/${featured.FEATURED_REPO}/releases` }
+  }
+})
+
+/**
+ * Install or update a catalog package: download the matching release
+ * archive, verify it, remove packages the install plan excludes, then
+ * `dsh plugin add file:<archive>`. The archive stays in userData because the
+ * profile references it by path.
+ */
+ipcMain.handle('featured:install', async (_event, id) => {
+  const entry = featured.FEATURED_PACKAGES.find(e => e.id === id && e.kind !== 'file')
+  if (!entry) return { code: -1, output: t("无效操作") }
+  if (featuredBusy) return { code: -1, output: t("处理中…") }
+  featuredBusy = true
+  const log = []
+  try {
+    const catalog = await featuredCatalog(false)
+    const row = catalog.packages.find(p => p.id === id)
+    if (!row || !row.asset) return { code: -1, output: catalog.error || t("没有与当前内核匹配的版本") }
+    const plan = featured.installPlan(entry, featuredInstalled())
+    if (plan.blocked) return { code: -1, output: t("已安装全家桶，子包不能单独安装。") }
+    const dest = path.join(featuredDownloadDir(), row.asset.name)
+    sendFeaturedProgress({ id, phase: 'download', received: 0, total: row.asset.size })
+    await downloadFeaturedAsset(row.asset, dest, (received, total) => sendFeaturedProgress({ id, phase: 'download', received, total }))
+    log.push(`${t("已下载")} ${row.asset.name}${row.asset.sha256 ? ' (SHA-256 OK)' : ''}`)
+    for (const name of plan.remove) {
+      sendFeaturedProgress({ id, phase: 'remove', name })
+      log.push(`> dsh plugin --profile ${featured.FEATURED_PROFILE} remove ${name}`)
+      const removed = await runDshCli(['plugin', '--profile', featured.FEATURED_PROFILE, 'remove', name])
+      log.push(removed.output.trim())
+      if (removed.code !== 0) return { code: removed.code, output: log.join('\n') }
+    }
+    sendFeaturedProgress({ id, phase: 'install' })
+    const spec = localSpec('file', dest)
+    log.push(`> dsh plugin --profile ${featured.FEATURED_PROFILE} add ${spec}`)
+    const result = await runDshCli(['plugin', '--profile', featured.FEATURED_PROFILE, 'add', spec])
+    log.push(result.output.trim())
+    if (result.code !== 0) result.needsAllowBuilds = parseAllowBuildsRequests(result.output)
+    else pruneFeaturedDownloads(entry, dest)
+    return { ...result, output: log.join('\n') }
+  } catch (err) {
+    log.push(String((err && err.message) || err))
+    return { code: -1, output: log.join('\n') }
+  } finally {
+    featuredBusy = false
+    sendFeaturedProgress({ id, phase: 'done' })
+  }
+})
+
+/** Save a download-only catalog entry (browser extension) where the user chooses. */
+ipcMain.handle('featured:download', async (_event, id) => {
+  const entry = featured.FEATURED_PACKAGES.find(e => e.id === id && e.kind === 'file')
+  if (!entry) return { code: -1, output: t("无效操作") }
+  if (featuredBusy) return { code: -1, output: t("处理中…") }
+  const catalog = await featuredCatalog(false)
+  const row = catalog.packages.find(p => p.id === id)
+  if (!row || !row.asset) return { code: -1, output: catalog.error || t("没有与当前内核匹配的版本") }
+  const { canceled, filePath } = await dialog.showSaveDialog(pluginWindow || mainWindow, { defaultPath: path.join(app.getPath('downloads'), row.asset.name) })
+  if (canceled || !filePath) return { canceled: true, code: 0, output: '' }
+  featuredBusy = true
+  try {
+    await downloadFeaturedAsset(row.asset, filePath, (received, total) => sendFeaturedProgress({ id, phase: 'download', received, total }))
+    shell.showItemInFolder(filePath)
+    return { code: 0, output: `${t("已下载")} ${filePath}`, path: filePath }
+  } catch (err) {
+    return { code: -1, output: String((err && err.message) || err) }
+  } finally {
+    featuredBusy = false
+    sendFeaturedProgress({ id, phase: 'done' })
+  }
+})
+
+/** Open the releases page, or the compatible / newest release, in the system browser. */
+ipcMain.handle('featured:openRelease', async (_event, which) => {
+  const catalog = await featuredCatalog(false)
+  const url = which === 'compatible' ? catalog.compatible && catalog.compatible.htmlUrl
+    : which === 'latest' ? catalog.latest && catalog.latest.htmlUrl
+    : catalog.releasesUrl
+  if (url) shell.openExternal(url)
 })
 
 // ---- proxy config ----

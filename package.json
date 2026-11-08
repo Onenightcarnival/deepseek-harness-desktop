@@ -28,6 +28,7 @@
       "desktop-i18n.js",
       "splash.js",
       "runtime.js",
+      "featured.js",
       "proxy-forward.js",
       "win-spawn-shim.js",
       "splash.html",

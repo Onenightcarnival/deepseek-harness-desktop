@@ -41,6 +41,7 @@
 |---|---|
 | `main.js` | 服务进程、窗口、菜单、应用更新、CLI 启动器、配置中心 IPC、托盘与系统唤醒 |
 | `runtime.js` | 版本比较、配置归一化与代理函数 |
+| `featured.js` | 精选插件目录：toolkit Release 归一化、内核固定版本解析、校验文件解析、安装状态与互斥计划 |
 | `win-spawn-shim.js` | 子进程窗口策略、隐形宿主控制台与预加载传播 |
 | `plugins/dsh-desktop-directory-picker` | 工作区系统目录选择器 |
 | `plugins/dsh-desktop-activity` | 每 2 秒读取 agents/jobs，经 IPC 上报忙闲 |
@@ -120,6 +121,19 @@
 - 桌面自带 `plugins/<name>` 是纯 JS 包；stage 和 ensureDesktopPlugins 将其复制到活动运行时并登记为应用依赖，不写入 profile 或 preset-plugins.json。
 - `--patch` 在用户 profile 层之后应用，用户配置不能覆盖 desktop-patch.yml。
 
+### 精选插件
+
+| 项目 | 契约 |
+|---|---|
+| 目录 | `featured.js` 的 FEATURED_PACKAGES 固定列出全家桶、子包与浏览器扩展；标题与说明在配置中心页按 id 取 `desktop-i18n.js` 字典 |
+| Release 列表 | `api.github.com/repos/<FEATURED_REPO>/releases?per_page=30`，缓存 userData/featured-cache.json，TTL 一小时，携带 ETag 重验；请求失败保留缓存并返回 error |
+| 兼容判定 | 读取 tag 对应 `raw.githubusercontent.com/<repo>/<tag>/package.json` 的 `dependencies["@deepseek-ai/dsh"]`，仅接受精确版本；与 `runtimeVersion(bundledDshDir())` 相等即兼容，从新到旧取第一个命中；tag 结果永久缓存 |
+| 校验 | Release 的 SHA256SUMS.txt 按 tag 缓存；下载时流式计算 SHA-256，已知摘要不匹配则删除文件并失败 |
+| 安装 | 下载到 userData/featured-downloads/，经 `localSpec('file', …)` 调用 `runDshCli(['plugin','--profile','web','add', spec])`；全家桶安装前逐个 remove 已装子包，已装全家桶时拒绝子包；成功后删除同一包的其他下载 |
+| 已安装版本 | 读取 `~/.dsh/profiles/web/node_modules/<name>/package.json` |
+| 进度 | 主进程经 `featured:progress` 向配置窗口发送 download / remove / install / done 阶段 |
+| 并发 | 安装与下载同一时刻只允许一项 |
+
 | 检查或触发条件 | 行为 |
 |---|---|
 | pkgEntryOf | 先取 main，再取 exports["."] 字符串或 default/import/require/node 条件 |
@@ -160,6 +174,7 @@
 | pnpm 参数 | shim 在子命令前传 --config.minimum-release-age=0、--config.auto-install-peers=false |
 | CLI | 分发 dsh、pnpm、node、npx 启动器 |
 | 打包 | afterPack 复制运行时 node_modules；仓库位于 pnpm workspace 外 |
+| 文件清单 | `build.files` 显式列出打进 asar 的文件；新增主进程模块须同时加入清单，`build/test-packaged-files.cjs` 校验每个本地 require 均在清单内 |
 | Python MCP | toolkit 配置中心管理 uv/uvx；桌面不下载、捆绑或生成其启动器 |
 | uv 迁移 | 仅清理应用 bin 中同时包含旧缓存变量和 tools/uv 路径的生成文件；保留自定义启动器和缓存 |
 | 技能 | DSHDESKTOP_DISABLED_SKILLS 传入 userData/disabled-skills/，供 toolkit 读取旧停用技能 |
@@ -223,6 +238,8 @@ node build/sync-official-browser.cjs --check
 node build/test-server-output.cjs
 node build/test-windows-execution-level.cjs
 node build/test-uv-removal.cjs
+node build/test-featured.cjs
+node build/test-packaged-files.cjs
 node -e "require('./runtime.js')"
 ```
 

@@ -119,6 +119,15 @@ if (initialState?.purpose === 'settings' && initialState.local) contextBridge.ex
   proxyTest: (config, url) => ipcRenderer.invoke('proxy:test', config, url),
   proxyPickCa: () => ipcRenderer.invoke('proxy:pickCa'),
   serverRestart: () => ipcRenderer.invoke('server:restart'),
+  featuredCatalog: (force) => ipcRenderer.invoke('featured:catalog', force),
+  featuredInstall: (id) => ipcRenderer.invoke('featured:install', id),
+  featuredDownload: (id) => ipcRenderer.invoke('featured:download', id),
+  featuredOpenRelease: (which) => ipcRenderer.invoke('featured:openRelease', which),
+  onFeaturedProgress: (handler) => {
+    const listener = (_event, payload) => handler(payload)
+    ipcRenderer.on('featured:progress', listener)
+    return () => ipcRenderer.removeListener('featured:progress', listener)
+  },
 })
 
 /** 标记上游支持的平台布局，并同步本地页与原生窗口配色。 */

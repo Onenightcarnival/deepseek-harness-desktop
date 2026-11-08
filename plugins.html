@@ -90,12 +90,28 @@
   .radio-row { display: flex; align-items: center; gap: 7px; padding: 4px 0; cursor: pointer; color: var(--desktop-text); font-size: 13px; }
   .radio-row input { width: auto; }
   .dim { opacity: .45; pointer-events: none; }
+
+  /* ---- 精选页的卡片 ---- */
+  .f-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; }
+  .f-card.bundle { grid-column: 1 / -1; }
+  .f-card .cs-card-title { justify-content: space-between; }
+  .f-card .f-name { color: var(--muted); font-size: 11.5px; margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .f-card .f-desc { color: var(--secondary); font-size: 12px; line-height: 1.6; flex: 1; margin-bottom: 12px; }
+  .f-card .f-foot { display: flex; align-items: center; gap: 8px; }
+  .f-card .f-foot button { padding: 5px 12px; }
+  .f-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 10px; }
+  .f-bar > i { display: block; height: 100%; width: 0; background: #4d6bfe; transition: width .15s; }
+  .f-bar.busy > i { width: 40%; animation: f-slide 1.1s ease-in-out infinite alternate; }
+  @keyframes f-slide { from { margin-left: 0 } to { margin-left: 60% } }
+  .tag.ok { color: var(--success); background: transparent; border: 1px solid var(--border); }
+  .tag.warn { color: var(--muted); background: transparent; border: 1px solid var(--border); }
 </style>
 </head>
 <body>
   <nav id="nav">
     <div class="nav-title"><span data-i18n="配置中心">配置中心</span></div>
     <button data-pane="plugins" class="active"><span class="icon"><svg viewBox="0 0 24 24"><path d="M8 3h3a3 3 0 1 1 6 0h3v7a3 3 0 1 0 0 6v5h-7a3 3 0 1 0-6 0H3v-7a3 3 0 1 0 0-6V3h5Z" transform="translate(1 1) scale(.9)"/></svg></span><span data-i18n="插件">插件</span></button>
+    <button data-pane="featured"><span class="icon"><svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.2 1 5.9L12 17l-5.2 2.8 1-5.9-4.3-4.2 5.9-.8z"/></svg></span><span data-i18n="精选">精选</span></button>
     <button data-pane="general"><span class="icon"><svg viewBox="0 0 24 24"><path d="M4 6h6m4 0h6M4 12h10m4 0h2M4 18h2m4 0h10"/><circle cx="12" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></svg></span><span data-i18n="通用">通用</span></button>
     <button data-pane="proxy"><span class="icon"><svg viewBox="0 0 24 24"><path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4"/></svg></span><span data-i18n="代理">代理</span></button>
   </nav>
@@ -122,6 +138,27 @@
       <div class="log" id="log"></div>
     </details>
     <div class="row" style="margin-top:10px; display:none" id="restart-plugins">
+      <span class="spacer"></span><button class="primary" onclick="pluginApi.restart()"><span data-i18n="重启应用生效">重启应用生效</span></button>
+    </div>
+  </div>
+
+  <!-- ============ 精选 ============ -->
+  <div class="pane single" id="pane-featured">
+    <h2><span data-i18n="精选插件">精选插件</span></h2>
+    <p class="sub"><span data-i18n="dsh-toolkit 全家桶与各子包。按当前内核版本匹配 GitHub Release，下载校验后安装；全家桶与子包二选一，安装后重启生效。">dsh-toolkit 全家桶与各子包。按当前内核版本匹配 GitHub Release，下载校验后安装；全家桶与子包二选一，安装后重启生效。</span></p>
+    <div class="row" style="margin-bottom:12px">
+      <span class="meta" id="f-summary"></span>
+      <span class="spacer"></span>
+      <button class="ghost" id="f-releases"><span data-i18n="Release 页面">Release 页面</span></button>
+      <button id="f-refresh"><span data-i18n="刷新">刷新</span></button>
+    </div>
+    <div class="f-grid" id="f-cards"></div>
+    <div class="msg" id="f-msg" role="status"></div>
+    <details id="f-details" hidden>
+      <summary data-i18n="诊断详情">诊断详情</summary>
+      <div class="log" id="f-log"></div>
+    </details>
+    <div class="row" style="margin-top:10px; display:none" id="restart-featured">
       <span class="spacer"></span><button class="primary" onclick="pluginApi.restart()"><span data-i18n="重启应用生效">重启应用生效</span></button>
     </div>
   </div>
@@ -215,6 +252,7 @@
       document.querySelectorAll('.pane').forEach((x) => x.classList.remove('active'))
       b.classList.add('active')
       $('pane-' + b.dataset.pane).classList.add('active')
+      if (b.dataset.pane === 'featured' && fCatalog === null) refreshFeatured(false)
     }
   }
 
@@ -286,6 +324,129 @@
   $('add-dir').onclick = () => installLocal('dir')
   $('add-tgz').onclick = () => installLocal('tgz')
   $('spec').addEventListener('keydown', (e) => { if (e.key === 'Enter') runPlugin('add', $('spec').value.trim()) })
+
+  // ================= 精选 =================
+  // 目录条目来自主进程（featured.js）；标题与说明按 id 取本地字典。
+  const F_META = {
+    toolkit: { title: "全家桶 dsh-toolkit", desc: "全部子包合一的集成包：数据库、S3 存储、可观测、浏览器桥、AI 订阅、配置中心、记忆与 API 网关。" },
+    rdb: { title: "数据库", desc: "关系数据库工作台：SQLite / PostgreSQL / MySQL / GaussDB，数据表格、结构浏览与 SQL 编辑器，db_* 工具。" },
+    s3: { title: "S3 存储", desc: "S3 兼容对象存储浏览器：MinIO / OSS / COS / R2，s3_* 工具。" },
+    otel: { title: "可观测", desc: "OpenTelemetry GenAI 导出到 Langfuse 等 OTLP 后端。" },
+    browser: { title: "浏览器桥", desc: "通过 Chrome / Firefox 扩展驱动用户标签页的 browser_* 工具。" },
+    subscriptions: { title: "AI 订阅", desc: "Codex、ChatGPT、Google Antigravity 与 Grok 订阅模型，Codex 搜索、Grok X 搜索，图像与视频生成。" },
+    'config-center': { title: "配置中心插件", desc: "MCP 与技能管理、专属 uv / Python 环境、内置插件常用设置。" },
+    memory: { title: "记忆", desc: "分层职业记忆：简历、经验、人工更正与版本历史，memory_* 工具。" },
+    gateway: { title: "API 网关", desc: "以 OpenAI Chat / Responses 与 Anthropic Messages 协议对外提供已配置的模型，含 API 密钥与用量统计。" },
+    extension: { title: "浏览器扩展", desc: "与浏览器桥配对的 Chrome 扩展，解压到固定目录后以开发者模式加载。" },
+  }
+  let fCatalog = null
+  let fBusy = false
+  function fMsg(text, cls) { const m = $('f-msg'); m.textContent = text; m.className = 'msg ' + (cls || '') }
+  const fLog = (s) => { $('f-details').hidden = false; $('f-log').textContent += s + '\n'; $('f-log').scrollTop = 1e9 }
+  const fEl = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e }
+  async function refreshFeatured(force) {
+    $('f-refresh').disabled = true
+    if (!fCatalog) $('f-summary').textContent = t("加载中…")
+    try { fCatalog = await pluginApi.featuredCatalog(force) } catch (e) { fCatalog = { kernel: null, error: String(e), packages: [], latest: null, compatible: null } }
+    $('f-refresh').disabled = false
+    renderFeatured()
+  }
+  function renderFeatured() {
+    const c = fCatalog
+    if (!c) return
+    let summary = c.kernel ? t("内核 v{0}", c.kernel) : t("内核版本未知")
+    if (c.compatible) summary += ' · ' + t("匹配 toolkit v{0}", c.compatible.version)
+    else if (c.latest) summary += ' · ' + t("无匹配版本，最新 v{0} 对应内核 v{1}", c.latest.version, c.latest.kernel || '?')
+    $('f-summary').textContent = summary
+    if (c.error) fMsg(t("获取 Release 信息失败：{0}", c.error), 'err')
+    const box = $('f-cards')
+    box.innerHTML = ''
+    const bundleInstalled = c.packages.some(p => p.kind === 'bundle' && p.installedVersion)
+    const moduleInstalled = c.packages.some(p => p.kind === 'module' && p.installedVersion)
+    for (const p of c.packages) {
+      const meta = F_META[p.id] || { title: p.name, desc: '' }
+      const card = fEl('div', 'cs-card f-card' + (p.kind === 'bundle' ? ' bundle' : ''))
+      card.dataset.id = p.id
+      const title = fEl('div', 'cs-card-title')
+      title.append(fEl('span', '', t(meta.title)))
+      const foot = fEl('div', 'f-foot')
+      const action = (label, cls, handler) => { const b = fEl('button', cls, label); b.disabled = fBusy; b.onclick = handler; return b }
+      let tag = null
+      if (p.kind === 'file') {
+        if (p.asset) foot.append(fEl('span', 'meta', t("v{0}", c.compatible.version)), fEl('span', 'spacer'), action(t("下载"), 'primary', () => downloadFeatured(p.id)))
+        else tag = fEl('span', 'tag warn', t("无匹配版本"))
+      } else if (p.kind === 'module' && bundleInstalled && !p.installedVersion) {
+        tag = fEl('span', 'tag ok', t("已包含在全家桶"))
+      } else if (p.state === 'install') {
+        const label = p.kind === 'bundle' && moduleInstalled ? t("替换为全家桶") : t("安装")
+        foot.append(fEl('span', 'meta', t("v{0}", c.compatible.version)), fEl('span', 'spacer'), action(label, 'primary', () => installFeatured(p.id)))
+      } else if (p.state === 'update') {
+        tag = fEl('span', 'tag', t("可更新"))
+        foot.append(fEl('span', 'meta', t("v{0} → v{1}", p.installedVersion, c.compatible.version)), fEl('span', 'spacer'),
+          action(t("移除"), 'danger', () => removeFeatured(p.name)), action(t("更新"), 'primary', () => installFeatured(p.id)))
+      } else if (p.state === 'installed') {
+        tag = fEl('span', 'tag ok', t("已安装"))
+        foot.append(fEl('span', 'meta', t("v{0}", p.installedVersion)), fEl('span', 'spacer'), action(t("移除"), 'danger', () => removeFeatured(p.name)))
+      } else {
+        tag = fEl('span', 'tag warn', t("无匹配版本"))
+        if (p.installedVersion) foot.append(fEl('span', 'meta', t("v{0}", p.installedVersion)), fEl('span', 'spacer'), action(t("移除"), 'danger', () => removeFeatured(p.name)))
+      }
+      if (tag) title.append(tag)
+      const bar = fEl('div', 'f-bar')
+      bar.hidden = true
+      bar.appendChild(document.createElement('i'))
+      card.append(title, fEl('div', 'f-name', p.name), fEl('div', 'f-desc', t(meta.desc)), foot, bar)
+      box.appendChild(card)
+    }
+  }
+  function fCard(id) { return document.querySelector(`.f-card[data-id="${id}"]`) }
+  function fProgress(p) {
+    const card = fCard(p.id)
+    if (!card) return
+    const bar = card.querySelector('.f-bar')
+    const fill = bar.firstElementChild
+    if (p.phase === 'done') { bar.hidden = true; bar.classList.remove('busy'); fill.style.width = '0'; return }
+    bar.hidden = false
+    if (p.phase === 'download') {
+      bar.classList.remove('busy')
+      fill.style.width = p.total > 0 ? `${Math.min(100, Math.round(p.received / p.total * 100))}%` : '0'
+      fMsg(p.total > 0 ? t("正在下载… {0} / {1} MB", (p.received / 1048576).toFixed(1), (p.total / 1048576).toFixed(1)) : t("正在下载…"))
+    } else if (p.phase === 'remove') {
+      bar.classList.add('busy'); fMsg(t("正在移除 {0}…", p.name))
+    } else {
+      bar.classList.add('busy'); fMsg(t("正在安装…"))
+    }
+  }
+  pluginApi.onFeaturedProgress(fProgress)
+  function fResult(res) {
+    const needsApproval = res.code !== 0 && res.needsAllowBuilds && res.needsAllowBuilds.length > 0
+    if (needsApproval) fMsg(t("该插件需要构建脚本审批。"), 'err')
+    else if (res.code === 0) fMsg(t("完成"), 'ok')
+    else fMsg(t("失败（exit {0}）", res.code), 'err')
+    fLog((res.output || '').trim())
+    fLog(res.code === 0 ? t("完成") : t("失败（exit {0}）", res.code))
+    if (needsApproval) { fLog(''); fLog(t("按上方 dsh 的提示编辑 allowBuilds 配置后，在「插件 → 打开命令行窗口」中重新安装。")) }
+    if (res.code === 0) $('restart-featured').style.display = 'flex'
+  }
+  async function fRun(task) {
+    if (fBusy) return
+    fBusy = true
+    renderFeatured()
+    try { await task() } finally {
+      fBusy = false
+      await refreshFeatured(false)
+      refreshPlugins()
+    }
+  }
+  const installFeatured = (id) => fRun(async () => { fMsg(t("正在下载…")); fResult(await pluginApi.featuredInstall(id)) })
+  const removeFeatured = (name) => fRun(async () => { fMsg(t("处理中…")); fLog(`> dsh plugin --profile web remove ${name}`); fResult(await pluginApi.run('remove', name)) })
+  const downloadFeatured = (id) => fRun(async () => {
+    const res = await pluginApi.featuredDownload(id)
+    if (res.canceled) { fMsg(''); return }
+    if (res.code === 0) { fMsg(t("已下载"), 'ok'); fLog(res.output) } else fResult(res)
+  })
+  $('f-refresh').onclick = () => { fMsg(''); refreshFeatured(true) }
+  $('f-releases').onclick = () => pluginApi.featuredOpenRelease(fCatalog && fCatalog.compatible ? 'compatible' : 'all')
 
   // ================= 通用 =================
   // 五个布尔项，切换即保存并由主进程立即应用（托盘 / 登录项 / 休眠阻止）。
@@ -409,7 +570,7 @@
     renderPluginStatus()
   }
   translateStatic()
-  window.addEventListener('desktop-language-change', () => { translateStatic(); renderGeneral(); refreshPlugins() })
+  window.addEventListener('desktop-language-change', () => { translateStatic(); renderGeneral(); refreshPlugins(); renderFeatured() })
 </script>
 </body>
 </html>

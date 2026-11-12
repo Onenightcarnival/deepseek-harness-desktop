@@ -184,6 +184,17 @@ if (fs.existsSync(pty)) {
 // sharp: the native @img package is used; the wasm fallback is dropped.
 rm(path.join(nm, '@img', 'sharp-wasm32'))
 
+// LibreOffice: one engine package stays. The kit's native engine for this
+// platform when installed, otherwise the wasm engine.
+{
+  const scope = path.join(nm, '@deepseek-ai')
+  const native = `libreoffice-kit-${key}`
+  const keep = fs.existsSync(path.join(scope, native)) ? native : 'libreoffice-kit-wasm'
+  for (const entry of fs.existsSync(scope) ? fs.readdirSync(scope) : []) {
+    if (entry.startsWith('libreoffice-kit-') && entry !== keep) rm(path.join(scope, entry))
+  }
+}
+
 // Runtime file exclusions:
 // - sourcemaps and .pdb debug symbols;
 // - TypeScript declarations (*.d.ts / *.d.mts / *.d.cts);

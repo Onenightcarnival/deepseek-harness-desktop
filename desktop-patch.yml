@@ -26,3 +26,7 @@
 # 侧栏保留设置入口；不挂载官方账号菜单。
 - id: ui-settings-account
   disabled: true
+
+# 账号通知依赖官方账号菜单提供的服务，随其一并不挂载。
+- id: ui-account-notifications
+  disabled: true

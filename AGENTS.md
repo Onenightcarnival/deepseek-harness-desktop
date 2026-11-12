@@ -54,7 +54,7 @@
 | `build/sync-official-browser.cjs` | 生成或校验官方浏览器与快捷键适配产物 |
 | `desktop-i18n.js` | 中英文文案与插值 |
 | `splash.js` | 启动页语言同步 |
-| `desktop.css` / `splash.html` | 原生按钮安全区、拖拽区、主题、启动页与预置插件的临时兼容规则 |
+| `desktop.css` / `splash.html` | 原生按钮安全区、拖拽区、主题与启动页 |
 | `stage-dsh.mjs` | 安装与裁剪运行时、安装 pnpm、登记预置包 |
 | `update-locks.mjs` | 更新内核、插件与依赖闭包的锁文件 |
 | `afterPack.js` | 将 staging 复制到 resources/dsh，过滤 tools/uv |
@@ -187,6 +187,8 @@
 | 第三方包 README / CHANGELOG 等包说明 | 删除；保留 @deepseek-ai 与插件包说明 |
 | 第三方包顶层 test / docs / examples / .github | 仅处理 package.json 同级目录 |
 | 其他 Markdown、嵌套同名目录与 LICENSE | 保留，含 SKILL.md 等运行时资源 |
+| @deepseek-ai 包的 src / docs | 保留，供创造模式的 dsh-doc 技能查阅 |
+| `@deepseek-ai/libreoffice-kit-*` 引擎包 | 保留目标平台的原生引擎；目标平台无原生引擎时保留 wasm 引擎 |
 
 裁剪后验证 GUI 流程、全部 @deepseek-ai/* 入口加载与相对 import 完整性。安装载荷使用 7z。
 

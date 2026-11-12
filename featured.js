@@ -25,6 +25,7 @@ const FEATURED_PACKAGES = Object.freeze([
   { id: TOOLKIT_ID, kind: 'bundle', name: '@onenightcarnival/dsh-toolkit', asset: 'onenightcarnival-dsh-toolkit', ext: 'tgz' },
   { id: 'rdb', kind: 'module', name: '@onenightcarnival/dsh-rdb', asset: 'onenightcarnival-dsh-rdb', ext: 'tgz' },
   { id: 's3', kind: 'module', name: '@onenightcarnival/dsh-s3', asset: 'onenightcarnival-dsh-s3', ext: 'tgz' },
+  { id: 'http', kind: 'module', name: '@onenightcarnival/dsh-http', asset: 'onenightcarnival-dsh-http', ext: 'tgz' },
   { id: 'otel', kind: 'module', name: '@onenightcarnival/dsh-otel', asset: 'onenightcarnival-dsh-otel', ext: 'tgz' },
   { id: 'browser', kind: 'module', name: '@onenightcarnival/dsh-bridge-browser', asset: 'onenightcarnival-dsh-bridge-browser', ext: 'tgz' },
   { id: 'subscriptions', kind: 'module', name: '@onenightcarnival/dsh-subscriptions', asset: 'onenightcarnival-dsh-subscriptions', ext: 'tgz' },

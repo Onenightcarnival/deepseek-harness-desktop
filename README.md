@@ -1,6 +1,6 @@
 # DeepSeek Harness Desktop
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方桌面安装包，支持 Windows 与 macOS。当前内置内核：`0.2.2-rc.2`。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的非官方桌面安装包，支持 Windows 与 macOS。当前内置内核：`0.2.2-rc.3`。
 
 应用在本机随机端口运行 dsh Web UI。数据与配置位于 `~/.dsh`，与命令行版共享。默认关窗退出；开启托盘模式后，关窗保留服务与任务。
 

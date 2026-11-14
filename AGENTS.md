@@ -255,7 +255,7 @@ node -e "require('./runtime.js')"
 
 ### Electron
 
-- `node build/test-window-chrome.cjs` 使用 staging 内的隔离 userData，覆盖 IPC 来源隔离、主题、配置控件、原生菜单、按钮安全区、缩放与全屏；截图位于 staging/window-chrome-test/。全屏检查会短暂显示窗口。
+- `node build/test-window-chrome.cjs` 使用 staging 内的隔离 userData，覆盖 IPC 来源隔离、主题、配置控件、原生菜单、按钮安全区、折叠入口、缩放与全屏；截图位于 staging/window-chrome-test/。全屏检查会短暂显示窗口。
 - `node build/test-desktop-browser.cjs` 使用 staging 隔离目录和本机 HTTP 页面验证官方浏览器界面、原生快捷键、保活、网页权限、工作区分区、弹窗及主 frame IPC。测试短暂显示窗口以验证真实键盘焦点；沿用 `DSHDESKTOP_TEST_ELECTRON` 与 `DSHDESKTOP_TEST_RUNTIME`。设置 `DSHDESKTOP_TEST_FULL=1` 同时激活运行时清单中的 full 预置插件。
 - `DSHDESKTOP_TEST_ELECTRON` 指定 Electron；同时设置 DSHDESKTOP_TEST_RUNTIME（含 node_modules）和 DSHDESKTOP_TEST_HOME（staging 内隔离 profile）时验证真实内核。 真实内核以 `desktop-patch.yml` 组合启动，与应用一致；预览提示与模型引导弹窗在 frame 之后挂载，测试轮询关闭。
 - macOS 原生按钮与标题栏配色 在 macOS 验证；Windows 检查其布局与选项。

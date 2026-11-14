@@ -199,7 +199,8 @@ function watchMacLayout() {
     mark(row?.parentElement, 'data-desktop-sidebar-root')
     const buttons = (strip ?? row)?.querySelectorAll('button[aria-label]')
     mark(buttons?.[buttons.length - 1], 'data-desktop-sidebar-toggle')
-    mark(row?.parentElement.querySelector(':scope > button[aria-label]'), 'data-desktop-new-session')
+    // 新建会话按钮位于 sidebar.session.action 插槽锚点内，先于插槽占用方追加的控件。
+    mark(row?.parentElement.querySelector('[data-slot="sidebar.session.action"] button[aria-label]'), 'data-desktop-new-session')
     const collapsed = frame.hasAttribute('data-sidebar-collapsed')
     for (const control of controls) {
       const source = sidebar.querySelector(control.selector)

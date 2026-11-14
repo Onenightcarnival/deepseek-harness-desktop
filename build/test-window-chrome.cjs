@@ -287,6 +287,10 @@ app.whenReady().then(async () => {
         const seat=document.querySelector('#desktop-leading'), button=seat.querySelector('button');
         return seat.parentElement === document.body && !seat.closest('[data-desktop-sidebar]') && getComputedStyle(seat).webkitAppRegion === 'no-drag' && getComputedStyle(button).webkitAppRegion === 'no-drag';
       })()`), '折叠入口必须位于侧栏之外的独立非拖拽区域')
+      assert(await page(`(() => {
+        const source=document.querySelector('[data-desktop-sidebar] [data-desktop-new-session]'), button=document.querySelector('[data-desktop-leading-new-session]');
+        return !!source && !button.disabled && !!button.querySelector('svg') && !!button.getAttribute('aria-label') && button.getAttribute('aria-label') === source.getAttribute('aria-label');
+      })()`), '折叠入口的新建会话按钮应映射侧栏的新建会话按钮')
       for (let i = 0; i < 3; i++) {
         await toggle(); await pause(700)
         assert((await snapshot()).sidebar >= 200, '坐标点击应展开侧栏')

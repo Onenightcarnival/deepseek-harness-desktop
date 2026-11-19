@@ -1,6 +1,6 @@
 # Official desktop browser sources
 
-Source: [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness/tree/3f321d32bfe382212a8ed8785c1d47a5a300aa23/apps/desktop/src), commit `3f321d32bfe382212a8ed8785c1d47a5a300aa23`. License: [MIT](LICENSE).
+Source: [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness/tree/9c2670d3bce5275e0d1610272958121af87787bb/apps/desktop/src), commit `9c2670d3bce5275e0d1610272958121af87787bb`. License: [MIT](LICENSE).
 
 | Source | Runtime responsibility |
 |---|---|
